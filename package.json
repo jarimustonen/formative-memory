@@ -1,0 +1,49 @@
+{
+  "name": "openclaw-associative-memory",
+  "version": "0.1.0",
+  "description": "OpenClaw associative memory plugin — biologically-inspired memory with associations, consolidation, and temporal awareness",
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "check": "pnpm format:check && pnpm tsgo && pnpm lint",
+    "format": "oxfmt --write",
+    "format:check": "oxfmt --check",
+    "format:fix": "oxfmt --write",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix && pnpm format",
+    "tsgo": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@sinclair/typebox": "0.34.48"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@vitest/coverage-v8": "^4.0.18",
+    "openclaw": ">=2026.2.25",
+    "oxfmt": "0.35.0",
+    "oxlint": "^1.50.0",
+    "tsdown": "^0.20.3",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.1.26"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "packageManager": "pnpm@10.23.0"
+}

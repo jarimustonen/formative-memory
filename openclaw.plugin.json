@@ -1,0 +1,62 @@
+{
+  "id": "memory-associative",
+  "name": "Memory (Associative)",
+  "kind": "memory",
+  "description": "Biologically-inspired associative memory with consolidation, temporal awareness, and retrieval-based strengthening.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "embedding": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "apiKey": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string",
+            "enum": ["text-embedding-3-small", "text-embedding-3-large"]
+          }
+        },
+        "required": ["apiKey"]
+      },
+      "dbPath": {
+        "type": "string"
+      },
+      "autoCapture": {
+        "type": "boolean"
+      },
+      "autoRecall": {
+        "type": "boolean"
+      }
+    },
+    "required": ["embedding"]
+  },
+  "uiHints": {
+    "embedding.apiKey": {
+      "label": "OpenAI API Key",
+      "sensitive": true,
+      "placeholder": "sk-proj-...",
+      "help": "API key for OpenAI embeddings (or use ${OPENAI_API_KEY})"
+    },
+    "embedding.model": {
+      "label": "Embedding Model",
+      "placeholder": "text-embedding-3-small",
+      "help": "OpenAI embedding model to use"
+    },
+    "dbPath": {
+      "label": "Database Path",
+      "placeholder": "~/.openclaw/memory/associative",
+      "advanced": true
+    },
+    "autoCapture": {
+      "label": "Auto-Capture",
+      "help": "Automatically capture all conversations for consolidation"
+    },
+    "autoRecall": {
+      "label": "Auto-Recall",
+      "help": "Automatically inject associated memories into context"
+    }
+  }
+}
