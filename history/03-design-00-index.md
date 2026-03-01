@@ -14,9 +14,21 @@ Suunnitella assosiatiivisen muistin plugin, joka korvaa memory-core:n ja toteutt
 - **Assosiaatiot** muistojen välillä (painotetut linkit)
 - **Temporaalinen tila** (futuuri → preesens → imperfekti)
 - **Konsolidaatio** ("uni") – assosiaatioiden vahvistaminen ja muistojen tiivistäminen
-- **Decay** – per-muisto rapautuminen käyttötiheydestä riippuen
+- **Strength-malli** – decay nukkuessa, retrieval vahvistaa
 - **Muistotyyppikohtainen retrieval** – eri hakustrategiat eri muistotyypeille
-- **Väritetyt muistot** – muistot muuttuvat palautettaessa
+- **Väritetyt muistot** – muistot muuttuvat konsolidaatiossa
+
+---
+
+## V1-filosofia
+
+Ensimmäisen version tulee olla **yksinkertainen** ja **laajennettava**. Yksinkertaistukset vedos 1:stä:
+
+1. **Kaksi tiedostoa** (working.md + consolidated.md) yhden-per-muisto sijaan
+2. **Assosiaatiot päivätasolla** – co-retrieval-loki päivän aikana, konsolidaatio prosessoi
+3. **Decay vain nukkuessa** – ei reaaliaikaista rapautumista
+4. **Ei tick-mekanismia V1:ssä** – päivätaso riittää
+5. **Ei assosiaatiotyyppejä V1:ssä** – pelkkä weight
 
 ---
 
@@ -24,72 +36,58 @@ Suunnitella assosiatiivisen muistin plugin, joka korvaa memory-core:n ja toteutt
 
 ### Vaihe 1: Tietomalli (design-01, design-02)
 
-Perusta kaikelle muulle. Vastaa kysymyksiin:
+Perusta kaikelle muulle.
 
-- Mikä on "muisto"? Miten se eroaa chunkista?
-- Miten muistot identifioidaan? (Content hash -malli)
-- Mitä muistotyyppejä on? (Narratiivinen, tool-usage, päätös, fakta...)
-- Miten assosiaatiot rakentuvat? Mitä tyyppejä niillä on?
-- Mikä on SQLite-skeema?
-- Miten memory-layout manifesti toimii?
+**Ratkaistu:**
+- Muisto = semanttinen yksikkö, id = SHA-256(content)
+- 6 muistotyyppiä (narrative, fact, decision, tool_usage, interpretation, preference)
+- Kaksisuuntaiset assosiaatiot, ei tyyppejä V1:ssä
+- Tallennus: working.md + consolidated.md + SQLite
+- Päivätason co-retrieval-loki → konsolidaatio prosessoi
 
-**Riippuvuudet:** Research-sarja (valmis), observations (jatkuva)
-**Avoimet kysymykset joihin vastattava:**
-- Muistoyksikön koko (dynaaminen vs. kiinteä, yläraja?)
-- Assosiaation suunta (yksi- vai kaksisuuntainen?)
-- Muistotyyppien lopullinen lista
+**Avoimet:**
+- Embedding-dimension dynaamisuus
+- Consolidated.md:n kasvun hallinta
 
 ### Vaihe 2: Muistin elinkaari (design-03)
 
-Miten muistot syntyvät, elävät ja kuolevat. Vastaa kysymyksiin:
+**Ratkaistu:**
+- Strength-malli: decay × 0.977 per uni, retrieval puolittaa välimatkan 1.0:aan
+- Puoliintumisaika 30 unta (λ = 0.0231, η = 0.7)
+- Kuolema: strength ≤ 0.05 (ellei vahvoja assosiaatioita)
+- Temporaalinen tila: future/present/past, automaattiset siirtymät
+- Väritys vain konsolidaatiossa (V1)
 
-- Miten muisto luodaan? (Hookista, agentin työkalusta, importista, konsolidaatiosta)
-- Miten temporaalinen tila toimii? (Futuuri → preesens → imperfekti)
-- Miten tick-mekanismi toimii?
-- Miten decay lasketaan per-muisto?
-- Miten muiston sisällön muutos päivittää assosiaatiot atomisesti?
-- Miten "väritetty muisto" toimii konkreettisesti?
-
-**Riippuvuudet:** Vaihe 1 (tietomalli ja skeema)
+**Avoimet:**
+- Working-muistin maksimiikä
+- η-parametrin herkkyys
 
 ### Vaihe 3: Haku ja retrieval (design-04)
 
-Miten agentti löytää relevantteja muistoja. Vastaa kysymyksiin:
+Miten agentti löytää relevantteja muistoja.
 
-- Miten hakuputki toimii? (Vektori + BM25 + assosiaatio-boosting)
-- Miten muistotyyppi vaikuttaa hakustrategiaan?
-- Miten assosiaatiot vaikuttavat tulosten pisteytykseen?
-- Mitä agentille injektoidaan kontekstiin? Miten paljon?
-- Miten system prompt -osio generoidaan?
-- Miten retrieval vahvistaa assosiaatioita (co-retrieval)?
-
-**Riippuvuudet:** Vaihe 1 (tietomalli), Vaihe 2 (elinkaari, decay)
+**Päivitettävä vedos 2:ksi:**
+- Hakuputki: embedding+BM25 → strength-painotus → assoc-boost
+- Retrieval-sivuvaikutukset: strength-vahvistus + co-retrieval-lokiin kirjaus
+- Auto-recall: before_prompt_build
 
 ### Vaihe 4: Konsolidaatio (design-05)
 
-"Uni"-vaihe: taustaprosessi joka järjestää ja vahvistaa muistia. Vastaa kysymyksiin:
+"Uni"-vaihe.
 
-- Miten Jaccard-esikarsinta + embedding-konsolidaatio toimii?
-- Miten uusia assosiaatioita löydetään? ("REM-uni")
-- Miten duplikaatit tunnistetaan ja yhdistetään?
-- Miten konsolidaatio ajoitetaan? (Cron/service)
-- Miten konsolidaatio muokkaa muistoja ja päivittää hashit/assosiaatiot atomisesti?
-- Milloin muisto kuolee (decay → poisto)?
-
-**Riippuvuudet:** Vaihe 1–3
+**Päivitettävä vedos 2:ksi:**
+- Working → consolidated siirto
+- Decay-batch: kaikkien muistojen strength × 0.977
+- Co-retrieval-lokin prosessointi → assosiaatiot
+- Duplikaattien tunnistus ja yhdistäminen
+- REM-vaihe: uusien assosiaatioiden löytäminen
+- Pruning: kuolleet muistot ja assosiaatiot pois
 
 ### Vaihe 5: Integraatio ja migraatio (design-06, design-07)
 
-Miten plugin istuu OpenClaw:iin ja miten siihen siirrytään. Vastaa kysymyksiin:
-
-- Plugin-rakenne: hookit, työkalut, service, CLI
-- Osa A -riippuvuudet: mitkä tarvitaan MVP:hen? Mitkä voivat odottaa?
-- Memory-layout manifesti: tiedosto + tietokanta
-- Migraatiostrategia: memory-core-v1 → associative-memory-v1
-- Semanttinen chunking importoinnissa (TextTiling / hybridi)
-- Rollback: associative-memory-v1 → memory-core-v1
-
-**Riippuvuudet:** Vaihe 1–4, Osa A -keskustelu OpenClaw:n tekijöiden kanssa
+**Päivitettävä vedos 2:ksi:**
+- Tiedostorakenteen muutos
+- Yksinkertaistettu hook-set
 
 ---
 
@@ -98,13 +96,13 @@ Miten plugin istuu OpenClaw:iin ja miten siihen siirrytään. Vastaa kysymyksiin
 | #  | Tiedosto                     | Sisältö                                                            | Tila    |
 | -- | ---------------------------- | ------------------------------------------------------------------ | ------- |
 | 00 | `03-design-00-index.md`         | Tämä indeksi ja vaiheistussuunnitelma                              | –       |
-| 01 | `03-design-01-data-model.md`    | Muisto-olio, muistotyypit, content hash, SQLite-skeema             | Tulossa |
-| 02 | `03-design-02-associations.md`  | Assosiaatiorakenne, tyypit, painot, päivitysmekaniikat              | Tulossa |
-| 03 | `03-design-03-lifecycle.md`     | Luonti, temporaalinen tila, tick, decay, väritys                   | Tulossa |
-| 04 | `03-design-04-retrieval.md`     | Hakuputki, assosiaatio-boosting, muistotyyppikohtainen strategia   | Tulossa |
-| 05 | `03-design-05-consolidation.md` | "Uni", Jaccard + embedding, duplikaatit, REM-vaihe                 | Tulossa |
-| 06 | `03-design-06-integration.md`   | Plugin-rakenne, hookit, system prompt, Osa A -riippuvuudet         | Tulossa |
-| 07 | `03-design-07-migration.md`     | memory-core → assosiatiivinen muisti, layout-versiointi, rollback  | Tulossa |
+| 01 | `03-design-01-data-model.md`    | Muisto-olio, muistotyypit, content hash, SQLite-skeema             | Vedos 2 |
+| 02 | `03-design-02-associations.md`  | Assosiaatiorakenne, painot, päivätason seuranta                    | Vedos 2 |
+| 03 | `03-design-03-lifecycle.md`     | Luonti, working/consolidated, strength-malli, väritys              | Vedos 2 |
+| 04 | `03-design-04-retrieval.md`     | Hakuputki, assosiaatio-boosting, muistotyyppikohtainen strategia   | Vedos 1 |
+| 05 | `03-design-05-consolidation.md` | "Uni", Jaccard + embedding, duplikaatit, REM-vaihe                 | Vedos 1 |
+| 06 | `03-design-06-integration.md`   | Plugin-rakenne, hookit, system prompt, Osa A -riippuvuudet         | Vedos 1 |
+| 07 | `03-design-07-migration.md`     | memory-core → assosiatiivinen muisti, layout-versiointi, rollback  | Vedos 1 |
 
 ---
 
@@ -118,16 +116,20 @@ Miten plugin istuu OpenClaw:iin ja miten siihen siirrytään. Vastaa kysymyksiin
 | 2 | SQLite riittää backendiksi | Oikea skaala, ACID-transaktiot, sqlite-vec + FTS5 jo paikallaan | 1 |
 | 3 | Plugin ei valitse embedding-mallia – käyttäjän konfiguraatio | Parempi malli = paremmat assosiaatiot, mutta se on käyttäjän päätös | 1 |
 | 4 | Muistotyyppi vaikuttaa retrieval-strategiaan | Tool-usage: BM25-painotteinen, narratiivinen: embedding-painotteinen | 3 |
+| 5 | Kaksi tiedostoa: working.md + consolidated.md | Ihmisluettava, yksinkertainen elinkaari, selkeä jako | 1 |
+| 6 | Kaksisuuntaiset assosiaatiot, ei tyyppejä V1:ssä | Pelkkä weight riittää MVP:hen, tyypit V2:ssa | 1 |
+| 7 | Assosiaatiot päivätasolla, prosessointi konsolidaatiossa | Yksinkertaistaa reaaliaikaista koodia merkittävästi | 1–2 |
+| 8 | Strength-malli: decay nukkuessa (×0.977), retrieval vahvistaa | Eksponentiaalinen, [0,1], Ebbinghaus-yhteensopiva, 2 parametria | 2 |
+| 9 | 30 unen puoliintumisaika (λ=0.0231, η=0.7) | Armollinen, muistot elävät kuukausia ilman retrievalia | 2 |
 
 ---
 
 ## Avoimet kysymykset
 
-> Keskeiset avoimet kysymykset, jotka pitää ratkaista suunnittelun aikana. Kattavampi lista: `02-research-07-observations.md`.
+> Keskeiset avoimet kysymykset. Kattavampi lista: `02-research-07-observations.md`.
 
-1. Muistoyksikön maksimikoko? Dynaaminen vs. kiinteä, yläraja?
-2. Assosiaation suunta: yksisuuntainen vai kaksisuuntainen?
-3. Embedding-pohjainen konsolidaatio: luodaanko uusia assosiaatioita vai vain vahvistetaan olemassa olevia?
-4. Konsolidaation kosinisamankaltaisuuden kynnysarvo?
-5. Session-memory: hyödynnetäänkö session-memoryn tuottamia tiedostoja vai korvaako plugin session-tallennuksen kokonaan?
-6. Miten plugin pääsee embedding-infraan käsiksi? (Osa A -riippuvuus A6)
+1. Embedding-pohjainen konsolidaatio: luodaanko uusia assosiaatioita vai vain vahvistetaan olemassa olevia?
+2. Konsolidaation kosinisamankaltaisuuden kynnysarvo?
+3. Session-memory: hyödynnetäänkö session-memoryn tuottamia tiedostoja vai korvaako plugin session-tallennuksen kokonaan?
+4. Miten plugin pääsee embedding-infraan käsiksi? (Osa A -riippuvuus A6)
+5. Consolidated.md:n kasvun hallinta pitkällä aikavälillä?
