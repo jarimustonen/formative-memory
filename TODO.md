@@ -12,7 +12,7 @@ Design-dokumentit ovat `history/`-hakemistossa. Indeksi on `history/03-design-00
 
 Nämä on kirjattu indeksiin (`03-design-00-index.md`, Päätökset-taulukko). Lue ne ennen kuin jatkat – älä kyseenalaista ilman hyvää syytä.
 
-Tiivistelmä: content hash identiteettinä, SQLite backend, kaksi tiedostoa (working.md + consolidated.md), kaksisuuntaiset assosiaatiot ilman tyyppejä V1:ssä, päivätason co-retrieval-loki, strength-malli (decay nukkuessa ×0.977, retrieval vahvistaa η=0.7), 30 unen puoliintumisaika.
+Tiivistelmä: content hash identiteettinä, SQLite backend, kaksi tiedostoa (working.md + consolidated.md), kaksisuuntaiset assosiaatiot ilman tyyppejä V1:ssä, retrieval.log (append-only lokitiedosto, ainoa kirjoitus normaalikäytössä), kaikki muutokset konsolidaatiossa (nolla DB-kirjoituksia päivällä), strength-malli (decay nukkuessa ×0.977, retrieval vahvistaa η=0.7 × n), 30 unen puoliintumisaika.
 
 ## Seuraavat askeleet
 

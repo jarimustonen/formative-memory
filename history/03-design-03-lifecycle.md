@@ -16,15 +16,21 @@ Kuvata muiston koko elinkaari: miten se syntyy, miten se liikkuu working-muistis
 ## 2. Elinkaaren yleiskuva
 
 ```
-  Luonti ──→ working.md ──→ Konsolidaatio ("uni") ──→ consolidated.md
-                                    │
-                                    ├── Decay (strength × 0.977)
-                                    ├── Assosiaatiot päivitetään
-                                    ├── Duplikaatit yhdistetään
-                                    └── Kuolleet poistetaan (strength ≤ 0.05)
+  Päivän aikana:
+    Luonti ──→ working.md
+    Retrieval ──→ retrieval.log (append-only)
 
-  Retrieval (milloin tahansa) ──→ strength vahvistuu
+  Konsolidaatio ("uni"):
+    ├── Retrieval-vahvistus (retrieval.log → strength-päivitys)
+    ├── Decay (strength × 0.977)
+    ├── Assosiaatiot päivitetään (retrieval.log → co-retrieval-parit)
+    ├── Working → consolidated siirto
+    ├── Duplikaatit yhdistetään
+    ├── Kuolleet poistetaan (strength ≤ 0.05)
+    └── retrieval.log tyhjennetään
 ```
+
+**V1-periaate: nolla tietokantakirjoitusta normaalikäytössä.** Kaikki muutokset tapahtuvat konsolidaatiossa.
 
 ### 2.1 Kaksi vaihetta
 
@@ -78,12 +84,13 @@ strength ← strength × e^(-λ)
 - Käytännössä: `strength ← strength × 0.977` per uni
 - Puoliintumisaika: 30 unta
 
-**Retrieval (milloin tahansa):**
+**Retrieval-vahvistus (nukkuessa):**
 ```
-strength ← 1 - (1 - strength) × e^(-η)
+strength ← 1 - (1 - strength) × e^(-η × n)
 ```
 - `η = 0.7`
-- Yksi retrieval puolittaa välimatkan 1.0:aan
+- `n` = päivän retrieval-kertojen määrä (lasketaan retrieval.log:sta)
+- Yksi retrieval puolittaa välimatkan 1.0:aan, useampi vahvistaa enemmän
 
 ### 4.2 Ominaisuudet
 
@@ -91,8 +98,8 @@ strength ← 1 - (1 - strength) × e^(-η)
 - **Uusi muisto:** strength = 1.0
 - **Ei-haettu muisto 30 unen jälkeen:** strength ≈ 0.50
 - **Ei-haettu muisto 120 unen jälkeen:** strength ≈ 0.06 → lähestyy kuolemaa
-- **Päivittäin haettu:** konvergoituu ~0.66:een (vakiotila)
-- **Viikoittain haettu:** konvergoituu ~0.86:een
+- **Päivittäin haettu (1×):** konvergoituu ~0.66:een (vakiotila)
+- **Päivittäin haettu (3×):** konvergoituu korkeammalle (η×3 per uni)
 
 ### 4.3 Esimerkkitaulukko (ei-haettu muisto)
 
@@ -199,9 +206,10 @@ Konsolidaation yhteydessä muistoja voidaan "värittää":
 | - | ------ | --------- |
 | 1 | Decay vain konsolidaatiossa ("nukkuessa") | Yksinkertainen, ei reaaliaikaista päivitystarvetta |
 | 2 | λ = 0.0231 (30 unen puoliintumisaika) | Armollinen, muistot elävät kuukausia |
-| 3 | η = 0.7 (retrieval puolittaa välimatkan) | Yksi retrieval on merkittävä vahvistus |
+| 3 | η = 0.7 (retrieval puolittaa välimatkan) | Yksi retrieval on merkittävä vahvistus, useampi kumuloituu |
 | 4 | Working → consolidated konsolidaatiossa | Selkeä elinkaaren raja |
 | 5 | Väritys vain konsolidaatiossa (V1) | Reaaliaikainen väritys liian kallis MVP:lle |
+| 6 | Kaikki muutokset konsolidaatiossa (V1) | Nolla DB-kirjoituksia normaalikäytössä, retrieval.log ainoa kirjoitus |
 
 ---
 

@@ -29,6 +29,7 @@ Ensimmäisen version tulee olla **yksinkertainen** ja **laajennettava**. Yksinke
 3. **Decay vain nukkuessa** – ei reaaliaikaista rapautumista
 4. **Ei tick-mekanismia V1:ssä** – päivätaso riittää
 5. **Ei assosiaatiotyyppejä V1:ssä** – pelkkä weight
+6. **Nolla DB-kirjoituksia normaalikäytössä** – retrieval.log ainoa kirjoitus, kaikki prosessointi konsolidaatiossa
 
 ---
 
@@ -118,9 +119,10 @@ Miten agentti löytää relevantteja muistoja.
 | 4 | Muistotyyppi vaikuttaa retrieval-strategiaan | Tool-usage: BM25-painotteinen, narratiivinen: embedding-painotteinen | 3 |
 | 5 | Kaksi tiedostoa: working.md + consolidated.md | Ihmisluettava, yksinkertainen elinkaari, selkeä jako | 1 |
 | 6 | Kaksisuuntaiset assosiaatiot, ei tyyppejä V1:ssä | Pelkkä weight riittää MVP:hen, tyypit V2:ssa | 1 |
-| 7 | Assosiaatiot päivätasolla, prosessointi konsolidaatiossa | Yksinkertaistaa reaaliaikaista koodia merkittävästi | 1–2 |
+| 7 | Co-retrieval-seuranta lokitiedostoon (retrieval.log), prosessointi konsolidaatiossa | Ei DB-kirjoituksia normaalikäytössä, ihmisluettava, yksinkertainen | 1–2 |
 | 8 | Strength-malli: decay nukkuessa (×0.977), retrieval vahvistaa | Eksponentiaalinen, [0,1], Ebbinghaus-yhteensopiva, 2 parametria | 2 |
 | 9 | 30 unen puoliintumisaika (λ=0.0231, η=0.7) | Armollinen, muistot elävät kuukausia ilman retrievalia | 2 |
+| 10 | Kaikki muutokset konsolidaatiossa (V1) | Nolla DB-kirjoituksia normaalikäytössä, retrieval.log ainoa kirjoitus | 1–3 |
 
 ---
 

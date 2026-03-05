@@ -59,28 +59,32 @@ Assosiaatioita **ei päivitetä reaaliajassa**. Sen sijaan:
 
 Tämä yksinkertaistaa reaaliaikaista koodia merkittävästi.
 
-### 4.2 Daily co-retrieval -loki
+### 4.2 Retrieval-lokitiedosto
 
-Kun agentti hakee muistoja (memory_search), tuloksena saadut muistot kirjataan co-retrieval-lokiin:
+Co-retrieval-tapahtumat kirjataan append-only-lokitiedostoon `memory/retrieval.log`:
 
-```sql
-CREATE TABLE daily_co_retrievals (
-  date TEXT NOT NULL,            -- YYYY-MM-DD
-  memory_a TEXT NOT NULL,
-  memory_b TEXT NOT NULL,
-  count INTEGER DEFAULT 1,
-  PRIMARY KEY (date, memory_a, memory_b),
-  CHECK (memory_a < memory_b)
-);
+```
+2026-03-05T14:30:00Z search a1b2c3d4 e5f6a7b8 c9d0e1f2
+2026-03-05T14:35:00Z search a1b2c3d4 f3a4b5c6
+2026-03-05T14:35:12Z store  f3a4b5c6 context:a1b2c3d4,e5f6a7b8
 ```
 
-Esimerkki: haku palauttaa muistot {A, B, C} → lokiin kirjataan parit (A,B), (A,C), (B,C). Jos sama pari esiintyy uudelleen samana päivänä → `count++`.
+- `search` = nämä muistot palautuivat yhdessä (co-retrieval)
+- `store` = uusi muisto luotiin näiden kontekstissa (co-creation)
+
+Esimerkki: haku palauttaa muistot {A, B, C} → lokiin kirjataan yksi `search`-rivi kolmella hash:lla. Konsolidaatio laskee parit (A-B, A-C, B-C) ja niiden esiintymiskerrat.
+
+**Miksi lokitiedosto eikä SQLite-taulu:**
+- Ei tietokantakirjoituksia normaalikäytössä (vain tiedosto-append)
+- Ihmisluettava – näkee suoraan mitä agentti on hakenut
+- Debug-ystävällinen – retrieval-patternit näkyvissä ennen konsolidaatiota
+- Volyymi pieni (~100–5000 paria/päivä)
 
 ### 4.3 Co-creation (uuden muiston luonti)
 
-Kun uusi muisto M luodaan, se saa välittömän assosiaation niihin muistoihin, jotka ovat juuri haettu kontekstiin (viimeisin memory_search -tulos).
+Kun uusi muisto M luodaan, kirjataan `store`-rivi retrieval.log:iin. `context:`-kentässä luetellaan ne muistot, jotka ovat juuri haettu kontekstiin (viimeisin memory_search -tulos).
 
-Tämäkin kirjataan co-retrieval-lokiin, ei suoraan assosiaatiotauluun.
+Konsolidaatio käsittelee `store`-rivit samalla logiikalla kuin `search`-rivit – luo assosiaatioparit uuden muiston ja kontekstimuistojen välille.
 
 ---
 
@@ -88,7 +92,7 @@ Tämäkin kirjataan co-retrieval-lokiin, ei suoraan assosiaatiotauluun.
 
 ### 5.1 Co-retrieval → assosiaatiot
 
-Konsolidaatio lukee päivän co-retrieval-lokin ja päivittää varsinaiset assosiaatiot:
+Konsolidaatio parsii `retrieval.log`:n ja päivittää varsinaiset assosiaatiot:
 
 ```
 Jokaiselle parille (A, B) lokissa:
@@ -114,7 +118,7 @@ Missä `λ_assoc` on assosiaation decay-nopeus (voi olla eri kuin muistojen λ).
 
 ### 5.3 Lokin tyhjennys
 
-Konsolidaation jälkeen kyseisen päivän co-retrieval-loki tyhjennetään.
+Konsolidaation jälkeen `retrieval.log` tyhjennetään (tai nimetään uudelleen arkistointia varten, esim. `retrieval-2026-03-05.log`).
 
 ---
 
@@ -170,15 +174,15 @@ CREATE INDEX idx_assoc_weight ON associations(weight DESC);
 | - | ------ | --------- |
 | 1 | Kaksisuuntaiset assosiaatiot | Yksinkertainen, symmetrinen malli |
 | 2 | Ei assosiaatiotyyppejä V1:ssä | Pelkkä weight riittää, tyypit V2:ssa |
-| 3 | Päivätason seuranta, päivitys konsolidaatiossa | Yksinkertaistaa reaaliaikaista koodia merkittävästi |
+| 3 | Co-retrieval-seuranta lokitiedostoon (retrieval.log), prosessointi konsolidaatiossa | Ei DB-kirjoituksia normaalikäytössä, ihmisluettava, yksinkertainen |
 | 4 | Sama vahvistuskaava kuin muistoille | 1 - (1-w) × e^(-α×count), ei ylitä 1.0 |
 
 ---
 
 ## 10. Kytkökset muihin design-dokumentteihin
 
-- **design-01 (Tietomalli):** associations-taulun skeema, daily_co_retrievals
+- **design-01 (Tietomalli):** associations-taulun skeema, retrieval.log-formaatti
 - **design-03 (Elinkaari):** Assosiaatioiden luonti muiston syntyessä
 - **design-04 (Retrieval):** Assosiaatio-boosting hakutuloksissa
 - **design-05 (Konsolidaatio):** Co-retrieval-lokin prosessointi, kertautuva assosiaatio, pruning
-- **design-06 (Integraatio):** after_tool_call-hookista co-retrieval-loki
+- **design-06 (Integraatio):** after_tool_call-hookista retrieval.log-kirjaus
