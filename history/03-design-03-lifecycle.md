@@ -1,7 +1,7 @@
 # Design-03: Muiston elinkaari
 
-> **Tila:** Vedos 2 (yksinkertaistettu malli)
-> **Päivitetty:** 28.2.2026
+> **Tila:** Vedos 3
+> **Päivitetty:** 6.3.2026
 > **Riippuvuudet:** design-01 (tietomalli), design-02 (assosiaatiot)
 > **Ruokkii:** design-04 (retrieval), design-05 (konsolidaatio)
 
@@ -21,10 +21,10 @@ Kuvata muiston koko elinkaari: miten se syntyy, miten se liikkuu working-muistis
     Retrieval ──→ retrieval.log (append-only)
 
   Konsolidaatio ("uni"):
-    ├── Retrieval-vahvistus (retrieval.log → strength-päivitys)
-    ├── Decay (strength × 0.977)
-    ├── Assosiaatiot päivitetään (retrieval.log → co-retrieval-parit)
-    ├── Working → consolidated siirto
+    ├── Retrieval-vahvistus (retrieval.log → painotettu strength-päivitys)
+    ├── Decay: working ×0.906, consolidated ×0.977
+    ├── Assosiaatiot päivitetään (retrieval.log → painotetut co-retrieval-parit)
+    ├── Working → consolidated siirto (strength → 1.0)
     ├── Duplikaatit yhdistetään
     ├── Kuolleet poistetaan (strength ≤ 0.05)
     └── retrieval.log tyhjennetään
@@ -50,59 +50,91 @@ Konsolidaatio siirtää muistot working → consolidated. Tämä on selkeä elin
 Agentti kutsuu `memory_store`-työkalua:
 - Agentti valitsee tyypin (narrative, fact, decision...)
 - Agentti kirjoittaa sisällön narratiivisena
-- Plugin laskee hashin, lisää chunkin working.md:hen, päivittää tietokannan
-- Co-retrieval-lokiin kirjataan yhteys kontekstissa oleviin muistoihin
+- Plugin laskee hashin, lisää chunkin working.md:hen
+- Plugin lisää muiston tietokantaan (embedding + FTS indeksointia varten, jotta muisto on haettavissa heti)
+- retrieval.log:iin kirjataan `store`-rivi kontekstissa olevilla muistoilla
+
+**Huom:** Uuden muiston luonti on ainoa DB-kirjoitus normaalikäytössä. Se on välttämätön, koska muuten muistoa ei voisi hakea ennen seuraavaa konsolidaatiota.
 
 ### 3.2 Automaattinen kaappaus (hookista)
 
 Plugin observoi `agent_end` tai `before_reset`-hookista:
 - Analysoi keskustelun ja tunnistaa tallennettavat muistot
-- Muistot lisätään working.md:hen source=`hook_capture`
+- Muistot lisätään working.md:hen ja tietokantaan (source=`hook_capture`)
+- retrieval.log:iin kirjataan `store`-rivi jokaiselle kaapatulle muistolle
 
 ### 3.3 Konsolidaatio (yhdistäminen)
 
 Konsolidaatio voi luoda uusia muistoja (design-05):
 - Useasta muistosta syntyy yksi tiivistetty muisto (interpretation)
-- Nämä syntyvät suoraan consolidated.md:hen
+- Nämä syntyvät suoraan consolidated.md:hen ja tietokantaan (source=`consolidation`)
 
 ### 3.4 Importointi (migraatio)
 
 Memory-core-muistojen tuonti (design-07):
-- Importoidut muistot menevät suoraan consolidated.md:hen (ne ovat jo "vanhoja")
+- Importoidut muistot menevät suoraan consolidated.md:hen ja tietokantaan (source=`import`)
 
 ---
 
 ## 4. Strength-malli
 
-### 4.1 Kaksi operaatiota
+### 4.1 Decay – eri nopeus working- ja consolidated-muistoille
 
-**Decay (nukkuessa):**
 ```
 strength ← strength × e^(-λ)
 ```
-- `λ = ln(2) / 30 ≈ 0.0231`
-- Käytännössä: `strength ← strength × 0.977` per uni
-- Puoliintumisaika: 30 unta
 
-**Retrieval-vahvistus (nukkuessa):**
+| Muiston tila | λ | Puoliintumisaika | Kerroin/uni |
+| --- | --- | --- | --- |
+| **Working** (konsolidoimaton) | `ln(2)/7 ≈ 0.099` | 7 unta | ×0.906 |
+| **Consolidated** (konsolidoitu) | `ln(2)/30 ≈ 0.0231` | 30 unta | ×0.977 |
+
+Working-muistot rapautuvat ~4× nopeammin. Tämä on tarkoituksellista:
+- Tuoreet muistot jotka eivät ole relevantteja häviävät nopeasti
+- Konsolidaatio "testaa" muiston – jos se selviää, se on kestävämpi
+- Konsolidoimaton muisto joka ei koskaan haeta → kuolee ~5 viikossa (vs. ~4kk konsolidoitu)
+
+### 4.2 Retrieval-vahvistus – painotettu palautteella
+
 ```
-strength ← 1 - (1 - strength) × e^(-η × n)
+strength ← 1 - (1 - strength) × e^(-η × w)
 ```
-- `η = 0.7`
-- `n` = päivän retrieval-kertojen määrä (lasketaan retrieval.log:sta)
-- Yksi retrieval puolittaa välimatkan 1.0:aan, useampi vahvistaa enemmän
 
-### 4.2 Ominaisuudet
+Missä `w` on painotettu retrieval-pisteet päivältä (lasketaan retrieval.log:sta):
 
-- **Aina (0, 1]** – molemmat kaavat ovat multiplikatiivisia
-- **Uusi muisto:** strength = 1.0
-- **Ei-haettu muisto 30 unen jälkeen:** strength ≈ 0.50
-- **Ei-haettu muisto 120 unen jälkeen:** strength ≈ 0.06 → lähestyy kuolemaa
-- **Päivittäin haettu (1×):** konvergoituu ~0.66:een (vakiotila)
-- **Päivittäin haettu (3×):** konvergoituu korkeammalle (η×3 per uni)
+| Tapahtuma | Paino | Perustelu |
+| --- | --- | --- |
+| `search` (ilman palautetta) | 1.0 | Agentti haki aktiivisesti |
+| `feedback` ★★★ | 1.0 | Täysin relevantti |
+| `feedback` ★★ | 0.67 | Osittain relevantti |
+| `feedback` ★ | 0.33 | Heikosti relevantti |
+| `recall` (ilman palautetta) | 0.5 | Passiivinen injektio |
+| `store context:` | 2.0 | Vahvin signaali – agentti loi uutta tämän perusteella |
 
-### 4.3 Esimerkkitaulukko (ei-haettu muisto)
+- `η = 0.7` → peruskerroin
+- Tapahtuu **konsolidaatiossa**, ei reaaliajassa
 
+### 4.3 Konsolidaation strength-nollaus
+
+Kun muisto siirtyy working → consolidated:
+- **Strength nollataan 1.0:aan** – uusi alku pitkäkestomuistina
+- Hitaampi decay (λ_consolidated) alkaa vasta tästä
+- Biologinen analogia: pitkäkestomuistiin siirtyminen = muisto on "kertaalleen prosessoitu" ja kestävämpi
+
+### 4.4 Esimerkkitaulukot
+
+**Working-muisto (ei haettu, λ_working):**
+```
+Uni  1:  0.906
+Uni  3:  0.744
+Uni  7:  0.500
+Uni 14:  0.250
+Uni 21:  0.125
+Uni 28:  0.063
+Uni 30:  0.050  ← kuolema-kynnys
+```
+
+**Consolidated-muisto (ei haettu, λ_consolidated):**
 ```
 Uni  1:  0.977
 Uni  7:  0.851
@@ -113,13 +145,13 @@ Uni 120: 0.063
 Uni 130: 0.050  ← kuolema-kynnys
 ```
 
-### 4.4 Muiston kuolema
+### 4.5 Muiston kuolema
 
 - Strength ≤ 0.05 → konsolidaatio merkitsee kuolleeksi
 - **Lisäehto:** jos muistolla on vahvoja assosiaatioita (weight > 0.3), se **ei kuole** – assosiaatio pitää sen elossa
 - Kuolleet muistot poistetaan tiedostosta ja tietokannasta konsolidaation yhteydessä
 
-### 4.5 V2-laajennettavuus
+### 4.6 V2-laajennettavuus
 
 Myöhemmin voidaan lisätä:
 - **Muistotyyppikohtainen λ:** preference rapautuu hitaammin, tool_usage nopeammin
@@ -130,13 +162,16 @@ Myöhemmin voidaan lisätä:
 
 ## 5. Temporaalinen tila
 
-### 5.1 Kolme tilaa
+### 5.1 Neljä tilaa
 
 | Tila | Merkitys | Esimerkki |
 | --- | --- | --- |
 | `future` | Ei vielä tapahtunut | "Jari kertoi menevänsä Tampereelle ma 2.3." |
 | `present` | Tapahtuu parhaillaan | "Jari on nyt Tampereella" |
 | `past` | Jo tapahtunut | "Jari kävi Tampereella" |
+| `none` | Ei temporaalista ankkuria | "Jarin koiran nimi on Namu" |
+
+`none` on oletus muistoille joilla ei ole päivämääräankkuria (esim. faktat, preferenssit). Näille ei sovelleta temporaalista boostingia.
 
 ### 5.2 Siirtymät
 
@@ -146,11 +181,17 @@ Temporaalinen tila siirtyy **automaattisesti** `temporal_anchor`-päivämäärä
 
 **Tarkistuspiste:** Konsolidaatiossa tarkistetaan kaikkien muistojen temporaaliset siirtymät. Myös before_prompt_build-hookissa voidaan tarkistaa (V2).
 
-### 5.3 Transitiopäivien boosting
+### 5.3 Transitiopäivien pakkoinjektio
 
 Jarin idea: muisto assosioituu voimakkaammin transitiopäiviin. Käytännössä:
-- Muiston strength saa tilapäisen boosting retrievalissa kun `temporal_state` on juuri muuttumassa
-- Tämä toteutetaan hakuputkessa (design-04), ei strength-mallissa
+
+Kun muiston `temporal_state` on siirtymässä (future→present tai present→past), muisto **pakotetaan mukaan kontekstiin** auto-recall-vaiheessa (before_prompt_build). Tämä ei ole pelkkä boosting hakutuloksissa – se on pakollinen injektio.
+
+- Konsolidaatio tarkistaa temporaaliset siirtymät ja merkitsee muistot jotka ovat transitiossa
+- Before_prompt_build injektoi nämä kontekstiin riippumatta haun tuloksista
+- Agentti näkee ne ja voi toimia niiden perusteella ("Huomenna Jari palaa matkalta")
+
+Tämä varmistaa, ettei agentti "unohda" ajallisesti kriittisiä asioita.
 
 ### 5.4 Epistemologinen tarkkuus
 
@@ -205,11 +246,13 @@ Konsolidaation yhteydessä muistoja voidaan "värittää":
 | # | Päätös | Perustelu |
 | - | ------ | --------- |
 | 1 | Decay vain konsolidaatiossa ("nukkuessa") | Yksinkertainen, ei reaaliaikaista päivitystarvetta |
-| 2 | λ = 0.0231 (30 unen puoliintumisaika) | Armollinen, muistot elävät kuukausia |
-| 3 | η = 0.7 (retrieval puolittaa välimatkan) | Yksi retrieval on merkittävä vahvistus, useampi kumuloituu |
-| 4 | Working → consolidated konsolidaatiossa | Selkeä elinkaaren raja |
+| 2 | Eri decay: working 7 unta, consolidated 30 unta | Tuoreet karsiutuvat nopeasti, konsolidoidut kestävät |
+| 3 | η = 0.7 (retrieval puolittaa välimatkan), painotettu palautteella | Feedback-tähdet ja store-konteksti painottavat eri tavoin |
+| 4 | Working → consolidated: strength → 1.0 | Pitkäkestomuistiin siirtyminen = vahvempi alku |
 | 5 | Väritys vain konsolidaatiossa (V1) | Reaaliaikainen väritys liian kallis MVP:lle |
-| 6 | Kaikki muutokset konsolidaatiossa (V1) | Nolla DB-kirjoituksia normaalikäytössä, retrieval.log ainoa kirjoitus |
+| 6 | Tilamuutokset konsolidaatiossa (V1) | Retrieval.log + uuden muiston luonti ainoat kirjoitukset päivällä |
+| 7 | Temporal state: future/present/past/none | None = ei ankkuria (faktat, preferenssit) |
+| 8 | Transitiopäivien pakkoinjektio | Siirtymässä olevat muistot pakotetaan kontekstiin |
 
 ---
 

@@ -1,7 +1,7 @@
 # Design-02: Assosiaatiot
 
-> **Tila:** Vedos 2 (yksinkertaistettu malli)
-> **Päivitetty:** 28.2.2026
+> **Tila:** Vedos 3
+> **Päivitetty:** 6.3.2026
 > **Riippuvuudet:** design-01 (tietomalli)
 > **Ruokkii:** design-03 (elinkaari), design-04 (retrieval), design-05 (konsolidaatio)
 
@@ -64,13 +64,16 @@ Tämä yksinkertaistaa reaaliaikaista koodia merkittävästi.
 Co-retrieval-tapahtumat kirjataan append-only-lokitiedostoon `memory/retrieval.log`:
 
 ```
-2026-03-05T14:30:00Z search a1b2c3d4 e5f6a7b8 c9d0e1f2
-2026-03-05T14:35:00Z search a1b2c3d4 f3a4b5c6
-2026-03-05T14:35:12Z store  f3a4b5c6 context:a1b2c3d4,e5f6a7b8
+2026-03-05T14:30:00Z search   a1b2c3d4 e5f6a7b8 c9d0e1f2
+2026-03-05T14:30:00Z recall   a1b2c3d4 c9d0e1f2
+2026-03-05T14:31:00Z feedback a1b2c3d4:3 e5f6a7b8:2 c9d0e1f2:1 "faktat osuivat"
+2026-03-05T14:35:12Z store    f3a4b5c6 context:a1b2c3d4,e5f6a7b8
 ```
 
-- `search` = nämä muistot palautuivat yhdessä (co-retrieval)
-- `store` = uusi muisto luotiin näiden kontekstissa (co-creation)
+- `search` = agentti haki aktiivisesti muistoja
+- `recall` = plugin injektoi muistoja kontekstiin (auto-recall)
+- `feedback` = agentti arvioi muistojen relevanssin (1-3 tähteä + kommentti)
+- `store` = uusi muisto luotiin näiden kontekstissa (co-creation, vahvin signaali)
 
 Esimerkki: haku palauttaa muistot {A, B, C} → lokiin kirjataan yksi `search`-rivi kolmella hash:lla. Konsolidaatio laskee parit (A-B, A-C, B-C) ja niiden esiintymiskerrat.
 
@@ -90,21 +93,32 @@ Konsolidaatio käsittelee `store`-rivit samalla logiikalla kuin `search`-rivit �
 
 ## 5. Assosiaatioiden päivitys konsolidaatiossa
 
-### 5.1 Co-retrieval → assosiaatiot
+### 5.1 Co-retrieval → assosiaatiot (painotettu palautteella)
 
 Konsolidaatio parsii `retrieval.log`:n ja päivittää varsinaiset assosiaatiot:
 
 ```
 Jokaiselle parille (A, B) lokissa:
+  laske painotettu count w:
+    search-riviltä: +1.0 per esiintymä
+    feedback-riviltä: +stars/3 per esiintymä (★=0.33, ★★=0.67, ★★★=1.0)
+    store-riviltä: +2.0 per esiintymä (vahvin signaali)
+    recall-riviltä: +0.5 per esiintymä
+
   jos assosiaatio (A, B) ei ole olemassa:
-    luo uusi assosiaatio, weight = α × count
+    luo uusi assosiaatio, weight = α × w
   muuten:
-    vahvista: weight ← 1 - (1 - weight) × e^(-α × count)
+    vahvista: weight ← 1 - (1 - weight) × e^(-α × w)
 ```
 
 Missä `α` on vahvistuskerroin (konfiguroitava, esim. 0.1).
 
-**Vahvistuskaava** on sama "jäljellä olevan välimatkan kutistaminen" kuin retrieval-vahvistus – ei voi ylittää 1.0:aa, hidastuu lähellä huippua.
+**Painotuksen perustelu:**
+- `store` saa 2× painon koska agentti loi uutta näiden muistojen perusteella – vahvin relevanssi-indikaattori
+- `feedback` ★★★ saa täyden painon, ★ vain kolmasosan
+- `recall` saa heikomman painon koska se on passiivinen injektio
+
+**Vahvistuskaava** on sama "jäljellä olevan välimatkan kutistaminen" kuin strength-vahvistus – ei voi ylittää 1.0:aa, hidastuu lähellä huippua.
 
 ### 5.2 Assosiaatioiden decay
 
@@ -176,6 +190,7 @@ CREATE INDEX idx_assoc_weight ON associations(weight DESC);
 | 2 | Ei assosiaatiotyyppejä V1:ssä | Pelkkä weight riittää, tyypit V2:ssa |
 | 3 | Co-retrieval-seuranta lokitiedostoon (retrieval.log), prosessointi konsolidaatiossa | Ei DB-kirjoituksia normaalikäytössä, ihmisluettava, yksinkertainen |
 | 4 | Sama vahvistuskaava kuin muistoille | 1 - (1-w) × e^(-α×count), ei ylitä 1.0 |
+| 5 | Painotettu assosiaatiovahvistus: store 2×, feedback tähdet, recall ½ | Eri signaalit = eri relevanssi |
 
 ---
 

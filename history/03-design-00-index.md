@@ -53,10 +53,12 @@ Perusta kaikelle muulle.
 ### Vaihe 2: Muistin elinkaari (design-03)
 
 **Ratkaistu:**
-- Strength-malli: decay × 0.977 per uni, retrieval puolittaa välimatkan 1.0:aan
-- Puoliintumisaika 30 unta (λ = 0.0231, η = 0.7)
+- Eri decay-nopeus: working ×0.906/uni (7 unen puoliintumisaika), consolidated ×0.977/uni (30 unen puoliintumisaika)
+- Konsolidaatio nollaa strength 1.0:aan (working → consolidated -siirto)
+- Retrieval-vahvistus painotettu palautteella: store 2×, search 1×, feedback ★/3, recall ½
 - Kuolema: strength ≤ 0.05 (ellei vahvoja assosiaatioita)
-- Temporaalinen tila: future/present/past, automaattiset siirtymät
+- Temporaalinen tila: future/present/past/none, automaattiset siirtymät
+- Transitiopäivien pakkoinjektio kontekstiin
 - Väritys vain konsolidaatiossa (V1)
 
 **Avoimet:**
@@ -97,9 +99,9 @@ Miten agentti löytää relevantteja muistoja.
 | #  | Tiedosto                     | Sisältö                                                            | Tila    |
 | -- | ---------------------------- | ------------------------------------------------------------------ | ------- |
 | 00 | `03-design-00-index.md`         | Tämä indeksi ja vaiheistussuunnitelma                              | –       |
-| 01 | `03-design-01-data-model.md`    | Muisto-olio, muistotyypit, content hash, SQLite-skeema             | Vedos 2 |
-| 02 | `03-design-02-associations.md`  | Assosiaatiorakenne, painot, päivätason seuranta                    | Vedos 2 |
-| 03 | `03-design-03-lifecycle.md`     | Luonti, working/consolidated, strength-malli, väritys              | Vedos 2 |
+| 01 | `03-design-01-data-model.md`    | Muisto-olio, muistotyypit, content hash, SQLite-skeema             | Vedos 3 |
+| 02 | `03-design-02-associations.md`  | Assosiaatiorakenne, painot, päivätason seuranta                    | Vedos 3 |
+| 03 | `03-design-03-lifecycle.md`     | Luonti, working/consolidated, strength-malli, väritys              | Vedos 3 |
 | 04 | `03-design-04-retrieval.md`     | Hakuputki, assosiaatio-boosting, muistotyyppikohtainen strategia   | Vedos 1 |
 | 05 | `03-design-05-consolidation.md` | "Uni", Jaccard + embedding, duplikaatit, REM-vaihe                 | Vedos 1 |
 | 06 | `03-design-06-integration.md`   | Plugin-rakenne, hookit, system prompt, Osa A -riippuvuudet         | Vedos 1 |
@@ -120,9 +122,12 @@ Miten agentti löytää relevantteja muistoja.
 | 5 | Kaksi tiedostoa: working.md + consolidated.md | Ihmisluettava, yksinkertainen elinkaari, selkeä jako | 1 |
 | 6 | Kaksisuuntaiset assosiaatiot, ei tyyppejä V1:ssä | Pelkkä weight riittää MVP:hen, tyypit V2:ssa | 1 |
 | 7 | Co-retrieval-seuranta lokitiedostoon (retrieval.log), prosessointi konsolidaatiossa | Ei DB-kirjoituksia normaalikäytössä, ihmisluettava, yksinkertainen | 1–2 |
-| 8 | Strength-malli: decay nukkuessa (×0.977), retrieval vahvistaa | Eksponentiaalinen, [0,1], Ebbinghaus-yhteensopiva, 2 parametria | 2 |
-| 9 | 30 unen puoliintumisaika (λ=0.0231, η=0.7) | Armollinen, muistot elävät kuukausia ilman retrievalia | 2 |
-| 10 | Kaikki muutokset konsolidaatiossa (V1) | Nolla DB-kirjoituksia normaalikäytössä, retrieval.log ainoa kirjoitus | 1–3 |
+| 8 | Eri decay working- ja consolidated-muistoille | Working: 7 unen puoliintumisaika (×0.906), consolidated: 30 unen (×0.977) | 2 |
+| 9 | Konsolidaatio nollaa strength 1.0:aan | Working → consolidated = uusi alku pitkäkestomuistina | 2 |
+| 10 | Kaikki muutokset konsolidaatiossa (V1) | Nolla DB-kirjoituksia normaalikäytössä, paitsi uuden muiston luonti | 1–3 |
+| 11 | Painotettu retrieval-vahvistus (η=0.7) | store 2×, search 1×, feedback ★/3, recall ½ – eri signaalit = eri relevanssi | 2 |
+| 12 | Temporaalinen tila: future/present/past/none | None = ei ankkuria (faktat, preferenssit), ei temporaalista boostingia | 2 |
+| 13 | Transitiopäivien pakkoinjektio | Siirtymässä olevat muistot pakotetaan kontekstiin auto-recall-vaiheessa | 2 |
 
 ---
 

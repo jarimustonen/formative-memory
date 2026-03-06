@@ -1,7 +1,7 @@
 # Design-01: Tietomalli – Muisto-olio ja muistotyypit
 
-> **Tila:** Vedos 2 (yksinkertaistettu malli)
-> **Päivitetty:** 28.2.2026
+> **Tila:** Vedos 3
+> **Päivitetty:** 6.3.2026
 > **Riippuvuudet:** Research-sarja (valmis), observations (02-research-07)
 > **Ruokkii:** Kaikki muut design-dokumentit
 
@@ -172,20 +172,24 @@ Jarin koiran nimi on Namu.
 Co-retrieval-tapahtumat kirjataan append-only-lokitiedostoon `memory/retrieval.log` normaalikäytössä. Konsolidaatio parsii lokin ja prosessoi assosiaatiot.
 
 ```
-2026-03-05T14:30:00Z search a1b2c3d4 e5f6a7b8 c9d0e1f2
-2026-03-05T14:35:00Z search a1b2c3d4 f3a4b5c6
-2026-03-05T14:35:12Z store  f3a4b5c6 context:a1b2c3d4,e5f6a7b8
+2026-03-05T14:30:00Z search   a1b2c3d4 e5f6a7b8 c9d0e1f2
+2026-03-05T14:30:00Z recall   a1b2c3d4 c9d0e1f2
+2026-03-05T14:31:00Z feedback a1b2c3d4:3 e5f6a7b8:2 c9d0e1f2:1 "faktat osuivat, narratiivi vanhentunut"
+2026-03-05T14:35:12Z store    f3a4b5c6 context:a1b2c3d4,e5f6a7b8
 ```
 
-- `search` = nämä muistot palautuivat yhdessä (co-retrieval)
-- `store` = uusi muisto luotiin näiden kontekstissa (co-creation)
-- Konsolidaatio parsii lokin, päivittää assosiaatiot, tyhjentää/arkistoi lokin
+Neljä tapahtumatyyppiä:
+- `search` = agentti haki aktiivisesti muistoja (memory_search)
+- `recall` = plugin injektoi muistoja kontekstiin (auto-recall, before_prompt_build)
+- `feedback` = agentti arvioi muistojen relevanssin (1-3 tähteä + vapaamuotoinen kommentti)
+- `store` = uusi muisto luotiin näiden kontekstissa (co-creation, vahvin signaali)
 
-Retrieval.log palvelee kahta tarkoitusta:
+Retrieval.log palvelee kolmea tarkoitusta:
 1. **Co-retrieval-parit** → assosiaatiopäivitykset konsolidaatiossa
 2. **Yksittäisten muistojen retrieval-kerrat** → strength-vahvistus konsolidaatiossa
+3. **Relevanssi-palaute** → painottaa vahvistusta ja ruokkii konsolidaation päätöksiä
 
-**V1-periaate: nolla tietokantakirjoitusta normaalikäytössä.** Kaikki muutokset (strength, assosiaatiot, decay) tapahtuvat konsolidaatiossa. Päivän aikana plugin vain lisää rivejä lokiin ja lukee tietokantaa hakujen yhteydessä.
+**V1-periaate: minimoidaan tietokantakirjoitukset normaalikäytössä.** Kaikki tilamuutokset (strength, assosiaatiot, decay) tapahtuvat konsolidaatiossa. Päivän aikana plugin lisää rivejä lokiin ja lukee tietokantaa hakujen yhteydessä. Ainoa poikkeus: uuden muiston luonti (memory_store, hook_capture) vaatii DB-kirjoituksen, jotta muisto on haettavissa heti.
 
 Perusteet:
 - Ei tietokantakirjoituksia normaalikäytössä (vain tiedosto-append)
@@ -268,39 +272,62 @@ Tallennetaan sekä `memory/.layout.json`-tiedostoon **että** `state`-tauluun ti
 
 ## 5. Strength-malli (decay & retrieval)
 
-Muiston vahvuus (`strength`) muuttuu kahdella tavalla:
+Muiston vahvuus (`strength`) muuttuu konsolidaatiossa kolmella tavalla:
 
-### 5.1 Decay (nukkuessa)
+### 5.1 Decay (nukkuessa) – eri nopeus working- ja consolidated-muistoille
 
 ```
 strength ← strength × e^(-λ)
 ```
 
-- `λ = ln(2) / 30 ≈ 0.0231` → puoliintumisaika 30 unta
-- Käytännössä: `strength ← strength × 0.977` per uni
-- Tapahtuu **vain** konsolidaatiossa ("uni"), ei reaaliajassa
+| Muiston tila | λ | Puoliintumisaika | Kerroin/uni |
+| --- | --- | --- | --- |
+| **Working** (konsolidoimaton) | `ln(2)/7 ≈ 0.099` | 7 unta | ×0.906 |
+| **Consolidated** (konsolidoitu) | `ln(2)/30 ≈ 0.0231` | 30 unta | ×0.977 |
 
-### 5.2 Retrieval-vahvistus (nukkuessa)
+Working-muistot rapautuvat ~4× nopeammin. Tämä on tarkoituksellista:
+- Tuoreet muistot jotka eivät ole relevantteja häviävät nopeasti
+- Konsolidaatio "testaa" muiston – jos se selviää, se on kestävämpi
+- Konsolidaation läpäisseet muistot saavat strength → 1.0 (uusi alku pitkäkestomuistina)
+
+### 5.2 Retrieval-vahvistus (nukkuessa) – painotettu palautteella
 
 ```
-strength ← 1 - (1 - strength) × e^(-η × n)
+strength ← 1 - (1 - strength) × e^(-η × w)
 ```
 
-- `η = 0.7` → yksi retrieval puolittaa välimatkan 1.0:aan
-- `n` = päivän retrieval-kertojen määrä (lasketaan retrieval.log:sta)
+Missä `w` on painotettu retrieval-pisteet päivältä (lasketaan retrieval.log:sta):
+
+| Tapahtuma | Paino | Perustelu |
+| --- | --- | --- |
+| `search` (ilman palautetta) | 1.0 per kerta | Agentti haki aktiivisesti |
+| `feedback` ★★★ | 3/3 = 1.0 | Täysin relevantti |
+| `feedback` ★★ | 2/3 ≈ 0.67 | Osittain relevantti |
+| `feedback` ★ | 1/3 ≈ 0.33 | Heikosti relevantti |
+| `recall` (ilman palautetta) | 0.5 per kerta | Passiivinen injektio, ei vahvistusta |
+| `store context:` | 2.0 per kerta | Agentti loi uutta tämän perusteella – vahvin signaali |
+
+Esimerkki: muisto haettiin 2× searchilla (1.0+1.0), sai palautteen ★★★ (1.0) ja oli kontekstina uudelle muistolle (2.0) → `w = 4.0`.
+
+- `η = 0.7` → peruskerroin
 - Tapahtuu **konsolidaatiossa**, ei reaaliajassa
 
-### 5.3 Ominaisuudet
+### 5.3 Konsolidaation strength-nollaus
+
+Kun muisto siirtyy working → consolidated, sen strength **nollataan 1.0:aan**. Tämä simuloi biologista pitkäkestomuistiin siirtymistä: konsolidoitu muisto on "uudelleensynnyttynyt" vahvempana.
+
+### 5.4 Ominaisuudet
 
 - Aina (0, 1] – molemmat kaavat ovat multiplikatiivisia
 - Eksponentiaalinen: rapautuminen kiihtyy ilman retrievalia, vahvistuminen hidastuu lähellä 1.0
 - Ebbinghaus-yhteensopiva: ei-haettu muisto noudattaa klassista unohtamiskäyrää
-- Kaksi konfiguroitavaa parametria: `λ` (decay-nopeus) ja `η` (reinforcement-vahvuus)
+- Working-muistot ovat konsolidaatiokandidaatteja, consolidated-muistot ovat kestäviä
 
-### 5.4 Muiston kuolema
+### 5.5 Muiston kuolema
 
 - Strength ≤ 0.05 → konsolidaatio tunnistaa kuolleeksi
-- Kuollut muisto poistetaan tiedostosta ja tietokannasta
+- **Lisäehto:** jos muistolla on vahvoja assosiaatioita (weight > 0.3), se **ei kuole**
+- Kuolleet muistot poistetaan tiedostosta ja tietokannasta
 - Assosiaatiot poistetaan
 
 ---
@@ -321,9 +348,11 @@ strength ← 1 - (1 - strength) × e^(-η × n)
 | 2 | SQLite backendiksi | ACID, sqlite-vec + FTS5, oikea skaala |
 | 3 | Plugin ei valitse embedding-mallia | Käyttäjän konfiguraatio |
 | 4 | Kaksi tiedostoa: working.md + consolidated.md | Ihmisluettava, yksinkertainen, selkeä elinkaari |
-| 5 | Strength-malli: decay nukkuessa, retrieval vahvistaa | Eksponentiaalinen, [0,1], kaksi parametria |
-| 6 | 30 unen puoliintumisaika (λ = 0.0231) | Armollinen, muistot elävät kuukausia |
-| 7 | Co-retrieval-seuranta lokitiedostoon (retrieval.log) | Ei DB-kirjoituksia normaalikäytössä, ihmisluettava, debug-ystävällinen |
+| 5 | Strength-malli: decay nukkuessa, retrieval vahvistaa | Eksponentiaalinen, [0,1] |
+| 6 | Eri decay-nopeus: working 7 unta, consolidated 30 unta | Tuoreet muistot karsiutuvat nopeasti, konsolidoidut kestävät |
+| 7 | Konsolidaation jälkeen strength → 1.0 | Pitkäkestomuistiin siirtyminen = uusi alku |
+| 8 | retrieval.log: search, recall, feedback, store | 4 tapahtumatyyppiä, painotettu relevanssi-palaute |
+| 9 | memory_feedback -työkalu (1-3 tähteä + kommentti) | Agentti arvioi muistojen relevanssin, painottaa vahvistusta |
 
 ---
 
