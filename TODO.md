@@ -1,53 +1,81 @@
-# Design-vaiheen TODO
+# TODO – Assosiatiivinen muisti
 
-> Assosiatiivisen muistin plugin OpenClaw:lle – suunnitteludokumentaation tila ja seuraavat askeleet.
+> Plugin OpenClaw:lle. Design valmis, seuraava vaihe: koodi.
 
-## Konteksti
+## Tilanne
 
-Design-dokumentit ovat `history/`-hakemistossa. Indeksi on `history/03-design-00-index.md`. Research-vaihe on valmis (02-research-sarja). Alkuperäiset ideat ovat `history/01-idea-associative-memory-plugin.md` ja `history/design-associative-memory.md`.
+Design-dokumentit (`history/03-design-*.md`) ovat vedos 3–4 ja keskenään johdonmukaisia. Observations-dokumentti (`history/02-research-07-observations.md`) on käyty läpi ja olennaiset havainnot on integroitu designiin tai kirjattu tähän.
 
-**V1-filosofia:** Yksinkertainen ja laajennettava. Keskeiset yksinkertaistukset on dokumentoitu indeksin "V1-filosofia"-osiossa ja kunkin design-dokumentin päätöslistassa.
+**V1-periaate:** Yksinkertainen ja laajennettava. Nolla DB-kirjoitusta normaalikäytössä paitsi uuden muiston luonti. Kaikki tilamuutokset konsolidaatiossa.
 
-## Tehdyt päätökset
+## Päätökset
 
-Nämä on kirjattu indeksiin (`03-design-00-index.md`, Päätökset-taulukko). Lue ne ennen kuin jatkat – älä kyseenalaista ilman hyvää syytä.
+Kattava lista: `03-design-00-index.md`, Päätökset-taulukko. **Lue ne ennen koodausta.**
 
-Tiivistelmä: content hash identiteettinä, SQLite backend, kaksi tiedostoa (working.md + consolidated.md), kaksisuuntaiset assosiaatiot ilman tyyppejä V1:ssä, retrieval.log (append-only lokitiedosto), kaikki muutokset konsolidaatiossa (paitsi uuden muiston luonti). Eri decay: working ×0.906/uni (7 unen puoliintumisaika), consolidated ×0.977/uni (30 unen puoliintumisaika). Konsolidaatio nollaa strength 1.0:aan. Painotettu retrieval-vahvistus (store 2×, search 1×, feedback ★/3, recall ½, η=0.7). Vapaamuotoinen muistotyyppi (ei enum). Temporaalinen tila: future/present/past/none. Transitiopäivien pakkoinjektio. Yksinkertainen hakuputki (embedding+BM25 → strength, ei assoc-boostia V1:ssä). memory_feedback-työkalu (1-3 tähteä).
+Tiivistelmä: content hash (SHA-256), SQLite backend, working.md + consolidated.md, kaksisuuntaiset assosiaatiot (pysyvä taulu, päivitetään konsolidaatiossa), retrieval.log (append-only), 10-vaiheinen uniprosessi, vapaamuotoinen muistotyyppi, ei assosiaatio-boostia V1-haussa.
 
-## Dokumenttien tila
+## Toteutusjärjestys
 
-| # | Tiedosto | Tila |
-| - | -------- | ---- |
-| 00 | `03-design-00-index.md` | Ajan tasalla |
-| 01 | `03-design-01-data-model.md` | Vedos 3 |
-| 02 | `03-design-02-associations.md` | Vedos 3 |
-| 03 | `03-design-03-lifecycle.md` | Vedos 3 |
-| 04 | `03-design-04-retrieval.md` | Vedos 2 |
-| 05 | `03-design-05-consolidation.md` | Vedos 2 |
-| 06 | `03-design-06-integration.md` | Vedos 2 |
-| 07 | `03-design-07-migration.md` | Vedos 2 |
+### 1. Runko ja tietomalli
+- [ ] Projektin rakenne (TypeScript, plugin manifest, `kind: "memory"`)
+- [ ] SQLite-skeema (design-01 §4.6): memories, associations, memory_embeddings, memory_fts, state
+- [ ] Tiedostoformaatti: working.md + consolidated.md chunkkimerkinnöillä
+- [ ] Layout-manifesti (`.layout.json` + state-taulu)
+- [ ] Muisto-olion luonti: hash, embedding, FTS-indeksointi, tiedostokirjoitus
 
-Kaikki design-dokumentit on päivitetty vastaamaan toisiaan. Seuraava vaihe: toteutus tai dokumenttien syventäminen tarpeen mukaan.
+### 2. Työkalut ja retrieval
+- [ ] `memory_store`: content → hash → working.md + DB + retrieval.log (store-rivi)
+- [ ] `memory_search`: embedding+BM25 hybridi → strength-painotus → tulokset
+- [ ] `memory_feedback`: ratings → retrieval.log (feedback-rivi)
+- [ ] `memory_get`: id → muisto
+- [ ] retrieval.log: append-only kirjoitus (search/recall/feedback/store)
 
-## Avoimet kysymykset (koottu kaikista dokumenteista)
+### 3. Hookit ja auto-recall
+- [ ] `before_prompt_build`: auto-recall (top-N muistoa) + temporaalinen pakkoinjektio
+- [ ] `after_tool_call`: retrieval.log-kirjaus
+- [ ] `agent_end` / `before_reset`: session-muistojen kaappaus
+- [ ] Bootstrap-hook: AGENTS.md muistiohjeiden korvaus
 
-1. **Embedding-dimensio:** Skeemassa hardkoodattu 768 – dynaaminen providerin mukaan?
-2. **Consolidated.md:n kasvu:** Pilkkominen pitkällä aikavälillä?
-3. **α-parametri (assosiaatiovahvistus):** 0.1 optimaalinen?
-4. **λ_assoc:** Sama kuin muistojen λ vai eri?
-5. **η-parametrin herkkyys:** 0.7 optimaalinen?
-6. **Auto-recall budjetti:** 2000 tokenia riittävä?
-7. **Embedding/BM25-painotus:** α = 0.6 optimaalinen?
-8. **Konsolidaation LLM-malli:** Konfiguroitava, halvempi?
-9. **REM-otannan koko:** Montako muistoa per sykli?
-10. **Embedding-provideri:** Miten plugin pääsee käsiksi? (Osa A -riippuvuus A6)
-11. **Session-memory-hook:** Hyödynnetään vai ignoroidaan?
+### 4. Konsolidaatio (uni)
+- [ ] Service-rekisteröinti (`api.registerService`)
+- [ ] 10-vaiheinen prosessi (design-05):
+  1. Retrieval-vahvistus (retrieval.log → strength)
+  2. Decay (working ×0.906, consolidated ×0.977)
+  3. Assosiaatiopäivitys (co-retrieval-parit → associations-taulu)
+  4. Kertautuva assosiaatio (epäsuorat yhteydet)
+  5. Working → consolidated (siirto + strength → 1.0)
+  6. Temporaaliset siirtymät (future→present→past)
+  7. Duplikaattien yhdistäminen (Jaccard + embedding → LLM)
+  8. Väritys (muistojen päivitys assosioituvien uudempien perusteella)
+  9. Pruning (strength ≤ 0.05, weight < 0.01)
+  10. Lokin tyhjennys
+- [ ] CLI: `memory stats`, `memory consolidate`, `memory inspect <id>`
+
+### 5. Osa A (OpenClaw-muutokset)
+Erillinen kuvaus: `history/osa-a-openclaw-muutokset.md`. Tehdään PR:nä OpenClaw-repoon, erillisellä agentilla.
+
+## Avoimet kysymykset (ratkaistavat ennen/aikana toteutusta)
+
+### Kriittiset
+1. **Samanaikaisuus:** Mitä jos agentti käyttää muistia konsolidaation aikana? Tarvitaanko lukitus vai riittääkö WAL-mode?
+2. **Virheenkäsittely konsolidaatiossa:** Jos vaihe 7 tai 8 (LLM-kutsu) epäonnistuu, jääkö tila epäkonsistentiksi? Transaktiorajat vaiheiden välillä?
+3. **Embedding-providerin saavutettavuus:** Miten plugin pääsee `createEmbeddingProvider()`-infraan? (Osa A riippuvuus A6)
+
+### Parametrit (empiirinen viritys)
+4. α-parametri (assosiaatiovahvistus): 0.1?
+5. λ_assoc (assosiaatioiden decay): sama kuin muistojen λ?
+6. η (retrieval-vahvistus): 0.7?
+7. Auto-recall budjetti: 2000 tokenia?
+8. Embedding/BM25-painotus: α = 0.6?
+
+### Myöhemmin ratkaistavat
+9. Consolidated.md:n kasvu pitkällä aikavälillä
+10. Värityksen aggressiivisuus: kuinka herkästi muistoja päivitetään?
+11. Unicode-tokenizer Jaccard-vertailuun (`/[\p{L}\p{N}_]+/gu` vs. nykyinen `/[a-z0-9_]+/g`)
 
 ## Työskentelyohjeet
 
-- Lue aina ensin indeksi (`03-design-00-index.md`) ja relevantit design-dokumentit ennen muokkaamista
-- Tarkista `02-research-07-observations.md` avoimille kysymyksille ja havainnoille
-- Päivitä dokumentin tila-rivi ja päivämäärä muokatessa
-- Säilytä "Avoimet kysymykset" ja "Kytkökset muihin design-dokumentteihin" -osiot
-- Älä poista päätöksiä – lisää uusia tarvittaessa
-- OpenClaw:n sorsat ovat `../openclaw/`-hakemistossa jos tarvitset tarkistaa yksityiskohtia
+- Lue aina ensin indeksi (`03-design-00-index.md`) ja relevantit design-dokumentit
+- Observations: `02-research-07-observations.md` – laaja taustadokumentti, hyödyllinen toteutuksen yksityiskohdissa
+- OpenClaw-sorsat: `../openclaw/`
+- Päivitä tätä TODO:a kun tehtäviä valmistuu
