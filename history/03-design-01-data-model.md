@@ -29,7 +29,7 @@ Erona nykyiseen memory-core-chunkkiin:
 | --- | --- | --- |
 | `id` | string | Content hash (SHA-256 tekstisisällöstä) |
 | `content` | string | Muiston sisältö (narratiivinen teksti) |
-| `type` | enum | Muistotyyppi (ks. luku 3) |
+| `type` | string | Vapaamuotoinen muistotyyppi (ks. luku 3) |
 | `temporal_state` | enum | `future` \| `present` \| `past` |
 | `temporal_anchor` | ISO datetime? | Päivämäärä johon muisto ankkuroituu |
 | `created_at` | ISO datetime | Luontiaika |
@@ -67,32 +67,31 @@ Perusteet:
 
 ## 3. Muistotyypit
 
-### 3.1 Taksonomi
+### 3.1 Vapaamuotoinen tyyppi
 
-| Tyyppi | Kuvaus | Esimerkki | Retrieval-painotus |
-| --- | --- | --- | --- |
-| `narrative` | Tapahtuma, kokemus, keskustelu | "Jari kertoi projektipalaverin menneen hyvin" | Embedding-painotteinen |
-| `fact` | Faktuaalinen tieto | "Jarin koiran nimi on Namu" | Hybridi |
-| `decision` | Tehty päätös ja perustelu | "Päätettiin käyttää SQLiteä koska..." | Hybridi |
-| `tool_usage` | Virheviesti, config, komento | "sqlite-vec unavailable -virhe korjattiin..." | BM25-painotteinen |
-| `interpretation` | Tulkinta/käsitys (syntyy konsolidaatiossa) | "Jari matkustaa usein Tampereelle" | Embedding-painotteinen |
-| `preference` | Käyttäjän tai agentin preferenssi | "Jari haluaa vastaukset suomeksi" | BM25-painotteinen |
+Muistotyyppi on **vapaamuotoinen merkkijono** – ei enum. Agentti valitsee luontevimman kategorian tilanteeseen. System prompt antaa esimerkkejä ohjaukseksi:
+
+| Esimerkki | Kuvaus | Käyttö |
+| --- | --- | --- |
+| `narrative` | Tapahtuma, kokemus, keskustelu | "Jari kertoi projektipalaverin menneen hyvin" |
+| `fact` | Faktuaalinen tieto | "Jarin koiran nimi on Namu" |
+| `decision` | Tehty päätös ja perustelu | "Päätettiin käyttää SQLiteä koska..." |
+| `tool_usage` | Virheviesti, config, komento | "sqlite-vec unavailable -virhe korjattiin..." |
+| `preference` | Käyttäjän tai agentin preferenssi | "Jari haluaa vastaukset suomeksi" |
+
+Nämä ovat esimerkkejä, eivät rajoituksia. Agentti voi käyttää mitä tahansa kuvaavaa kategoriaa.
 
 ### 3.2 Tyypin merkitys
 
-Muistotyyppi **ei ole vain luokittelu** – se vaikuttaa:
-1. **Hakustrategiaan** (BM25/embedding-painotus, ks. design-04)
-2. **Konsolidaatiokäyttäytymiseen** (interpretationit syntyvät konsolidaatiossa, eivät suoraan)
-
-**V1-yksinkertaistus:** Kaikilla muistotyypeillä on sama decay-nopeus (λ = 0.0231). Muistotyyppikohtainen decay on V2-ominaisuus.
+Muistotyyppi on **metadataa** joka auttaa agenttia ja ihmistä ymmärtämään muiston luonnetta. V1:ssä tyyppi ei vaikuta hakuun eikä decayhin. V2:ssa tyyppikohtainen käyttäytyminen (haku, decay) voidaan lisätä orgaanisesti yleisimpien tyyppien perusteella.
 
 ### 3.3 Tyypin määritys
 
 Muistotyyppi asetetaan **luontihetkellä**:
 - Agentin luomille muistoille: agentti valitsee tyypin (työkalu-parametri)
 - Hook-capturen muistoille: plugin päättelee kontekstista
-- Konsolidaation muistoille: yleensä `interpretation`
-- Importoiduille: plugin arvaa heuristiikalla (voidaan korjata myöhemmin)
+- Konsolidaation muistoille: heuristisesti valittu
+- Importoiduille: plugin arvaa heuristiikalla
 
 ---
 
@@ -113,7 +112,7 @@ memory/
 
 **working.md** kerää päivän aikana syntyvät muistot. Konsolidaatio ("uni") prosessoi ne → siirtää `consolidated.md`:hen, mahdollisesti yhdistäen ja tiivistäen.
 
-**consolidated.md** on tyyppijaoteltua – samassa tiedostossa osioittain.
+**consolidated.md** sisältää konsolidoidut muistot aikajärjestyksessä.
 
 ### 4.2 Tiedostoformaatti
 
@@ -137,34 +136,14 @@ Jarin koiran nimi on Namu.
 ```markdown
 # Consolidated Memory
 
-## Narrative
-
-<!-- chunk:c9d0e1f2 strength:0.85 retrievals:3 created:2026-02-25 -->
+<!-- chunk:c9d0e1f2 type:narrative strength:0.85 created:2026-02-25 -->
 Jari kertoi projektipalaverin menneen hyvin. Arkkitehtuuripäätökset tehtiin
 yhdessä ja päädyttiin flat-tiedostoihin.
 <!-- /chunk -->
 
-## Facts
-
-<!-- chunk:a3b4c5d6 strength:0.92 retrievals:7 created:2026-02-20 -->
+<!-- chunk:a3b4c5d6 type:fact strength:0.92 created:2026-02-20 -->
 Jarin koiran nimi on Namu.
 <!-- /chunk -->
-
-## Decisions
-
-...
-
-## Preferences
-
-...
-
-## Tool Usage
-
-...
-
-## Interpretations
-
-...
 ```
 
 ### 4.3 Retrieval-loki

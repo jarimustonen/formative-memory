@@ -66,7 +66,7 @@ Plugin observoi `agent_end` tai `before_reset`-hookista:
 ### 3.3 Konsolidaatio (yhdistäminen)
 
 Konsolidaatio voi luoda uusia muistoja (design-05):
-- Useasta muistosta syntyy yksi tiivistetty muisto (interpretation)
+- Useasta muistosta syntyy yksi tiivistetty muisto (tyyppi valitaan heuristisesti, esim. `fact`)
 - Nämä syntyvät suoraan consolidated.md:hen ja tietokantaan (source=`consolidation`)
 
 ### 3.4 Importointi (migraatio)
@@ -227,7 +227,7 @@ Konsolidaation yhteydessä muistoja voidaan "värittää":
 2. matka: "Jari sanoi olevansa matkalla"
   → Konsolidaatio: "Jari oli matkalla Tampereella"
 3. matka: → "Jari on käynyt kolme kertaa Tampereella"
-  → Syntyy interpretation: "Jari matkustaa usein Tampereelle"
+  → "Jari matkustaa usein Tampereelle"
 ```
 
 ---

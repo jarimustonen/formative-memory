@@ -1,7 +1,7 @@
 # Design-05: Konsolidaatio ("uni")
 
-> **Tila:** Ensimmäinen vedos (korkea taso)
-> **Päivitetty:** 28.2.2026
+> **Tila:** Vedos 4
+> **Päivitetty:** 7.3.2026
 > **Riippuvuudet:** design-01 (tietomalli), design-02 (assosiaatiot), design-03 (elinkaari), design-04 (retrieval)
 > **Ruokkii:** design-06 (integraatio)
 
@@ -9,220 +9,259 @@
 
 ## 1. Tarkoitus
 
-Kuvata konsolidaatioprosessi – taustajärjestelmä joka järjestää, vahvistaa, tiivistää ja siivoaa muistia. Biologinen analogia: uni, jossa päivän kokemukset integroituvat pitkäkestomuistiin.
+Kuvata uniprosessi – taustajärjestelmä joka prosessoi päivän tapahtumat, vahvistaa ja heikentää muistoja, päivittää assosiaatiot, siirtää tuoreet muistot pitkäkestomuistiin, ja siivoaa kuolleet pois.
+
+Biologinen analogia: uni. Prosessi ajetaan silloin kun agentti ei ole aktiivinen.
+
+**V1-periaate:** Uni on ainoa paikka jossa muistijärjestelmän tila muuttuu (paitsi uuden muiston luonti). Kaikki strength-päivitykset, assosiaatiomuutokset, decay ja pruning tapahtuvat täällä.
 
 ---
 
-## 2. Yleiskuva
+## 2. Perusperiaatteet
 
-Konsolidaatio on **taustaprosessi** joka ajetaan säännöllisesti (cron, manuaalinen trigger tai inaktiivisuusjakson tunnistus). Se tekee neljä asiaa:
+### 2.1 Funktionaalisuus, ei totuudenmukaisuus
+
+Muistot eivät ole arkisto. Uniprosessin tavoite on pitää muistot **funktionaalisina** – hyödyllisinä agentin toiminnalle. Tämä tarkoittaa, että konsolidaatio voi vapaasti:
+
+- Kirjoittaa muistoja joita ei ole edes tarkalleen ottaen tapahtunut. Esimerkiksi muistossa jossa käsitellään jonkin ohjelman jotakin tiettyä vikatilannetta ja siihen tulleita ratkaisuja, voi konsolidaatiossa muuttua radikaalistikin vastaamaan ohjelman päivitettyä versiota.
+- Yhdistää kaksi muistoa yhdeksi ("Jari kävi Tampereella" × 3 → "Jari käy usein Tampereella")
+- Päivittää muiston sisältöä uudemman tiedon perusteella ("harkitsee aloittamista" → "aloitti projektin")
+- Poistaa muistoja jotka eivät ole enää relevantteja
+
+### 2.2 Kaikki kerralla
+
+Konsolidaatio prosessoi kaiken yhtenä eränä. Se lukee retrieval.log:n, päivittää tilan ja tyhjentää lokin. Seuraava uni aloittaa puhtaalta pöydältä.
+
+---
+
+## 3. Unen vaiheet
 
 ```
-Konsolidaatio
-├── 1. Decay-päivitys ja pruning      ← Kuolleet muistot pois
-├── 2. Duplikaattien tunnistaminen     ← Lähes-duplikaatit yhdistetään
-├── 3. Assosiaatioiden vahvistaminen    ← Retrieval-patternien analyysi
-└── 4. REM-vaihe                       ← Uusien assosiaatioiden löytäminen
+Uni
+├── 1. Retrieval-vahvistus       ← retrieval.log → strength-päivitys
+├── 2. Decay                     ← working ×0.906, consolidated ×0.977
+├── 3. Assosiaatiopäivitys       ← retrieval.log → co-retrieval → assosiaatiot
+├── 4. Kertautuva assosiaatio    ← epäsuorat yhteydet vahvistuvat
+├── 5. Working → consolidated    ← siirto + strength → 1.0
+├── 6. Temporaaliset siirtymät   ← future→present→past tarkistus
+├── 7. Duplikaattien yhdistäminen ← Jaccard + embedding → LLM yhdistää
+├── 8. Väritys                   ← muistojen päivitys uudemman tiedon perusteella
+├── 9. Pruning                   ← kuolleet muistot ja assosiaatiot pois
+└── 10. Lokin tyhjennys          ← retrieval.log tyhjennetään
+```
+
+**Järjestys on tärkeä:**
+- Retrieval-vahvistus ennen decayta (päivän käyttö huomioidaan ensin)
+- Decay ennen working→consolidated-siirtoa (heikot muistot karsiutuvat)
+- Assosiaatiot ennen kertautuvaa assosiaatiota (tarvitsee päivitetyt painot)
+- Kertautuva assosiaatio ennen pruningia (kuolleet eivät luo uusia)
+- Duplikaattien yhdistäminen ennen väritystä (ensin yhdistä, sitten väritä)
+- Väritys ennen pruningia (väritetyt muistot saavat uudet hashit)
+
+---
+
+## 4. Vaihe 1: Retrieval-vahvistus
+
+Konsolidaatio parsii retrieval.log:n ja laskee jokaiselle muistolle painotetun retrieval-pisteen `w` (design-03, kohta 4.2):
+
+```
+Jokaiselle muistolle M retrieval.log:ssa:
+  w = 0
+  search-rivillä M:       w += 1.0
+  feedback-rivillä M:     w += stars/3
+  recall-rivillä M:       w += 0.5
+  store context:M:        w += 2.0
+
+  strength ← 1 - (1 - strength) × e^(-η × w)    (η = 0.7)
 ```
 
 ---
 
-## 3. Vaihe 1: Decay ja pruning
+## 5. Vaihe 2: Decay
 
-### 3.1 Batch-decay-päivitys
-
-Lasketaan kaikkien muistojen nykyinen decay-arvo (lazy-menetelmä → nyt materialisoidaan):
-
-```sql
-UPDATE memories
-SET decay = base_decay * exp(-lambda * (current_tick - last_retrieved_at_tick))
-WHERE last_retrieved_at_tick IS NOT NULL;
-```
-
-### 3.2 Kuolleiden muistojen tunnistaminen
-
-```sql
-SELECT id FROM memories
-WHERE decay < 0.05
-AND id NOT IN (
-  SELECT source_id FROM associations WHERE weight > 0.3
-  UNION
-  SELECT target_id FROM associations WHERE weight > 0.3
-);
-```
-
-Kuollut muisto **jolla on vahvoja assosiaatioita** ei kuole – assosiaatio pitää sen elossa.
-
-### 3.3 Pruning
-
-- Kuolleet muistot: tiedosto poistetaan, tietokantarivi poistetaan
-- Kuolleet assosiaatiot (weight < 0.01): poistetaan tietokannasta
-- Optio: arkistointi `memory/archive/`-hakemistoon ennen poistoa
-
----
-
-## 4. Vaihe 2: Duplikaattien tunnistaminen
-
-### 4.1 Jaccard-esikarsinta (halpa)
+Kaikkien muistojen strength rapautuu (design-03, kohta 4.1):
 
 ```
-Kaikille muistopareille (i, j):
-  jaccard = |tokens(i) ∩ tokens(j)| / |tokens(i) ∪ tokens(j)|
-  jos jaccard > 0.6 → yhdistämiskandidaatti
+Working-muistot:      strength ← strength × 0.906    (puoliintumisaika 7 unta)
+Consolidated-muistot: strength ← strength × 0.977    (puoliintumisaika 30 unta)
 ```
 
-Optimointi: ei vertailla kaikkia pareja (O(N²)), vaan:
-- Minhash/LSH esikarsinnan kautta
-- Tai vain äskettäin luodut/muutetut muistot vs. olemassa olevat
+---
 
-### 4.2 Embedding-tarkennus
+## 6. Vaihe 3: Assosiaatiopäivitys
 
-Jaccard-kandidaateille lasketaan embedding-kosinisamankaltaisuus:
-- Jos kosini > 0.85 → vahva duplikaatti → yhdistä
-- Jos 0.7 < kosini < 0.85 → mahdollinen duplikaatti → LLM tarkistaa
-- Jos kosini < 0.7 → ei duplikaatti (vaikka Jaccard korkea)
-
-### 4.3 Yhdistäminen
-
-Kun duplikaatti/konsolidoitava pari tunnistetaan:
-
-1. LLM yhdistää sisällöt (yksi uusi narratiivinen muisto)
-2. Uudelle muistolle lasketaan uusi hash
-3. Uusi muisto perii molempien assosiaatiot (painot yhdistetään)
-4. Vanhat muistot poistetaan
-5. Kaikki operaatiot yhdessä transaktiossa (atominen)
-
-**Konsolidaation progressio** (Jarin idea):
-- 1. matka: "Jari kertoi menevänsä Tampereelle"
-- 2. matka: "Jari sanoi olevansa matkalla"
-- Konsolidaatio: "Jari oli matkalla Tampereella" (2 kokemusta → 1 muisto)
-- 3. matka → "Jari on käynyt kolme kertaa Tampereella"
-- Lopulta syntyy interpretation: "Jari matkustaa usein Tampereelle"
+Sama retrieval.log prosessoidaan co-retrieval-parien osalta → assosiaatiot päivittyvät. Tämä on kuvattu kokonaan design-02:ssa (kohta 5). Konsolidaatio myös heikentää kaikkien assosiaatioiden painoja (design-02, kohta 5.2).
 
 ---
 
-## 5. Vaihe 3: Assosiaatioiden vahvistaminen (retrieval-analyysi)
+## 7. Vaihe 4: Kertautuva assosiaatio
 
-### 5.1 Retrieval-patternien analyysi
+Kertautuva assosiaatio vahvistaa epäsuoria yhteyksiä (design-02, kohta 6):
 
-Konsolidaatio analysoi retrieval-historiaa viimeisimmästä konsolidaatiosta lähtien:
+```
+Jokaiselle co-retrieval-joukolle {A, B, C} retrieval.log:ssa:
+  Etsi muisto X jolla:
+    - assoc(X, A) > 0 JA assoc(X, B) > 0 (tai C)
+    - X ei ollut haussa
+  → Vahvista X:n assosiaatioita A:han, B:hen, C:hen
+```
 
-- Mitkä muistot haettiin samassa sessiossa?
-- Mitkä haettiin samalla tai lähellä olevalla tickillä?
-- Näiden parien assosiaatiot vahvistuvat
-
-### 5.2 Assosiaatioiden normalisointi
-
-Varmistetaan, että assosiaatiomatriisi on tasapainossa:
-- Yksittäisen muiston assosiaatioiden summa ei kasva rajattomasti
-- Normalisointi: top-N vahvinta assosiaatiota per muisto säilytetään, loput leikataan
-
-**Avoin kysymys:** N:n arvo? Ehdotus: 50 assosiaatiota per muisto.
+Biologinen analogia: "neurons that fire together wire together" – mutta myös ne neuronit jotka ovat yhteydessä aktiivisiin neuroneihin aktivoituvat.
 
 ---
 
-## 6. Vaihe 4: REM-vaihe (uusien yhteyksien löytäminen)
+## 8. Vaihe 5: Working → consolidated
 
-### 6.1 Konsepti
+Kaikki working-muistot siirretään:
 
-Jarin idea: "Otetaan 10 viimeisintä keskustelua, valitaan satunnaisesti käyttäjän viestejä. Unen jälkeen käytetään muistin hakuprofiilia assosiaatioiden päivittämiseen."
+1. Muisto siirtyy working.md → consolidated.md
+2. `consolidated` = 1, `file_path` = consolidated.md
+3. **Strength → 1.0** (uusi alku pitkäkestomuistina, design-03 kohta 4.3)
+4. Working.md tyhjennetään (jätetään otsikko)
 
-Biologinen analogia: REM-unen aikana aivot aktivoivat satunnaisia muistijälkiä ja löytävät uusia yhteyksiä.
-
-### 6.2 Mekanismi
-
-1. Valitaan **satunnainen otos** muistoja (esim. 20–50 kpl)
-2. Jokaiselle otoksen muistolle tehdään embedding-haku kaikista muistoista
-3. Jos löytyy semanttisesti samankaltainen muisto (kosini > kynnys) **jolla ei ole assosiaatiota**:
-   - Luodaan uusi assosiaatio (alkupaino = samankaltaisuus × kerroin)
-4. Tämä simuloi "oivallusta" – muistot jotka eivät koskaan olleet kontekstissa yhdessä mutta liittyvät toisiinsa
-
-### 6.3 Satunnaisuuden rooli
-
-Satunnaisuus on **tarkoituksellista**: emme halua systemaattisesti käydä kaikkia pareja, koska:
-- O(N²) on liian kallista
-- Satunnainen otanta tuottaa "yllätyksiä" – kuten uni
-- Ajan myötä kattavuus kasvaa (monta konsolidaatiosykliä)
-
-### 6.4 Kontekstuaalinen REM
-
-Voidaan myös ohjata REM:iä: valitaan satunnaisesti viimeisten keskustelujen viestejä → embedding-haku muistista → löydetään mitkä muistot liittyvät keskustelujen teemoihin → luodaan assosiaatioita.
+Kaikki operaatiot yhdessä SQLite-transaktiossa.
 
 ---
 
-## 7. Konsolidaation ajastus ja trigger
+## 9. Vaihe 6: Temporaaliset siirtymät
 
-### 7.1 Automaattiset triggerit
+Tarkistetaan muistojen temporaaliset tilat (design-03, kohta 5.2):
 
-| Trigger | Kuvaus | Prioriteetti |
-| --- | --- | --- |
-| Cron | Ajastettu aika (esim. yöllä) | Ensisijainen |
-| Inaktiivisuus | Käyttäjä ei ole ollut aktiivinen N tuntiin | Sekundaarinen |
-| Tick-raja | Viimeisimmästä konsolidaatiosta kulunut > M tickiä | Fallback |
+- `future` → `present`: kun nykyhetki ≥ temporal_anchor
+- `present` → `past`: kun nykyhetki > temporal_anchor + kesto
 
-### 7.2 Manuaalinen trigger
-
-- CLI-komento: `openclaw memory consolidate`
-- Agentin pyyntö: "Minun pitäisi nukkua hetken" (Jarin idea)
-
-### 7.3 Toteutus: Service
-
-Plugin rekisteröi servicen (`api.registerService()`) joka:
-- Käynnistyy pluginin latauksessa
-- Tarkistaa ajastuksen periodisesti
-- Suorittaa konsolidaation kun trigger laukeaa
-- Logittaa tulokset (montako muistoa käsitelty, yhdistetty, poistettu)
+Transitiossa olevat muistot merkitään – before_prompt_build pakkoinjektoi ne kontekstiin (design-03, kohta 5.3).
 
 ---
 
-## 8. Väritetyt muistot konsolidaatiossa
+## 10. Vaihe 7: Duplikaattien tunnistaminen ja yhdistäminen
 
-### 8.1 Mekanismi
+### 10.1 Tunnistaminen
 
-Konsolidaation yhteydessä muistoja voidaan "värittää" – muokata niiden sisältöä uudemman tiedon perusteella:
+Äskettäin konsolidoidut muistot verrataan olemassa oleviin:
 
-1. LLM saa kontekstiin: alkuperäinen muisto + siihen assosioituvat uudemmat muistot
-2. LLM arvioi: onko alkuperäinen muisto edelleen relevantti sellaisenaan?
+1. **Jaccard-esikarsinta:** jos `|tokens(i) ∩ tokens(j)| / |tokens(i) ∪ tokens(j)|` > 0.6 → kandidaatti
+2. **Embedding-tarkennus:** kosini > 0.85 → yhdistä, 0.7–0.85 → LLM tarkistaa
+
+### 10.2 Yhdistäminen
+
+1. LLM yhdistää sisällöt yhdeksi funktionaaliseksi muistoksi
+2. Uusi hash, uusi muisto consolidated.md:hen (source=`consolidation`)
+3. Assosiaatiot peritään molemmilta (painot yhdistetään)
+4. Vanhat poistetaan
+5. Atominen transaktio
+
+**Konsolidaation progressio:**
+```
+1. kerta: "Jari kertoi menevänsä Tampereelle"
+2. kerta: "Jari sanoi olevansa matkalla"
+  → Konsolidaatio: "Jari oli matkalla Tampereella"
+3. kerta: → "Jari on käynyt kolme kertaa Tampereella"
+  → "Jari matkustaa usein Tampereelle"
+```
+
+---
+
+## 11. Vaihe 8: Väritys
+
+Muistoja päivitetään uudemman tiedon perusteella (design-03, kohta 6):
+
+1. LLM saa kontekstiin: muisto + siihen assosioituvat uudemmat muistot
+2. LLM arvioi: onko muisto edelleen relevantti sellaisenaan?
 3. Jos ei: LLM kirjoittaa päivitetyn version
-4. Päivitetty muisto saa uuden hashin → assosiaatiot siirretään
+4. Päivitetty muisto saa uuden hashin → assosiaatiot siirretään atomisesti
 
-### 8.2 Esimerkki
-
+**Esimerkki:**
 - Alkuperäinen: "Jari harkitsee projektin aloittamista"
-- Uudempi assosioitu muisto: "Jari aloitti projektin ja ensimmäinen versio on valmis"
-- Väritetty: "Jari aloitti projektin jonka hän oli harkinnut" (tai konsolidoitu pois kokonaan)
+- Uudempi assosioitu muisto: "Jari aloitti projektin"
+- Väritetty: "Jari aloitti projektin jonka hän oli harkinnut"
+
+**Ero duplikaattien yhdistämiseen:** Yhdistäminen kohdistuu kahteen samankaltaiseen muistoon. Väritys kohdistuu yhteen muistoon, joka päivitetään siihen assosioituvien muistojen perusteella.
 
 ---
 
-## 9. LLM-kustannukset
+## 12. Vaihe 9: Pruning
 
-Konsolidaatio vaatii LLM-kutsuja:
-- Duplikaattien yhdistäminen (sisältöjen fuusio)
-- REM-vaiheen assosiaatioarviointi (onko yhteys aito?)
-- Väritys (muiston päivitys)
+### 12.1 Kuolleet muistot
 
-**Kustannusten hallinta:**
-- Konsolidaatio käyttää **edullisempaa mallia** (konfiguroitava, esim. Haiku)
-- Batch-prosessointi (monta päätöstä per kutsu)
-- Jaccard ja embedding karsiovat ennen LLM-kutsuja
+```
+strength ≤ 0.05 JA ei vahvoja assosiaatioita (weight ≤ 0.3):
+  → Poistetaan tiedostosta ja tietokannasta
+```
 
----
+### 12.2 Kuolleet assosiaatiot
 
-## 10. Avoimet kysymykset
-
-1. **Konsolidaation kesto:** Miten pitkään konsolidaatio saa kestää? Timeout?
-2. **LLM-malli konsolidaatiossa:** Sama malli kuin agentilla vai halvempi? Konfiguroitava?
-3. **REM-otannan koko:** Montako muistoa per konsolidaatiosykli?
-4. **Kosinisamankaltaisuuden kynnys:** Milloin luodaan uusi assosiaatio REM:ssä?
-5. **Assosiaatioiden normalisointi:** Top-N per muisto – mikä on N?
-6. **Konsolidaation raportointi:** Pitäisikö agentille kertoa mitä konsolidaatio teki? ("Nukuin hyvin, löysin uusia yhteyksiä X:n ja Y:n välillä")
+```
+weight < 0.01 → poistetaan
+```
 
 ---
 
-## 11. Kytkökset muihin design-dokumentteihin
+## 13. Vaihe 10: Lokin tyhjennys
 
-- **design-01 (Tietomalli):** Muiston hash-päivitys konsolidaatiossa, skeema
-- **design-02 (Assosiaatiot):** Uusien assosiaatioiden luonti, pruning, normalisointi
-- **design-03 (Elinkaari):** Decay-batch-päivitys, muiston kuolema, väritys
-- **design-04 (Retrieval):** Retrieval-patternien analyysi, co-retrieval-historia
-- **design-06 (Integraatio):** Service-rekisteröinti, cron-ajastus, CLI
+`retrieval.log` tyhjennetään. V1:ssä suora tyhjennys riittää.
+
+---
+
+## 14. Ajastus ja trigger
+
+| Trigger | Kuvaus |
+| --- | --- |
+| **Cron** | Ajastettu aika (esim. yöllä) – ensisijainen |
+| **Inaktiivisuus** | Käyttäjä ei aktiivinen N tuntiin |
+| **Manuaalinen** | `openclaw memory consolidate` tai agentin pyyntö |
+
+Plugin rekisteröi servicen joka tarkistaa ajastuksen ja suorittaa konsolidaation kun trigger laukeaa.
+
+---
+
+## 15. LLM-kustannukset
+
+Konsolidaatio vaatii LLM-kutsuja duplikaattien yhdistämiseen ja muistojen väritykseen. Kustannusten hallinta:
+
+- **Edullisempi malli** (konfiguroitava)
+- **Batch-prosessointi** (monta yhdistämis-/värityspäätöstä per kutsu)
+- **Jaccard + embedding** karsiovat ennen LLM-kutsuja (duplikaatit)
+- **Assosiaatiovahvuus** karsii ennen LLM-kutsuja (väritys: vain vahvasti assosioituvat uudemmat muistot)
+
+---
+
+## 16. V2-laajennettavuus
+
+Myöhemmin uniprosessiin voidaan lisätä:
+- **Uusien assosiaatioiden löytäminen:** satunnainen otanta muistoja → embedding-haku → semanttisesti samankaltaisille luodaan assosiaatioita (löytää yhteyksiä joita co-retrieval ei ole paljastanut)
+- **Muistotyyppikohtainen decay:** eri tyypit rapautuvat eri nopeudella
+
+---
+
+## 17. Avoimet kysymykset
+
+1. **Konsolidaation kesto:** Timeout tarpeen?
+2. **LLM-malli:** Konfiguroitava halvempi malli?
+3. **Assosiaatioiden normalisointi:** Rajoitetaanko per muisto?
+4. **Raportointi:** Kerrotaanko agentille mitä konsolidaatio teki?
+5. **Värityksen aggressiivisuus:** Kuinka herkästi muistoja päivitetään?
+
+---
+
+## 18. Päätökset
+
+| # | Päätös | Perustelu |
+| - | ------ | --------- |
+| 1 | Uni on ainoa tilan muuttaja (V1) | Yksinkertainen, ennustettava |
+| 2 | 10-vaiheinen prosessi kiinteässä järjestyksessä | Vahvistus → decay → assosiaatiot → siirto → väritys → pruning |
+| 3 | Working → consolidated: strength → 1.0 | Pitkäkestomuistiin siirtyminen = uusi alku |
+| 4 | Eri decay: working ×0.906, consolidated ×0.977 | Tuoreet karsiutuvat nopeasti |
+| 5 | Muistoja päivitetään funktionaalisiksi, ei pidetä totuudenmukaisina | Konsolidaatio yhdistää, tiivistää ja päivittää vapaasti |
+| 6 | Kertautuva assosiaatio vahvistaa epäsuoria yhteyksiä | Löytää piilossa olevia relevansseja |
+| 7 | Väritys päivittää muistoja assosioituvien uudempien muistojen perusteella | Funktionaalisuusperiaate: muistot pysyvät relevantteina |
+
+---
+
+## 19. Kytkökset muihin design-dokumentteihin
+
+- **design-01 (Tietomalli):** Muiston hash-päivitys yhdistämisessä ja värityksessä, skeema, tiedostoformaatti
+- **design-02 (Assosiaatiot):** Co-retrieval-lokin prosessointi → assosiaatiopäivitys ja -decay, kertautuva assosiaatio
+- **design-03 (Elinkaari):** Decay-kaavat, strength-vahvistus, working→consolidated, kuolema, temporaaliset siirtymät, väritys
+- **design-04 (Retrieval):** retrieval.log on konsolidaation syöte
+- **design-06 (Integraatio):** Service-rekisteröinti, ajastus, CLI

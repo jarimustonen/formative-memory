@@ -1,291 +1,148 @@
 # Design-06: Integraatio OpenClaw:iin
 
-> **Tila:** Ensimmäinen vedos (korkea taso)
-> **Päivitetty:** 28.2.2026
-> **Riippuvuudet:** design-01–05 (kaikki edelliset), research-04 (hookit), research-05 (plugin-järjestelmä)
+> **Tila:** Vedos 3
+> **Päivitetty:** 7.3.2026
+> **Riippuvuudet:** design-01–05, research-04 (hookit), research-05 (plugin-järjestelmä)
 > **Ruokkii:** design-07 (migraatio)
 
 ---
 
 ## 1. Tarkoitus
 
-Kuvata miten assosiatiivinen muisti -plugin konkreettisesti istuu OpenClaw:n plugin-arkkitehtuuriin: plugin-rakenne, hookit, työkalut, servicet, CLI-komennot ja Osa A -riippuvuudet.
+Kuvata miten assosiatiivinen muisti -plugin integroituu OpenClaw:iin: mitä integraatiopisteitä OpenClaw tarjoaa, miten niitä käytetään, ja mitä muutoksia OpenClaw:iin tarvitaan erillisenä pull requestina.
 
 ---
 
-## 2. Plugin-rakenne
+## 2. OpenClaw:n integraatiopisteet
 
-### 2.1 Manifesti (`openclaw.plugin.json`)
+OpenClaw:n plugin-arkkitehtuuri tarjoaa viisi integraatiomekanismia, joita assosiatiivinen muisti käyttää:
 
-```json
-{
-  "name": "associative-memory",
-  "version": "0.1.0",
-  "description": "Biologically-inspired associative memory for OpenClaw agents",
-  "kind": "memory",
-  "author": "Jari Mustonen",
-  "license": "MIT",
-  "main": "dist/index.js",
-  "configSchema": {
-    "type": "object",
-    "properties": {
-      "consolidation": {
-        "type": "object",
-        "properties": {
-          "enabled": { "type": "boolean", "default": true },
-          "schedule": { "type": "string", "default": "0 3 * * *" },
-          "model": { "type": "string" },
-          "rem_sample_size": { "type": "integer", "default": 30 }
-        }
-      },
-      "decay": {
-        "type": "object",
-        "properties": {
-          "enabled": { "type": "boolean", "default": true },
-          "death_threshold": { "type": "number", "default": 0.05 }
-        }
-      },
-      "retrieval": {
-        "type": "object",
-        "properties": {
-          "auto_recall_budget_tokens": { "type": "integer", "default": 2000 },
-          "association_boost_factor": { "type": "number", "default": 0.3 }
-        }
-      }
-    }
-  }
-}
-```
+### 2.1 Eksklusiivinen memory-slotti
 
-### 2.2 Tiedostorakenne
+Plugin ilmoittaa `kind: "memory"`, jolloin se korvaa `memory-core`-pluginin automaattisesti. Vain yksi memory-plugin voi olla aktiivinen kerrallaan. Aktivointi tapahtuu konfiguraatiolla (`plugins.slots.memory = "associative-memory"`) tai CLI:llä.
 
-```
-extensions/associative-memory/
-├── openclaw.plugin.json
-├── src/
-│   ├── index.ts              ← register(api) entry point
-│   ├── tools/
-│   │   ├── memory-search.ts  ← memory_search työkalu
-│   │   ├── memory-store.ts   ← memory_store työkalu
-│   │   ├── memory-get.ts     ← memory_get työkalu
-│   │   └── memory-forget.ts  ← memory_forget työkalu
-│   ├── hooks/
-│   │   ├── tick-counter.ts   ← after_tool_call → tick++
-│   │   ├── auto-recall.ts    ← before_prompt_build → injektoi muistoja
-│   │   ├── auto-capture.ts   ← agent_end → analysoi ja tallenna
-│   │   ├── temporal-check.ts ← before_prompt_build → tarkista tilat
-│   │   └── bootstrap-mod.ts  ← agent.bootstrap → muokkaa AGENTS.md
-│   ├── services/
-│   │   ├── consolidation.ts  ← tausta-konsolidaatiopalvelu
-│   │   └── db.ts             ← SQLite-yhteys ja skeeman hallinta
-│   ├── core/
-│   │   ├── memory.ts         ← muisto-olion CRUD
-│   │   ├── association.ts    ← assosiaatioiden hallinta
-│   │   ├── retrieval.ts      ← hakuputki
-│   │   ├── decay.ts          ← decay-laskenta
-│   │   └── tick.ts           ← tick-laskuri
-│   ├── cli/
-│   │   └── commands.ts       ← CLI-komennot
-│   └── types.ts              ← tyypit ja rajapinnat
-└── dist/                     ← käännetty koodi
-```
+Kun memory-core poistuu, sen rekisteröimät `memory_search` ja `memory_get` -työkalut katoavat. Pluginin pitää korvata ne omilla työkaluillaan.
 
----
+### 2.2 Työkalurekisteröinti (`api.registerTool`)
 
-## 3. Rekisteröitävät komponentit
+Plugin rekisteröi omat agenttityökalunsa, jotka korvaavat memory-core:n työkalut:
 
-### 3.1 Hookit
-
-| Hook | Tarkoitus | Tyyppi |
-| --- | --- | --- |
-| `after_tool_call` | Tick-laskuri + co-retrieval-seuranta | fire-and-forget |
-| `before_prompt_build` | Auto-recall + temporaalinen tarkistus | palauttaa `prependContext` |
-| `agent_end` | Automaattinen muistojen kaappaus | fire-and-forget |
-| `before_reset` | Session-muistojen tallennus ennen nollausta | fire-and-forget |
-| `agent.bootstrap` | AGENTS.md:n muistiosion korvaaminen | muokkaa tiedostoja |
-| `before_compaction` | Tallenna sessionFile myöhempää käyttöä varten | fire-and-forget |
-
-### 3.2 Työkalut
-
-| Työkalu | API | Kuvaus |
-| --- | --- | --- |
-| `memory_search` | `api.registerTool()` | Semanttinen haku koko hakuputkella |
-| `memory_store` | `api.registerTool()` | Uuden muiston tallentaminen |
-| `memory_get` | `api.registerTool()` | Muiston haku id:llä |
-| `memory_forget` | `api.registerTool()` | Muiston poisto |
-
-### 3.3 Servicet
-
-| Service | Tarkoitus |
+| Työkalu | Kuvaus |
 | --- | --- |
-| `associative-memory-db` | SQLite-yhteyden hallinta, skeeman alustus |
-| `consolidation` | Tausta-konsolidaatioprosessi (cron/timer) |
+| `memory_search` | Semanttinen haku hakuputkella (design-04) |
+| `memory_store` | Uuden muiston tallentaminen |
+| `memory_feedback` | Relevanssipalaute (1–3 tähteä + kommentti) |
+| `memory_get` | Muiston haku id:llä |
 
-### 3.4 CLI-komennot
+Työkalut voidaan rekisteröidä factory-funktiolla, joka saa session-kontekstin (workspaceDir, sessionKey, agentId). Factory kutsutaan jokaisella agenttiajon alussa.
+
+**Huom:** Plugin-työkalut eivät voi ylikirjoittaa core-työkaluja nimellä. Koska memory-core disabloituu slotin kautta, sen työkalut eivät ole olemassa → pluginin samannimiset työkalut rekisteröityvät ongelmitta.
+
+### 2.3 Hook-järjestelmä (`api.on`)
+
+Plugin käyttää tyypitettyä hook-rajapintaa kiinnittyäkseen agentin elinkaareen:
+
+| Hook | Käyttötarkoitus | Tyyppi |
+| --- | --- | --- |
+| `before_prompt_build` | Auto-recall: hae muistoja ja injektoi kontekstiin `prependContext`-palautuksella | muokattava |
+| `after_tool_call` | retrieval.log-kirjaus (search/store/feedback-tapahtumat) | fire-and-forget |
+| `agent_end` | Automaattinen muistojen kaappaus session-transkriptistä | fire-and-forget |
+| `before_reset` | Session-muistojen tallennus ennen /new tai /reset | fire-and-forget |
+| `before_compaction` | SessionFile-polun tallennus myöhempää käyttöä varten | fire-and-forget |
+
+Lisäksi bootstrap-hook (`api.registerHook("agent.bootstrap", ...)`) muokkaa AGENTS.md:n muistiohjeet vastaamaan assosiatiivisen muistin käyttöliittymää.
+
+### 2.4 Palvelurekisteröinti (`api.registerService`)
+
+Konsolidaatio ("uni") toteutetaan taustaprosessina, joka käynnistyy gatewayn mukana. Service saa `stateDir`:n ja `logger`:in, ja se ajaa ajastetun konsolidaation design-05:n mukaisesti.
+
+### 2.5 CLI-rekisteröinti (`api.registerCli`)
+
+Plugin rekisteröi diagnostiikkakomennot:
 
 | Komento | Kuvaus |
 | --- | --- |
 | `memory stats` | Muistojen ja assosiaatioiden tilastot |
 | `memory consolidate` | Manuaalinen konsolidaatio |
 | `memory inspect <id>` | Yksittäisen muiston tiedot + assosiaatiot |
-| `memory graph` | Assosiaatioverkon visualisointi (teksti) |
 
 ---
 
-## 4. Hook-toteutuksen yksityiskohdat
+## 3. Tarvittavat muutokset OpenClaw:iin (Osa A)
 
-### 4.1 after_tool_call → Tick + assosiaatiot
+Nämä muutokset tehdään erillisenä pull requestina OpenClaw-repoon. Ne ovat itsenäisiä, taaksepäin yhteensopivia parannuksia plugin-rajapintaan.
 
-```typescript
-api.on("after_tool_call", async (event, ctx) => {
-  // 1. Kasvata tickiä
-  await tickCounter.increment();
+### 3.1 Kriittinen: `buildMemorySection()` ehdolliseksi
 
-  // 2. Jos työkalu oli memory_search → seuraa co-retrieval
-  if (event.toolName === "memory_search" && event.result) {
-    const retrievedIds = extractMemoryIds(event.result);
-    await associations.recordCoRetrieval(retrievedIds, tickCounter.current());
-  }
+**Ongelma:** System promptin Memory Recall -osio (`buildMemorySection()` tiedostossa `src/agents/system-prompt.ts`) on hardkoodattu ohjaamaan agenttia käyttämään `memory_search`/`memory_get`-työkaluja. Kun toinen memory-plugin on aktiivinen, nämä ohjeet ovat harhaanjohtavia tai virheellisiä.
 
-  // 3. Jos työkalu oli memory_store → seuraa co-creation
-  if (event.toolName === "memory_store" && event.result) {
-    const newId = extractNewMemoryId(event.result);
-    const activeMemories = await getActiveMemories(tickCounter.current());
-    await associations.recordCoCreation(newId, activeMemories);
-  }
-});
-```
+**Muutos:** `buildMemorySection()` tarkistaa aktiivisen memory-slotin. Jos slotti ei ole `"memory-core"`, osio jätetään pois ja annetaan pluginin injektoida omat ohjeensa `before_prompt_build` → `prependContext`-hookilla.
 
-### 4.2 before_prompt_build → Auto-recall
+**Vaihtoehto:** Alussa voimme kiertää ongelman rekisteröimällä työkalut nimillä `memory_search` ja `memory_get`, jolloin hardkoodatut ohjeet sattuvat toimimaan. Tämä on väliaikainen ratkaisu.
 
-```typescript
-api.on("before_prompt_build", async (event, ctx) => {
-  // 1. Hae käyttäjän viimeisin viesti
-  const userMessage = extractLatestUserMessage(event);
+### 3.2 Kriittinen: `sessionFile` lisääminen `after_compaction`-eventtiin
 
-  // 2. Hae relevantteja muistoja
-  const memories = await retrieval.search(userMessage, {
-    limit: 10,
-    budgetTokens: config.retrieval.auto_recall_budget_tokens,
-  });
+**Ongelma:** Auto-compaction-polku (`handlers.compaction.ts`) ei lähetä `sessionFile`-kenttää `after_compaction`-hookissa, vaikka tyyppi sen sallii. Manuaalinen compaction (`compact.ts`) lähettää sen.
 
-  // 3. Tarkista temporaaliset siirtymät
-  await temporalCheck.updateStates();
+**Muutos:** Lisätään `sessionFile: ctx.params.session.sessionFile` myös `handleAutoCompactionEnd`-funktioon.
 
-  // 4. Injektoi kontekstiin
-  return {
-    prependContext: formatMemoriesForContext(memories),
-  };
-});
-```
+**Vaikutus:** Plugin voi analysoida post-compaction-tilan levyltä konsolidaatiota varten.
 
-### 4.3 agent.bootstrap → AGENTS.md-muokkaus
+### 3.3 Suositeltava: Session-memory-hookin ehdollinen ajaminen
 
-```typescript
-api.registerHook("agent.bootstrap", async (files, ctx) => {
-  const agentsFile = files.find(f => f.name === "AGENTS.md");
-  if (agentsFile) {
-    agentsFile.content = replaceMemorySection(agentsFile.content, {
-      newInstructions: ASSOCIATIVE_MEMORY_INSTRUCTIONS,
-    });
-  }
-  return files;
-});
-```
+**Ongelma:** Bundled-hook `session-memory` tallentaa session-transkriptin `memory/`-hakemistoon `/new`- tai `/reset`-komennon yhteydessä. Tämä toimii memory-core:n rinnalla, mutta assosiatiivisen muistin plugin hoitaa muistojen tallennuksen itse → duplikaatteja.
+
+**Muutos:** `session-memory`-hook tarkistaa aktiivisen memory-slotin. Jos slotti ei ole `"memory-core"`, hook ei aja (tai plugin voi hallita sitä itse).
+
+### 3.4 Pitkän aikavälin: ExtensionFactory-rekisteröinti plugineille
+
+**Ongelma:** Pi-coding-agent-kirjaston Extension API (`context`-event, `session_before_compact`-event) ei ole pluginien saavutettavissa. Plugin ei voi muokata viestejä ennen LLM-kutsua eikä integroitua compaction-summariointiin.
+
+**Muutos:** Lisätään `api.registerExtension(factory)` tai vastaava, joka välittää pluginin rekisteröimän ExtensionFactory:n `buildEmbeddedExtensionFactories()`-funktiolle.
+
+**Vaikutus:** Mahdollistaisi konteksti-ikkunan muokkaamisen (muistojen injektointi viesteihin) ja compaction-integraation. Ei MVP-blokkeraaja – `before_prompt_build` + `prependContext` riittää alkuun.
 
 ---
 
-## 5. Osa A -riippuvuudet ja niiden vaikutus
+## 4. MVP ilman Osa A -muutoksia
 
-### 5.1 Kriittiset (MVP-blokkerit?)
+MVP voidaan rakentaa ilman yhtään OpenClaw-muutosta:
 
-| Osa A | Kuvaus | Ilman tätä | Workaround |
-| --- | --- | --- | --- |
-| **A1** | Memory Recall pluginista | System prompt ohjaa käyttämään memory_search/memory_get memory-coren tapaan | Plugin rekisteröi samannimiset työkalut → ohjeet sattumanvaraisesti oikein |
-| **A3** | sessionFile after_compaction | Ei voida lukea transkriptiä konsolidaatiossa | Tallennetaan before_compactionista |
+| Ominaisuus | Miten toimii |
+| --- | --- |
+| Omat työkalut | `memory_search`/`memory_get`-nimet → hardkoodatut system prompt -ohjeet toimivat sattumalta |
+| Uudet työkalut (`memory_store`, `memory_feedback`) | Bootstrap-hook muokkaa AGENTS.md:n ohjeet |
+| Auto-recall | `before_prompt_build` → `prependContext` |
+| retrieval.log-kirjaus | `after_tool_call` → fire-and-forget |
+| Konsolidaatio | `registerService()` → ajastettu taustaprosessi |
+| Session-muistojen tallennus | `before_reset` + `agent_end` |
 
-### 5.2 Merkittävät (ei blokkerita mutta rajoittavat)
-
-| Osa A | Kuvaus | Vaikutus |
-| --- | --- | --- |
-| **A2** | ExtensionFactory-rekisteröinti | Ei konteksti-ikkunan muokkausta, ei compaction-integraatiota |
-| **A4** | Session-memory pluginin vastuulle | session-memory-hook jatkaa rinnalla, duplikaattimuistoja |
-| **A6** | Embedding-API | Plugin joutuu luomaan oman embedding-putkensa |
-
-### 5.3 MVP ilman Osa A -muutoksia
-
-**Kysymys:** Voiko plugin toimia ilman yhtäkään Osa A -muutosta?
-
-**Vastaus:** Kyllä, rajoitetusti:
-- `memory_search` ja `memory_get` korvaavat memory-coren samannimiset → system prompt -ohjeet toimivat sattumalta
-- `memory_store` ja `memory_forget` ovat uusia → AGENTS.md:n bootstrap-hookilla ohjeistetaan
-- Tick-laskenta `after_tool_call`:sta → toimii
-- Auto-recall `before_prompt_build`:stä → toimii
-- Konsolidaatio servicenä → toimii
-- Session-memory-hook tuottaa rinnakkaisia tiedostoja → plugin joko hyödyntää tai ignoroi
-
-**Johtopäätös:** MVP voidaan rakentaa ilman Osa A -muutoksia. Muutokset parantavat integraatiota myöhemmin.
+**Rajoitukset MVP:ssä:**
+- System promptin Memory Recall -osio ei kuvaa pluginin kaikkia työkaluja (vain search/get)
+- `session-memory`-hook tuottaa duplikaatteja → käyttäjä voi disabloida sen manuaalisesti
+- Compaction-integraatio rajoittuu `before_compaction`-hookiin (ei post-compaction-analyysiä)
 
 ---
 
-## 6. Embedding-infran käyttö
+## 5. Päätökset
 
-### 6.1 Nykyinen saavutettavuus
-
-`api.runtime.tools.createMemorySearchTool()` palauttaa valmiin työkalun, mutta plugin tarvitsee raaemman pääsyn:
-- Yksittäisten tekstien embedaaminen (uusi muisto)
-- Batch-embedaaminen (konsolidaatio)
-- Embedding-välimuistin käyttö
-
-### 6.2 Workaround (ilman Osa A)
-
-Plugin voi käyttää `createMemorySearchTool()`:n sisäistä embedding-provideria epäsuorasti, mutta tämä on hackish. Vaihtoehdot:
-
-1. **Oma embedding-provideri** – plugin luo oman instanssin samasta providerista (duplikaatio mutta toimiva)
-2. **Plugin lukee käyttäjän embedding-konfiguraation** ja luo providerin suoraan
-
-**Ehdotus MVP:lle:** Vaihtoehto 2 – plugin lukee konfiguraation ja luo oman providerin. Ei vaadi Osa A -muutoksia.
+| # | Päätös | Perustelu |
+| - | ------ | --------- |
+| 1 | retrieval.log-kirjaus `after_tool_call`:sta | Append-only, ei DB-kirjoituksia normaalikäytössä |
+| 2 | Temporaalinen tarkistus yhdistetty auto-recalliin | Yksi hook (`before_prompt_build`), ei erillistä temporal-check:iä |
+| 3 | `memory_feedback` lisätty, `memory_forget` poistettu (V1) | Palaute on arvokkaampi kuin eksplisiittinen poisto |
+| 4 | MVP mahdollinen ilman Osa A -muutoksia | Pluginin omilla workaroundeilla päästään alkuun |
+| 5 | Osa A -muutokset tehdään erillisenä PR:nä | Taaksepäin yhteensopivat, hyödyttävät kaikkia memory-plugineja |
 
 ---
 
-## 7. Tietokanta-arkkitehtuuri
+## 6. Kytkökset muihin design-dokumentteihin
 
-### 7.1 Sijainti
-
-```
-<workspace>/memory/associations.db
-```
-
-Tai:
-```
-<workspace>/.openclaw/associative-memory.db
-```
-
-**Avoin kysymys:** Onko tietokanta `memory/`-hakemistossa (näkyvä käyttäjälle, git-hallittava) vai `.openclaw/`-hakemistossa (piilossa, ei gitissä)?
-
-### 7.2 Alustus
-
-Service `associative-memory-db`:
-- Tarkistaa onko tietokanta olemassa
-- Luo skeeman jos uusi
-- Tarkistaa layout-manifestin yhteensopivuuden
-- Migraatio tarvittaessa (skeemaversio)
-
----
-
-## 8. Avoimet kysymykset
-
-1. **Tietokannan sijainti:** `memory/` vai `.openclaw/`?
-2. **Embedding-provideri:** Oma instanssi vai jaettu?
-3. **session-memory-hookin käsittely:** Hyödynnetään, ignoroidaan vai disabloidaan?
-4. **Plugin-jakelu:** NPM-paketti, git-submodule vai OpenClaw:n extensions-hakemisto?
-5. **Testaus:** Miten testataan plugin ilman koko OpenClaw-järjestelmää?
-
----
-
-## 9. Kytkökset muihin design-dokumentteihin
-
-- **design-01–05:** Kaikki edelliset dokumentit – tämä dokumentti kuvaa miten ne toteutetaan käytännössä
+- **design-01 (Tietomalli):** SQLite-skeema, retrieval.log-formaatti
+- **design-02 (Assosiaatiot):** retrieval.log-kirjaus, assosiaatioiden hallinta
+- **design-03 (Elinkaari):** Strength-malli, temporaaliset siirtymät, pakkoinjektio
+- **design-04 (Retrieval):** Hakuputki, muistityökalut
+- **design-05 (Konsolidaatio):** Service-toteutus, konsolidaatioprosessi
 - **design-07 (Migraatio):** Plugin-asennus ja datan migraatio
-- **Research-04 (Hookit):** Hook-rajapinnan yksityiskohdat
-- **Research-05 (Pluginit):** Plugin-lataus, rekisteröinti, SDK
+- **Research-04 (Hookit):** Hook-rajapinnan yksityiskohdat, pi-agent-analyysi
+- **Research-05 (Pluginit):** Plugin-lataus, rekisteröinti, SDK, referenssipluginit

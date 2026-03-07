@@ -1,7 +1,7 @@
 # Design-04: Haku ja retrieval
 
-> **Tila:** Ensimmäinen vedos (korkea taso)
-> **Päivitetty:** 28.2.2026
+> **Tila:** Vedos 2
+> **Päivitetty:** 6.3.2026
 > **Riippuvuudet:** design-01 (tietomalli), design-02 (assosiaatiot), design-03 (elinkaari)
 > **Ruokkii:** design-05 (konsolidaatio), design-06 (integraatio)
 
@@ -9,7 +9,9 @@
 
 ## 1. Tarkoitus
 
-Kuvata miten agentti löytää relevantteja muistoja ja miten retrieval vaikuttaa muistijärjestelmään takaisin (assosiaatioiden vahvistaminen, decay-nollaus). Hakuputki on se kohta, jossa agentti "kohtaa" muistinsa.
+Kuvata miten agentti löytää relevantteja muistoja ja miten retrieval kirjautuu muistijärjestelmään (retrieval.log). Hakuputki on se kohta, jossa agentti "kohtaa" muistinsa.
+
+**V1-periaate:** Hakuputki on yksinkertainen. Assosiaatiot eivät vaikuta hakutuloksiin V1:ssä – ne prosessoidaan konsolidaatiossa. Kaikki muutokset (strength, assosiaatiot) tapahtuvat konsolidaatiossa, ei reaaliajassa.
 
 ---
 
@@ -20,38 +22,20 @@ Kysely (query)
     │
     ▼
 ┌──────────────────────┐
-│ 1. Embedding + BM25  │  ← Kandidaattien haku (nykyisen memory-core:n tapaan)
-│    hybridi-scoring    │
+│ 1. Embedding + BM25  │  ← Kandidaattien haku (hybridi-scoring)
+│    kiinteä painotus   │
 └──────────┬───────────┘
            │
            ▼
 ┌──────────────────────┐
-│ 2. Decay-painotus    │  ← Vaimentaa rapautuneet muistot
+│ 2. Strength-painotus │  ← Vaimentaa rapautuneet muistot
 └──────────┬───────────┘
            │
            ▼
-┌──────────────────────┐
-│ 3. Assosiaatio-boost │  ← Nostaa muistot jotka assosioituvat jo kontekstissa oleviin
-└──────────┬───────────┘
-           │
-           ▼
-┌──────────────────────┐
-│ 4. Kertautuva assoc. │  ← Tuo "piilomuistoja" jotka eivät olleet haussa
-└──────────┬───────────┘
-           │
-           ▼
-┌──────────────────────┐
-│ 5. MMR-diversiteetti │  ← Poistaa duplikaatit, varmistaa monipuolisuus
-└──────────┬───────────┘
-           │
-           ▼
-┌──────────────────────┐
-│ 6. Temporal-suodatus │  ← Nostaa tulevaisuuden muistot jotka ovat nyt ajankohtaisia
-└──────────┬───────────┘
-           │
-           ▼
-Tulokset → kontekstiin + sivuvaikutukset (assosiaatiot, decay-nollaus)
+Tulokset → kontekstiin + retrieval.log-kirjaus
 ```
+
+Kolme vaihetta. Ei assosiaatio-boostia, ei kertautuvaa assosiaatiota, ei MMR:ää, ei temporaalista suodatusta hakuputkessa. Nämä voidaan lisätä V2:ssa.
 
 ---
 
@@ -59,61 +43,33 @@ Tulokset → kontekstiin + sivuvaikutukset (assosiaatiot, decay-nollaus)
 
 ### 3.1 Embedding + BM25 hybridi
 
-Perustuu nykyiseen memory-core-hakuun, mutta **muistotyypin mukaan painotettu**:
-
-| Muistotyyppi | Embedding-paino | BM25-paino | Perustelu |
-| --- | --- | --- | --- |
-| `narrative` | 0.8 | 0.2 | Semanttinen haku dominoi |
-| `interpretation` | 0.8 | 0.2 | Sama kuin narratiivinen |
-| `fact` | 0.5 | 0.5 | Molemmat relevantteja |
-| `decision` | 0.5 | 0.5 | Molemmat relevantteja |
-| `tool_usage` | 0.2 | 0.8 | Eksakti merkkijono ratkaisee |
-| `preference` | 0.3 | 0.7 | Usein eksakteja sanoja |
-
-**Toteutus:** Haku tehdään kaikkiin muistoihin samalla kyselyllä, mutta scoring-vaiheessa painotetaan muistotyyppikohtaisesti.
-
-### 3.2 Decay-painotus
+Perustuu nykyiseen memory-core-hakuun. V1:ssä **kiinteä painotus** kaikille muistotyypeille:
 
 ```
-adjusted_score = base_score × decay(memory)
+hybrid_score = α × embedding_score + (1 - α) × bm25_score
 ```
 
-Decay lasketaan lazy-menetelmällä (design-03, luku 6.4): nykyinen tick - viimeisin retrieval → eksponentiaalinen vaimennus.
+Missä `α = 0.6` (embedding dominoi hieman). Muistotyyppikohtainen painotus (semanttinen vs. eksaktinen) voidaan lisätä V2:ssa kun on empiiristä dataa.
 
-### 3.3 Assosiaatio-boosting
+**Toteutus:** Haku tehdään kaikkiin muistoihin (working + consolidated) samalla kyselyllä. Embedding-haku sqlite-vec:llä, BM25 FTS5:llä.
 
-Jos kontekstissa on jo muistoja (aiempi haku samassa sessiossa tai before_prompt_build-injektio):
+### 3.2 Strength-painotus
 
 ```
-assoc_boost(M) = Σ weight(M, Ci) for Ci in kontekstin muistot
-boosted_score = adjusted_score × (1 + β × assoc_boost)
+final_score = hybrid_score × strength
 ```
 
-Missä `β` = assosiaatio-boosting-kerroin (konfiguroitava).
+Strength-arvo on muiston nykyinen vahvuus tietokannassa (päivitetään konsolidaatiossa, design-03). Rapautuneet muistot (matala strength) saavat luontaisesti heikommat pisteet.
 
-### 3.4 Kertautuva assosiaatio
+### 3.3 V2-laajennettavuus
 
-Design-02:n luku 6.3: muistot jotka eivät ole haussa mutta assosioituvat vahvasti useaan haettuun muistoon:
+Myöhemmin hakuputkeen voidaan lisätä:
+- **Assosiaatio-boosting:** Nostaa muistoja jotka assosioituvat kontekstissa oleviin
+- **Kertautuva assosiaatio:** Tuo "piilomuistoja" jotka assosioituvat useaan haettuun muistoon
+- **MMR (Maximal Marginal Relevance):** Estää liian samankaltaisten muistojen kertyminen
+- **Muistotyyppikohtainen painotus:** Eri embedding/BM25-suhde eri muistotyypeille
 
-1. Käy läpi top-K hakutulokset
-2. Hae niiden assosiaatiot
-3. Jos muisto X assosioituu ≥ 2 haettuun muistoon → laske kertautuva boost
-4. Jos boost > kynnysarvo → lisää X tuloksiin
-
-Tämä tuo esiin "piilomuistoja" – muistoja jotka eivät suoraan vastaa kyselyyn mutta liittyvät kontekstiin.
-
-### 3.5 MMR (Maximal Marginal Relevance)
-
-Nykyisestä memory-core:sta lainattu: estä liian samankaltaisten muistojen kertyminen tuloksiin.
-
-Käytä Jaccard-samankaltaisuutta (halpa) + embedding-kosinia (tarkka) duplikaattien tunnistamiseen.
-
-### 3.6 Temporal-suodatus
-
-Erikoiskäsittely muistoille joiden temporaalinen tila on siirtymässä:
-- `future` → `present` (transitio lähellä): **nosta prioriteettiä** (tämä on pian ajankohtainen)
-- `present`: **nosta prioriteettiä** (tämä on juuri nyt relevanttia)
-- Transitiopäivät saavat erityisen boosting (Jarin idea)
+Nämä eivät vaadi arkkitehtuurimuutoksia – lisävaiheita putken loppuun.
 
 ---
 
@@ -124,57 +80,105 @@ Erikoiskäsittely muistoille joiden temporaalinen tila on siirtymässä:
 Plugin injektoi relevantteja muistoja kontekstiin **automaattisesti** jokaisella agenttiajolla:
 
 1. `before_prompt_build`-hook laukeaa
-2. Plugin hakee: käyttäjän viimeisin viesti → embedding → top-N muistoa
+2. Plugin hakee: käyttäjän viimeisin viesti → embedding → top-N muistoa (sama hakuputki)
 3. Tulokset injektoidaan `prependContext`:iin
 4. Agentti näkee ne "automaattisesti" ilman eksplisiittistä hakua
+5. retrieval.log:iin kirjataan `recall`-rivi
 
-### 4.2 Injektoinnin budjetti
+### 4.2 Temporaalinen pakkoinjektio
+
+Konsolidaatio tarkistaa muistojen temporaaliset siirtymät (design-03, kohta 5.3). Kun muiston `temporal_state` on siirtymässä (future→present tai present→past):
+
+- Muisto **pakotetaan mukaan** auto-recall-tuloksiin riippumatta haun pisteistä
+- Tämä varmistaa ettei agentti "unohda" ajallisesti kriittisiä asioita
+- Pakotetut muistot kirjataan retrieval.log:iin `recall`-rivillä
+
+### 4.3 Injektoinnin budjetti
 
 Kontekstibudjetti on rajallinen. Auto-recall ei saa viedä liikaa tilaa.
 
-**Ehdotus:** Maksimi ~2000 tokenia auto-recall-muistoja per agenttiajon alku. Agentti voi hakea lisää eksplisiittisesti.
+**Ehdotus:** Maksimi ~2000 tokenia auto-recall-muistoja per agenttiajon alku. Pakotetut transitiomuistot menevät tämän budjetin ohi (ne ovat aina mukana). Agentti voi hakea lisää eksplisiittisesti `memory_search`-työkalulla.
 
 ---
 
 ## 5. Retrieval-sivuvaikutukset
 
-Haku ei ole vain lukuoperaatio – se **muuttaa** muistijärjestelmää:
+**V1-periaate:** Retrieval ei muuta tietokantaa. Ainoa sivuvaikutus on retrieval.log-kirjaus.
 
-### 5.1 Assosiaatioiden vahvistaminen
+### 5.1 retrieval.log-kirjaus
 
-Kaikki hakutuloksena palautetut muistot:
-- Parien assosiaatiot vahvistuvat (co-retrieval, design-02)
-- Kertautuvan assosiaation kautta löydetyt muistot saavat uudet/vahvistuneet assosiaatiot
+Jokainen haku ja auto-recall kirjataan retrieval.log:iin (design-01, kohta 5):
 
-### 5.2 Decay-nollaus
+| Tapahtuma | Lähde | Esimerkki |
+| --- | --- | --- |
+| `search` | Agentti kutsui `memory_search` | `2026-03-05T14:30:00Z search a1b2c3d4 e5f6a7b8` |
+| `recall` | Auto-recall (before_prompt_build) | `2026-03-05T14:30:00Z recall a1b2c3d4 c9d0e1f2` |
+| `feedback` | Agentti kutsui `memory_feedback` | `2026-03-05T14:31:00Z feedback a1b2c3d4:3 e5f6a7b8:1` |
+| `store` | Agentti kutsui `memory_store` | `2026-03-05T14:35:12Z store f3a4b5c6 context:a1b2c3d4` |
 
-Jokaisen palautetun muiston:
-- `last_retrieved_at_tick` päivitetään
-- `retrieval_count` +1
-- `decay` vahvistuu (design-03, luku 6.3)
+Konsolidaatio prosessoi lokin ja päivittää:
+- **Strength-vahvistus:** painotettu palautteella (design-03, kohta 4.2)
+- **Assosiaatiot:** co-retrieval-parit (design-02, kohta 5)
 
-### 5.3 Tick-tallennus
+### 5.2 Mitä EI tapahdu haun yhteydessä (V1)
 
-Haun tick tallennetaan → voidaan myöhemmin analysoida retrieval-patterneja (konsolidaatiossa).
+- Strength-arvoa ei päivitetä
+- Assosiaatioita ei luoda tai vahvisteta
+- Decay-arvoa ei lasketa
+- Kaikki nämä tapahtuvat konsolidaatiossa ("nukkuessa")
+
+**Poikkeus:** `memory_store` kirjoittaa uuden muiston tietokantaan ja working.md:hen, koska muiston on oltava haettavissa heti (design-03, kohta 3.1).
 
 ---
 
 ## 6. Agentin muistityökalut
 
-### 6.1 Ehdotettavat työkalut
+### 6.1 Työkalut
 
 | Työkalu | Kuvaus | Parametrit |
 | --- | --- | --- |
-| `memory_search` | Semanttinen haku koko hakuputkella | `query`, `type_filter?`, `limit?` |
-| `memory_store` | Uuden muiston tallentaminen | `content`, `type`, `temporal_anchor?`, `tags?` |
+| `memory_search` | Semanttinen haku hakuputkella | `query`, `limit?` |
+| `memory_store` | Uuden muiston tallentaminen | `content`, `type`, `temporal_anchor?` |
+| `memory_feedback` | Relevanssipalaute haetuille muistoille | `ratings` (lista: id + tähdet 1-3), `comment?` |
 | `memory_get` | Yksittäisen muiston haku id:llä | `id` |
-| `memory_forget` | Muiston eksplisiittinen poisto | `id` |
 
-### 6.2 Nimivalinta
+### 6.2 memory_search
 
-**Avoin kysymys:** Käytetäänkö samoja nimiä kuin memory-core (`memory_search`, `memory_get`) vai eri nimiä (`memory_recall`, `memory_store`)? Samat nimet ovat luontevampia (system prompt -ohjeet viittaavat niihin), mutta eri nimet välttävät sekaannuksen.
+Agentti tekee semanttisen haun. Parametrit:
+- `query` (pakollinen): hakukysely
+- `limit` (valinnainen, oletus 10): maksimitulokset
 
-**Ehdotus:** Samat nimet (`memory_search`, `memory_get`) + uudet (`memory_store`, `memory_forget`). Plugin korvaa memory-core:n – samat nimet ovat luonnollinen jatko.
+Palauttaa listan muistoja (id, sisältö, tyyppi, strength, luontiaika). Kirjaa `search`-rivin retrieval.log:iin.
+
+### 6.3 memory_store
+
+Agentti tallentaa uuden muiston. Parametrit:
+- `content` (pakollinen): muiston narratiivinen sisältö
+- `type` (pakollinen): vapaamuotoinen kategoria (esim. narrative, fact, decision, preference)
+- `temporal_anchor` (valinnainen): päivämäärä jos muistolla on ajallinen ankkuri
+
+Plugin:
+1. Laskee SHA-256-hashin sisällöstä
+2. Lisää chunkin working.md:hen
+3. Lisää muiston tietokantaan (embedding + FTS indeksointi)
+4. Kirjaa `store`-rivin retrieval.log:iin kontekstissa olevilla muistoilla
+
+### 6.4 memory_feedback
+
+Agentti arvioi haettujen muistojen relevanssin. Parametrit:
+- `ratings` (pakollinen): lista muisto-id + tähdet (1-3)
+  - ★ = heikosti relevantti
+  - ★★ = osittain relevantti
+  - ★★★ = täysin relevantti
+- `comment` (valinnainen): vapaamuotoinen kommentti
+
+Kirjaa `feedback`-rivin retrieval.log:iin. Konsolidaatio käyttää tähtiä painottamaan strength-vahvistusta ja assosiaatioita (design-03, kohta 4.2).
+
+**Ajoitus:** Agenttia kehotetaan antamaan palautetta haettujen muistojen hyödyllisyydestä system promptissa. Palaute ei ole pakollinen.
+
+### 6.5 memory_get
+
+Yksittäisen muiston haku tunnetulla id:llä. Ei kirjaa retrieval.log:iin (ei ole semanttinen haku).
 
 ---
 
@@ -189,14 +193,17 @@ strength. When you recall something, related memories may surface too.
 
 - Use memory_search to find memories by content or meaning
 - Use memory_store to save new memories (always write from your perspective)
+- Use memory_feedback to rate how relevant recalled memories were (1-3 stars)
 - Use memory_get to retrieve a specific memory by ID
-- Use memory_forget to remove a memory
 
 When storing memories:
 - Write narratively from your perspective ("Jari told me...")
-- Choose the appropriate type (narrative, fact, decision, tool_usage, preference)
+- Choose a descriptive type (e.g. narrative, fact, decision, preference)
 - Be epistemologically precise ("Jari said X" not "X is true")
 - Include temporal anchors when applicable
+
+After recalling memories, consider giving feedback on their relevance.
+This helps the memory system learn which memories matter.
 ```
 
 ---
@@ -204,18 +211,29 @@ When storing memories:
 ## 8. Avoimet kysymykset
 
 1. **Auto-recall budjetti:** 2000 tokenia riittävä? Pitäisikö olla dynaaminen kontekstibudjetin mukaan?
-2. **Hakuputken vaiheiden järjestys:** Onko yllä esitetty järjestys optimaalinen?
-3. **Kertautuvan assosiaation kynnysarvo:** Miten valitaan? Tarvitaanko empiiristä testausta?
-4. **Temporal-boosting:** Miten paljon transitiopäivät nostavat prioriteettiä?
-5. **Retrieval-sivuvaikutusten ajoitus:** Synkroninen (hidastaa vastausta) vai asynkroninen (fire-and-forget)?
-6. **memory_search vs. memory_recall:** Kumpi nimi? Vai molemmat (aliakset)?
+2. **Embedding/BM25-painotus:** α = 0.6 optimaalinen? Tarvitseeko empiiristä viritystä?
+3. **memory_feedback-kehotus:** Miten usein agenttia kehotetaan antamaan palautetta? Joka haun jälkeen vai harvemmin?
+4. **memory_forget:** Tarvitaanko eksplisiittistä poistoa V1:ssä vai riittääkö luonnollinen decay?
 
 ---
 
-## 9. Kytkökset muihin design-dokumentteihin
+## 9. Päätökset
 
-- **design-01 (Tietomalli):** Muistotyyppi → hakustrategia, skeeman käyttö
-- **design-02 (Assosiaatiot):** Co-retrieval-vahvistaminen, kertautuva assosiaatio
-- **design-03 (Elinkaari):** Decay vaikuttaa pisteisiin, retrieval vahvistaa muistoa
-- **design-05 (Konsolidaatio):** Retrieval-patternit ruokkivat konsolidaatioanalyysiä
-- **design-06 (Integraatio):** before_prompt_build-hook, system prompt -osio
+| # | Päätös | Perustelu |
+| - | ------ | --------- |
+| 1 | Ei assosiaatio-boostia hakuputkessa (V1) | Yksinkertainen putki, assosiaatiot vaikuttavat epäsuorasti strengthin kautta |
+| 2 | Kiinteä embedding/BM25-painotus (V1) | Muistotyyppikohtainen painotus V2:ssa kun on dataa |
+| 3 | Retrieval ei muuta tietokantaa – vain retrieval.log | V1-periaate: kaikki muutokset konsolidaatiossa |
+| 4 | Temporaalinen pakkoinjektio auto-recallissa | Transitiomuistot pakotetaan kontekstiin, eivät vain boostattuja |
+| 5 | memory_feedback-työkalu (1-3 tähteä) | Agentti arvioi relevanssin, konsolidaatio painottaa |
+| 6 | Interpretation pois muistotyypeistä | Konsolidaation tuottama muisto saa normaalin tyypin, source=consolidation kertoo alkuperän |
+
+---
+
+## 10. Kytkökset muihin design-dokumentteihin
+
+- **design-01 (Tietomalli):** SQLite-skeema (embedding + FTS), retrieval.log-formaatti, muistotyypit
+- **design-02 (Assosiaatiot):** retrieval.log → konsolidaatio prosessoi co-retrieval-parit
+- **design-03 (Elinkaari):** Strength vaikuttaa hakupisteisiin, retrieval.log → konsolidaatio vahvistaa
+- **design-05 (Konsolidaatio):** Prosessoi retrieval.log:n, päivittää strengthit ja assosiaatiot
+- **design-06 (Integraatio):** before_prompt_build-hook, system prompt -osio, muistityökalut
