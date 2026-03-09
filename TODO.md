@@ -108,6 +108,13 @@ Erillinen kuvaus: `history/openclaw-upstream-changes.md`
 10. Värityksen aggressiivisuus: kuinka herkästi muistoja päivitetään?
 11. Unicode-tokenizer Jaccard-vertailuun (`/[\p{L}\p{N}_]+/gu` vs. nykyinen `/[a-z0-9_]+/g`)
 
+## Go-to-Market
+
+- [ ] GTM-strategian toteutus: `history/plan-gtm-formativememory.md`
+- [ ] Landing page (formativememory.ai)
+- [ ] README.md uudelleenkirjoitus GTM-suunnitelman mukaan
+- [ ] Kanavajulkaisut (HN, Reddit, Discord, X)
+
 ## Työskentelyohjeet
 
 - Lue aina ensin indeksi (`03-design-00-index.md`) ja relevantit design-dokumentit

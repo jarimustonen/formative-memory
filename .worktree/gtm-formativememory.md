@@ -2,6 +2,12 @@
 created: 2026-03-09T12:00:00+02:00
 source_branch: main
 task: GTM strategy and marketing plan for Formative Memory
+merged: 2026-03-18T11:24:23+02:00
+commits:
+  - hash: 4421f80
+    message: "docs: add GTM strategy for formativememory.ai"
+  - hash: bb474b0
+    message: "docs: add worktree prompt for gtm-formativememory"
 ---
 
 # Task: Go-to-Market Strategy for Formative Memory (formativememory.ai)
