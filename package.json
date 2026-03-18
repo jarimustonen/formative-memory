@@ -21,9 +21,11 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@sinclair/typebox": "0.34.48"
+    "@sinclair/typebox": "0.34.48",
+    "better-sqlite3": "^12.6.2"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.10.0",
     "@vitest/coverage-v8": "^4.0.18",
     "openclaw": ">=2026.2.25",
@@ -45,5 +47,11 @@
   "engines": {
     "node": ">=22.12.0"
   },
-  "packageManager": "pnpm@10.23.0"
+  "packageManager": "pnpm@10.23.0",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild"
+    ]
+  }
 }
