@@ -29,6 +29,7 @@ const fakeApi = () => ({
   registerService: vi.fn(),
   registerProvider: vi.fn(),
   registerCommand: vi.fn(),
+  registerMemoryPromptSection: vi.fn(),
   resolvePath: vi.fn((p: string) => p),
   on: vi.fn(),
 });
@@ -47,6 +48,28 @@ describe("plugin registration", () => {
   it("has correct metadata", () => {
     expect(plugin.id).toBe("memory-associative");
     expect(plugin.kind).toBe("memory");
+  });
+
+  it("registers a memory prompt section builder", () => {
+    const api = fakeApi();
+    plugin.register(api as any);
+
+    expect(api.registerMemoryPromptSection).toHaveBeenCalledOnce();
+    const builder = api.registerMemoryPromptSection.mock.calls[0][0] as Function;
+
+    // With all tools available
+    const allTools = new Set(["memory_store", "memory_search", "memory_get", "memory_feedback"]);
+    const lines = builder({ availableTools: allTools });
+    expect(lines).toBeInstanceOf(Array);
+    expect(lines.length).toBeGreaterThan(0);
+    expect(lines.join("\n")).toContain("Associative Memory");
+    expect(lines.join("\n")).toContain("memory_store");
+    expect(lines.join("\n")).toContain("memory_feedback");
+
+    // With no tools available
+    const noTools = new Set<string>();
+    const emptyLines = builder({ availableTools: noTools });
+    expect(emptyLines).toEqual([]);
   });
 
   it("registers a tool factory with all four tool names", () => {

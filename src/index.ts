@@ -12,11 +12,17 @@
 import { join } from "node:path";
 import { Type } from "@sinclair/typebox";
 import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk";
-import { jsonResult } from "openclaw/plugin-sdk";
 import type { AssociativeMemoryConfig } from "./config.ts";
 import { memoryConfigSchema } from "./config.ts";
 import { MemoryManager } from "./memory-manager.ts";
 import { appendFeedbackEvent } from "./retrieval-log.ts";
+
+function jsonResult(payload: unknown) {
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+    details: payload,
+  };
+}
 
 function createEmbedder(config: AssociativeMemoryConfig) {
   return {
@@ -201,30 +207,50 @@ const associativeMemoryPlugin = {
       { names: ["memory_store", "memory_search", "memory_get", "memory_feedback"] },
     );
 
-    api.on("before_prompt_build", async (event, ctx) => {
-      const workspaceDir = ctx.workspaceDir ?? ".";
-      const manager = getManager(config, workspaceDir);
-      const parts: string[] = [];
+    // Register system prompt section via the pluggable memory API (PR #40126)
+    api.registerMemoryPromptSection(({ availableTools }) => {
+      const hasStore = availableTools.has("memory_store");
+      const hasSearch = availableTools.has("memory_search");
+      const hasGet = availableTools.has("memory_get");
+      const hasFeedback = availableTools.has("memory_feedback");
 
-      // Memory usage instructions
-      parts.push(
-        "# Associative Memory",
+      if (!hasStore && !hasSearch && !hasGet) return [];
+
+      const tools = [
+        hasStore && "`memory_store` (save)",
+        hasSearch && "`memory_search` (find)",
+        hasGet && "`memory_get` (retrieve by ID)",
+        hasFeedback && "`memory_feedback` (rate usefulness 1-5)",
+      ].filter(Boolean);
+
+      return [
+        "## Associative Memory",
         "",
-        "You have a persistent associative memory. Use it to remember important information across sessions.",
-        "",
-        "**Tools:** `memory_store` (save), `memory_search` (find), `memory_get` (retrieve by ID), `memory_feedback` (rate usefulness 1-5).",
+        `You have a persistent associative memory. Tools: ${tools.join(", ")}.`,
         "",
         "**When to store:** key decisions, user preferences, project facts, plans, corrections, anything worth remembering.",
         "**When to search:** start of a task, when context seems missing, when the user references past work.",
-        "**When to give feedback:** after using a retrieved memory — rate how useful it was.",
-      );
+        hasFeedback
+          ? "**When to give feedback:** after using a retrieved memory — rate how useful it was."
+          : "",
+        "",
+      ];
+    });
 
-      // Auto-recall: search for relevant memories based on the user's prompt
-      if (config.autoRecall && event.prompt) {
+    // Auto-recall: inject relevant memories before each prompt
+    if (config.autoRecall) {
+      api.on("before_prompt_build", async (event, ctx) => {
+        const workspaceDir = ctx.workspaceDir ?? ".";
+        const manager = getManager(config, workspaceDir);
+
+        if (!event.prompt) return;
+
         try {
+          const parts: string[] = [];
+
           const results = await manager.recall(event.prompt, 3);
           if (results.length > 0) {
-            parts.push("", "## Recalled Memories", "");
+            parts.push("## Recalled Memories", "");
             for (const r of results) {
               parts.push(
                 `- **[${r.memory.id.slice(0, 8)}]** (${r.memory.type}, strength: ${r.memory.strength.toFixed(2)}) ${r.memory.content}`,
@@ -232,7 +258,6 @@ const associativeMemoryPlugin = {
             }
           }
 
-          // Temporal transitions
           const transitions = manager.getTransitionMemories();
           if (transitions.length > 0) {
             parts.push("", "## Temporal Transitions", "");
@@ -242,13 +267,15 @@ const associativeMemoryPlugin = {
               );
             }
           }
+
+          if (parts.length > 0) {
+            return { prependContext: parts.join("\n") };
+          }
         } catch {
           // Don't block the prompt if recall fails
         }
-      }
-
-      return { prependContext: parts.join("\n") };
-    });
+      });
+    }
   },
 };
 
