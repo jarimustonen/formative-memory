@@ -34,6 +34,7 @@ const fakeApi = () => ({
   registerService: vi.fn(),
   registerProvider: vi.fn(),
   registerCommand: vi.fn(),
+  registerContextEngine: vi.fn(),
   registerMemoryPromptSection: vi.fn(),
   resolvePath: vi.fn((p: string) => p),
   on: vi.fn(),
@@ -53,6 +54,30 @@ describe("plugin registration", () => {
   it("has correct metadata", () => {
     expect(plugin.id).toBe("memory-associative");
     expect(plugin.kind).toBe("memory");
+  });
+
+  it("registers a context engine", () => {
+    const api = fakeApi();
+    plugin.register(api as any);
+
+    expect(api.registerContextEngine).toHaveBeenCalledOnce();
+    const [id, factory] = api.registerContextEngine.mock.calls[0];
+    expect(id).toBe("associative-memory");
+    expect(typeof factory).toBe("function");
+  });
+
+  it("context engine factory returns a valid engine", () => {
+    const api = fakeApi();
+    plugin.register(api as any);
+
+    const factory = api.registerContextEngine.mock.calls[0][1] as Function;
+    const engine = factory();
+    expect(engine.info.id).toBe("associative-memory");
+    expect(engine.info.ownsCompaction).toBe(false);
+    expect(engine.assemble).toBeTypeOf("function");
+    expect(engine.ingest).toBeTypeOf("function");
+    expect(engine.compact).toBeTypeOf("function");
+    expect(engine.dispose).toBeTypeOf("function");
   });
 
   it("registers a memory prompt section builder", () => {

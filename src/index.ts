@@ -14,6 +14,7 @@ import { Type } from "@sinclair/typebox";
 import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk";
 import type { AssociativeMemoryConfig } from "./config.ts";
 import { memoryConfigSchema } from "./config.ts";
+import { CONTEXT_ENGINE_ID, createAssociativeMemoryContextEngine } from "./context-engine.ts";
 import { MemoryManager } from "./memory-manager.ts";
 import { appendFeedbackEvent } from "./retrieval-log.ts";
 
@@ -251,6 +252,13 @@ const associativeMemoryPlugin = {
         "",
       ];
     });
+
+    // Register context engine (claims contextEngine slot alongside the memory slot)
+    api.registerContextEngine(CONTEXT_ENGINE_ID, () =>
+      createAssociativeMemoryContextEngine({
+        getManager: () => getManager(config, "."),
+      }),
+    );
 
     // Auto-recall: inject relevant memories before each prompt
     if (config.autoRecall) {
