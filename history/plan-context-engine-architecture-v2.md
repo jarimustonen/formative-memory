@@ -40,7 +40,7 @@ The plugin claims both OpenClaw plugin slots. No hook-based fallback mode.
 
 ### Why
 
-1. **The context engine lifecycle maps exactly to what a memory system needs.** `assemble()` = recall, `afterTurn()` = observation, `maintain()` = provenance/optimization, `compact()` = extraction.
+1. **The context engine lifecycle maps exactly to what a memory system needs.** `assemble()` = recall, `afterTurn()` = observation, `compact()` = extraction.
 
 2. **No dual-mode implementation.** The memory model (associations, consolidation, temporal states, 10-phase sleep) is already the most complex part. Two code paths = twice the bugs.
 
@@ -66,7 +66,7 @@ Mitigations:
 | Slot | Capabilities used |
 |---|---|
 | **Memory** (`kind: "memory"`) | `registerTool()` (4 memory tools), `registerMemoryPromptSection()` (system prompt) |
-| **Context Engine** | `assemble()`, `afterTurn()`, `maintain()`, `compact()`, `ingest()` — see §15 for unused methods |
+| **Context Engine** | `assemble()`, `afterTurn()`, `compact()`, `ingest()`, `dispose()` — see §15 for unused methods |
 
 ---
 
