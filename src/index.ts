@@ -88,15 +88,28 @@ function createMemoryTools(config: AssociativeMemoryConfig, workspaceDir: string
         description: 'Memory type, e.g. "fact", "decision", "plan", "observation", "preference"',
       }),
       temporal_state: Type.Optional(
-        Type.Union([Type.Literal("future"), Type.Literal("present"), Type.Literal("past"), Type.Literal("none")], {
-          description: 'Temporal state: "future" for upcoming events, "present" for current, "past" for historical, "none" for atemporal',
-        }),
+        Type.Union(
+          [
+            Type.Literal("future"),
+            Type.Literal("present"),
+            Type.Literal("past"),
+            Type.Literal("none"),
+          ],
+          {
+            description:
+              'Temporal state: "future" for upcoming events, "present" for current, "past" for historical, "none" for atemporal',
+          },
+        ),
       ),
       temporal_anchor: Type.Optional(
-        Type.String({ description: "ISO date for temporal memories, e.g. a deadline or event date" }),
+        Type.String({
+          description: "ISO date for temporal memories, e.g. a deadline or event date",
+        }),
       ),
       context_ids: Type.Optional(
-        Type.Array(Type.String(), { description: "IDs of related memories for co-retrieval tracking" }),
+        Type.Array(Type.String(), {
+          description: "IDs of related memories for co-retrieval tracking",
+        }),
       ),
     }),
     async execute(_toolCallId, params) {
@@ -178,7 +191,9 @@ function createMemoryTools(config: AssociativeMemoryConfig, workspaceDir: string
     parameters: Type.Object({
       memory_id: Type.String({ description: "ID of the memory to rate" }),
       rating: Type.Number({ description: "Usefulness rating: 1 (not useful) to 5 (very useful)" }),
-      comment: Type.Optional(Type.String({ description: "Optional comment explaining the rating" })),
+      comment: Type.Optional(
+        Type.String({ description: "Optional comment explaining the rating" }),
+      ),
     }),
     async execute(_toolCallId, params) {
       appendFeedbackEvent(logPath(), { [params.memory_id]: params.rating }, params.comment);

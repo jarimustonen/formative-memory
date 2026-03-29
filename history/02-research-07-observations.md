@@ -97,6 +97,7 @@ JSONL-transkripti tallentaa vain `user`/`assistant`/`tool`-vuorot **ilman tietoa
 **Merkitys muisti-pluginille:** Jos assosiatiivinen muisti haluaa assosioida muistoja kontekstiin ("tämä keskustelu tapahtui Telegramissa", "tästä puhuttiin Discord-ryhmässä"), tätä tietoa ei saa jälkikäteen transkriptista. Design-dokin narratiivinen muisti hyötyisi kontekstitiedosta.
 
 **Mahdolliset ratkaisut:**
+
 - Plugin seuraa kanavaa reaaliajassa (hookista/kontekstista) muistoa luotaessa
 - Tai OpenClaw-järjestelmään lisätään kanavatieto JSONL:ään (Osa A -muutos)
 
@@ -110,6 +111,7 @@ JSONL-transkripti tallentaa vain `user`/`assistant`/`tool`-vuorot **ilman tietoa
 Varsinainen agentic loop on `@mariozechner/pi-coding-agent` -kirjaston sisällä. OpenClaw kutsuu `session.prompt()` ja saa takaisin tuloksen – mutta loopin sisäiseen toimintaan ei pääse käsiksi.
 
 **Merkitys muisti-pluginille:** Design-dokin **tick-konsepti** (sisäinen aikakäsite, joka kasvaa jokaisella agenttiloopin stepillä) ei voi suoraan laskea steppejä loopin sisällä. Tick-laskenta pitäisi toteuttaa **ulkopuolelta observoimalla:**
+
 - `subscribeEmbeddedPiSession()`:n tapahtumat (onToolResult, onBlockReply)
 - Tai hook-pisteet (llm_input, after_agent_end)
 
@@ -125,6 +127,7 @@ Tämä on arkkitehtuurityylinen rajoite, joka vaikuttaa tick-toteutuksen tarkkuu
 Compaction voi tapahtua **agenttilooppien välissä tai loopin aikana**. Kun compaction ajaa, se korvaa vanhemmat viestit yhteenvedolla – alkuperäinen sisältö häviää kontekstista.
 
 **Merkitys muisti-pluginille:**
+
 - Jos plugin juuri haki muistoja kontekstiin ja compaction poistaa ne, assosiaatiolinkitys voi katketa
 - **Memory flush** -mekanismi (`compaction.memoryFlush`) on jo olemassa – se kehottaa agenttia kirjoittamaan muistiin ennen tiivistystä. Plugin voisi koukuttaa tähän vaiheeseen tallentaakseen assosiaatiot.
 - Compaction tuhoaa myös tool_use/tool_result -parit historiasta → pluginin pitää seurata assosiaatioita reaaliajassa, ei jälkikäteen transkriptista
@@ -139,6 +142,7 @@ Compaction voi tapahtua **agenttilooppien välissä tai loopin aikana**. Kun com
 Kaikki työkalukutsut tallentuvat JSONL-transkriptiin, mukaan lukien `memory_search`-kutsut ja niiden tulokset. Tämä tarkoittaa, että **mitkä muistot on haettu yhdessä** on jäljitettävissä historiallisista transkripteista.
 
 **Merkitys muisti-pluginille:** Design-dokin assosiatiivisuus perustuu siihen, että "jos muistot palautetaan mieleen ajallisesti toisiaan lähellä, niiden assosiaatio kasvaa". Transkripteista voisi analysoida:
+
 - Mitkä memory_search -kutsut tapahtuivat samassa sessiossa
 - Mitkä muistichunkit palautettiin samoissa hauissa
 - Tästä voi rakentaa assosiaatiomatriisin retroaktiivisesti
@@ -155,6 +159,7 @@ Kaikki työkalukutsut tallentuvat JSONL-transkriptiin, mukaan lukien `memory_sea
 Cron-ajot saavat oman session ja ajagenteilla (subagent lane) timeout on 0 = ei timeoutia. Cron-sessiot voivat myös käyttää eri mallia ja thinking-tasoa.
 
 **Merkitys muisti-pluginille:** Design-dokin "uni" (sleep/consolidation) voitaisiin toteuttaa cron-ajona:
+
 - Ajastetaan hiljainen aika (esim. yö) → cron käynnistää konsolidaation
 - Cron-sessio saa supistetun bootstrap-joukon (ei MEMORY.md:tä, ei HEARTBEAT.md:tä) → **ongelma:** konsolidaatio tarvitsee nimenomaan pääsyn muistiin
 - Tämä tarkoittaa, että joko `MINIMAL_BOOTSTRAP_ALLOWLIST`-joukkoa pitää laajentaa konsolidaatio-sessiolle, tai plugin käyttää omia työkalujaan suoran tiedostopääsyn sijaan
@@ -182,6 +187,7 @@ Cron-ajot saavat oman session ja ajagenteilla (subagent lane) timeout on 0 = ei 
 Agenttiajo voi käynnistyä: viestikanava, WebSocket RPC, HTTP webhook, cron, CLI. Kaikki polut päätyvät `agentCommand()`:iin.
 
 **Merkitys muisti-pluginille:** Muistijärjestelmän pitää toimia **yhtenäisesti riippumatta käynnistystavasta**. Erityisesti:
+
 - Tick-laskurin pitää nollautua/jatkua oikein riippumatta lähteestä
 - Assosiaatioiden päivitys pitää tapahtua samalla tavalla CLI:stä ja Telegramista
 - Konsolidaatio-cron ei saa sekoittaa laskureita pääsession kanssa
@@ -194,12 +200,14 @@ Agenttiajo voi käynnistyä: viestikanava, WebSocket RPC, HTTP webhook, cron, CL
 **Havaittu:** research-04, luku 4.3 ja 8.3
 
 Pi-coding-agent-kirjastolla on oma Extension API (`ExtensionAPI`, `ExtensionFactory`), joka mahdollistaa:
+
 - `"context"` -tapahtuman: viestien muokkaus ennen LLM-kutsua
 - `"session_before_compact"` -tapahtuman: compaction-summarisoinnin hallinta
 
 OpenClaw käyttää tätä API:a sisäisesti (compaction-safeguard ja context-pruning -extensionit), mutta **plugin-rajapinta ei tarjoa mekanismia ExtensionFactory:n rekisteröintiin**. Extensionit on hardkoodattu `buildEmbeddedExtensionFactories()`:ssa.
 
 **Merkitys muisti-pluginille:** Tämä on **suurin tunnistettu infrastruktuuripuute**. Ilman Extension API -pääsyä plugin ei voi:
+
 - Muokata konteksti-ikkunan viestejä ennen LLM-kutsua (esim. poistaa vanhentuneita muistoja)
 - Integroitua compaction-summarisoinnin kanssa (esim. varmistaa assosiaatioiden tallentaminen)
 
@@ -255,6 +263,7 @@ OpenClaw käyttää tätä API:a sisäisesti (compaction-safeguard ja context-pr
 Session-memory on **bundled-hook** (ei plugin), joka tallentaa session-kontekstin `memory/YYYY-MM-DD-<slug>.md` -tiedostoon `/new` tai `/reset` yhteydessä. Se on riippumaton memory-core-pluginista.
 
 **Merkitys muisti-pluginille:** Vaikka assosiatiivinen muisti -plugin korvaa memory-core:n (eksklusiivisen slotin kautta), session-memory-hook jatkaa toimintaansa ja kirjoittaa muistiinpanoja vanhan formaatin mukaisesti. Plugin pitää joko:
+
 1. Hyödyntää nämä tiedostot omassa muistimallissaan
 2. Tai disabloida session-memory-hook (vaatii mahdollisesti Osa A -muutoksen)
 
@@ -271,14 +280,16 @@ Session-memory on **bundled-hook** (ei plugin), joka tallentaa session-konteksti
 
 System promptin "Memory Recall" -osio on hardkoodattu `buildMemorySection()`:ssa. Se kehottaa agenttia käyttämään `memory_search` + `memory_get` -työkaluja tietyllä tavalla.
 
-**Ongelma:** Tämän osion pitäisi tulla **memory-pluginista**, ei core-koodista. Eri muistipluginit tarvitsevat eri ohjeet: memory-core haluaa "hae MEMORY.md:stä ja memory/*.md:stä", assosiatiivinen muisti haluaa "hae assosiaatioverkosta", memory-lancedb haluaa "käytä memory_recall:ia".
+**Ongelma:** Tämän osion pitäisi tulla **memory-pluginista**, ei core-koodista. Eri muistipluginit tarvitsevat eri ohjeet: memory-core haluaa "hae MEMORY.md:stä ja memory/\*.md:stä", assosiatiivinen muisti haluaa "hae assosiaatioverkosta", memory-lancedb haluaa "käytä memory_recall:ia".
 
 **Ehdotus:** Memory-pluginille uusi rekisteröintimahdollisuus:
+
 ```typescript
 api.registerMemoryPromptSection((context) => {
   return "## Memory Recall\nUse memory_assoc_search to find memories...";
 });
 ```
+
 Tai yksinkertaisemmin: `buildMemorySection()` tarkistaa onko memory-slotissa plugin joka tarjoaa oman prompt-osion, ja käyttää sitä oletusosion sijaan.
 
 ### A2. ExtensionFactory-rekisteröinti (välttämätön)
@@ -305,11 +316,13 @@ Auto-compaction ei lähetä `sessionFile`-kenttää `after_compaction`-hookiin, 
 Session-memory on arkkitehtuurinen "haju" – se on **konseptuaalisesti osa muistijärjestelmää** mutta **teknisesti irrallinen siitä**. Memory-core ei tiedä session-memorystä, session-memory ei tiedä memory-coresta. Ne toimivat yhteen vain sattumalta: session-memory kirjoittaa `memory/YYYY-MM-DD-<slug>.md` -tiedostoja, chokidar huomaa ne, memory-core indeksoi ne.
 
 **Ongelma:** Memory-plugin ei voi vaikuttaa miten tai mitä sessioista tallennetaan. Assosiatiivinen muisti haluaisi:
+
 - Luoda muisto-olioita assosiaatioineen (ei flat-tiedostoja)
 - Linkittää sessiomuistot aiempiin relevantteihin muistoihin
 - Merkitä temporaalinen tila (tuore muisto = preesens)
 
 **Ehdotus:** Session-tallennuslogiikan pitäisi olla **memory-pluginin vastuulla**, ei erillinen bundled-hook. Vaihtoehdot:
+
 1. Siirtää session-memory osaksi memory-core:a (ja mahdollistaa muiden memory-pluginien korvata se)
 2. Muuttaa session-memory kutsumaan memory-pluginin tarjoamaa rajapintaa sessiotallennukseen
 3. Vähintään: ehdollinen disablointi memory-slotin perusteella + pluginin oma `session_reset`-hook
@@ -329,6 +342,7 @@ Tokenizer käyttää `/[a-z0-9_]+/g` joka tiputtaa kaikki ei-ASCII-merkit. Suome
 **Havaittu:** research-06 jälkeinen keskustelu
 
 Plugin tarvitsee pääsyn embedding-infraan (providerit, batch, cache) omien muisto-olioiden embedaamiseen. Nykyinen `runtime.tools.createMemorySearchTool()` piilottaa infran sisäänsä. Plugin tarvitsee joko:
+
 - `api.runtime.memory.createEmbeddingProvider()` tai vastaava
 - Tai embeddingin tarjoamista palveluna (service)
 
@@ -352,14 +366,14 @@ Bootstrap-hook voi korvata AGENTS.md:n muistiosiot lennossa. Ei vaadi koodimuuto
 
 ### Yhteenveto prioriteeteittain
 
-| Prioriteetti | Kohteet | Perustelu |
-| --- | --- | --- |
-| **Välttämätön** | A1 (Memory Recall pluginista), A2 (ExtensionFactory), A3 (sessionFile) | Ilman näitä plugin ei voi toimia kunnolla |
-| **Bugikorjaus** | A5 (MMR tokenizer) | Itsenäinen PR, hyödyttää kaikkia ei-englanninkielisiä käyttäjiä |
-| **Arkkitehtuurimuutos** | A4 (session-memory pluginin vastuulle) | Nykyinen malli ei skaalaudu eri muistiplugineihin |
-| **Suositeltava** | A6 (embedding API), A7 (layout manifesti) | Parantaa arkkitehtuuria merkittävästi |
-| **Ei koodimuutosta** | A8 (AGENTS.md hookilla) | Ratkeaa pluginin sisällä |
-| **Pitkä aikaväli** | A9 (tick-laskuri) | Workaround olemassa |
+| Prioriteetti            | Kohteet                                                                | Perustelu                                                       |
+| ----------------------- | ---------------------------------------------------------------------- | --------------------------------------------------------------- |
+| **Välttämätön**         | A1 (Memory Recall pluginista), A2 (ExtensionFactory), A3 (sessionFile) | Ilman näitä plugin ei voi toimia kunnolla                       |
+| **Bugikorjaus**         | A5 (MMR tokenizer)                                                     | Itsenäinen PR, hyödyttää kaikkia ei-englanninkielisiä käyttäjiä |
+| **Arkkitehtuurimuutos** | A4 (session-memory pluginin vastuulle)                                 | Nykyinen malli ei skaalaudu eri muistiplugineihin               |
+| **Suositeltava**        | A6 (embedding API), A7 (layout manifesti)                              | Parantaa arkkitehtuuria merkittävästi                           |
+| **Ei koodimuutosta**    | A8 (AGENTS.md hookilla)                                                | Ratkeaa pluginin sisällä                                        |
+| **Pitkä aikaväli**      | A9 (tick-laskuri)                                                      | Workaround olemassa                                             |
 
 ### Yhteydenotto OpenClaw:n tekijöihin
 
@@ -384,12 +398,14 @@ Osa A -muutokset vaativat yhteistyötä OpenClaw:n kehittäjien kanssa. Muutoksi
 Kaikki 23 plugin-hookia on toteutettu fasadimetodiena `HookRunner`:ssa (esim. `runAfterToolCall`, `runBeforeCompaction`, `runAfterCompaction`). Ne ovat valmiita käytettäviksi – plugin rekisteröi `api.on("after_tool_call", handler)` ja HookRunner kutsuu sitä.
 
 Erityishuomiot:
+
 - `runAfterToolCall` on **fire-and-forget** (`runVoidHook`) – ei hidasta loopin suoritusta
 - `runBeforeCompaction`/`runAfterCompaction` ovat molemmat **fire-and-forget**
 - `runToolResultPersist` on **synkroninen** (hot path – session transcript append)
 - `runBeforeToolCall` on **sekventiaalinen ja muokattava** (voi estää/muokata kutsun)
 
 Compaction-hookeja kutsutaan kahdesta paikasta:
+
 1. Subscribe-handleri (auto-compaction agenttiloopin aikana)
 2. Erillinen compact.ts (manuaalinen/schedule-compaction)
 
@@ -419,6 +435,7 @@ Memory-core-plugin rekisteröi vain **kaksi työkalua**: `memory_search` ja `mem
 - Pitkäkestoinen muisti: `MEMORY.md` – muokataan edit-työkalulla
 
 **Merkitys assosiatiivisen muistin pluginille:**
+
 1. **Plugin voi korvata memory_search ja memory_get** kokonaan (eksklusiivisen memory-slotin kautta)
 2. **Muistiin kirjoitus on implisiittistä** – agentti käyttää tiedostotyökaluja, ei muistityökalua. Assosiatiivinen muisti -plugin voisi rekisteröidä oman `memory_write`-työkalun, joka tallentaa muistot assosiatiiviseen rakenteeseen sen sijaan, että agentti kirjoittaa flat-tiedostoja.
 3. **Tai plugin voi observoida kirjoituksia** `after_tool_call`-hookista (toolName=write/edit, tarkista kohdepolku)
@@ -437,6 +454,7 @@ Muistot tallennetaan edelleen flat-tiedostoihin (ei tietokantaa), mutta formaatt
 **Assosiatiivisen muistin ongelma:** Assosiaatiot ovat **chunkkien välisiä linkkejä**. Jos chunk A:lla ja chunk B:llä on assosiaatio (paino 0.7), ja sitten chunk A:n rajat muuttuvat uudelleenpalastelun takia, assosiaatio osoittaa tyhjyyteen tai väärään kohtaan.
 
 Tämä tarkoittaa, että:
+
 1. **Chunkkien pitää olla stabiileja** – niillä on identiteetti (id), ja ne eivät muutu uudelleenpalastelun seurauksena
 2. **Uudelleenpalastelua ei voi tehdä lennossa** – chunkit luodaan kerran (esim. muistoa tallennettaessa) ja ne säilyvät sellaisenaan
 3. **Flat-tiedoston formaatti tarvitsee chunkkien rajamerkinnät** – esim. YAML-frontmatter, markdown-osioiden otsikot + id:t, tai muu rakenne, joka tekee chunkista tunnistettavan yksikön
@@ -446,8 +464,11 @@ Tämä tarkoittaa, että:
 
 ```markdown
 <!-- chunk:abc123 created:2026-02-25 decay:0.9 -->
+
 ## Jarin projektipalaveri
+
 Keskusteltiin muisti-pluginin arkkitehtuurista. Päätettiin käyttää flat-tiedostoja.
+
 <!-- /chunk -->
 ```
 
@@ -478,11 +499,13 @@ Jarin projektipalaveri. Keskusteltiin muisti-pluginin arkkitehtuurista...
 Research-04:n datavirta-kaaviossa `session.prompt()` kuvataan "mustaksi laatikoksi". Tämä on **osittain harhaanjohtava**. Todellisuudessa:
 
 **Mitä pi-agent hallitsee yksin:**
+
 - LLM-kutsujen järjestyksen ja ajoituksen (milloin kutsutaan LLM:ää uudelleen)
 - Päätöksen siitä, jatketaanko looppia vai lopetetaanko (end_turn)
 - Konteksti-ikkunan hallinnan (compaction-triggerin ajoituksen)
 
 **Mitä OpenClaw hallitsee:**
+
 - **Työkalujen suorituksen** – kaikki työkalut ovat OpenClaw:n koodia, joka annetaan pi-agentille `createAgentSession({ tools, customTools })`:ssa. Pi-agent kutsuu niiden `execute()`-metodia, joka on OpenClaw:n wrapperin sisällä.
 - **before_tool_call -hookin** – jokainen työkalu on kääritty `wrapToolWithBeforeToolCallHook()`:iin, joka ajaa `runBeforeToolCallHook()`:n **ennen** varsinaista suoritusta. Tämä wrapper on tool-olion `execute()`-funktion sisällä – se suoritetaan pi-agent-kirjaston loopin sisällä, mutta se on OpenClaw:n koodia.
 - **Subscribe-tapahtumien observoinnin** – `tool_execution_start/end` -tapahtumat tulevat pi-agentilta, ja OpenClaw:n handlerit ajavat `after_tool_call` -hookin niiden perusteella.
@@ -502,6 +525,7 @@ Pi-agent emittoi tool_execution_end
 ```
 
 **Merkitys muisti-pluginille ja tick-laskennalle:**
+
 - **Tick-laskenta `after_tool_call`:sta on luotettava** – jokainen työkalu kulkee OpenClaw:n koodin läpi ja laukaisee hookin
 - **`before_tool_call` mahdollistaa rikastamisen** – plugin voi lisätä metadataa tai estää kutsun ennen suoritusta
 - Pi-agent-kirjasto on "musta laatikko" vain **LLM-kutsujen osalta** (milloin kutsutaan, miten päätetään jatkamisesta). Työkalujen suoritus on täysin OpenClaw:n hallinnassa.
@@ -517,6 +541,7 @@ Pi-agent emittoi tool_execution_end
 Assosiatiivinen muisti ja keskustelun kokonaistallentaminen ovat **kaksi eri asiaa**:
 
 **Assosiatiivinen muisti** ei välttämättä tarvitse tietää kompaktoinnista. Se käsittelee muisto-olioita (chunkkeja, narratiiveja, assosiaatioita) – ei raakoja keskusteluviestejä. Muistin näkökulmasta relevanttia on:
+
 - Mitä muistoja luotiin
 - Mitä muistoja haettiin yhdessä (assosiaatiot)
 - Miten muistojen vahvuus muuttuu ajan myötä (decay, konsolidaatio)
@@ -524,11 +549,13 @@ Assosiatiivinen muisti ja keskustelun kokonaistallentaminen ovat **kaksi eri asi
 **Keskustelun kokonaistallennus** on eri tarve: "mitä agentti ja käyttäjä sanoivat toisilleen, sanasta sanaan". Nykyinen JSONL-transkripti hoitaa tämän osittain, mutta compaction tuhoaa vanhoja viestejä.
 
 **Miksi tämä on tärkeää:**
+
 - Jos halutaan, että keskusteluhistoria säilyy kokonaisena (esim. "mitä puhuttiin viime viikolla"), tarvitaan **erillinen arkistointikerros** – compaction ei ole ongelma muistille, mutta se on ongelma keskusteluhistorialle
 - Assosiatiivinen muisti voi toimia hyvin ilman keskusteluarkistoa: se operoi omilla muisto-olioillaan, joita se luo ja päivittää reaaliajassa hookien kautta
 - Kompaktointi vaikuttaa kuitenkin **agentin ja käyttäjän kommunikaatioon**: jos agentti menettää kontekstin, se ei voi viitata aiempiin keskusteluihin luontevasti. Tämä on UX-ongelma, ei muisti-pluginin ongelma.
 
 **Mahdolliset tasot:**
+
 1. **Pelkkä assosiatiivinen muisti** – ei tarvitse kompaktointitietoa, toimii hookien kautta
 2. **Muisti + keskusteluarkisto** – erillinen mekanismi, joka tallentaa raakaviestit ennen compactionia (esim. `before_compaction` -hookista)
 3. **Muisti + keskusteluarkisto + retrieval** – keskusteluhistoriasta voi hakea "mitä sanottiin" -tyylisiä muistoja
@@ -568,6 +595,7 @@ Auto-compaction on yleisin tapaus (tapahtuu agenttilooppien aikana), joten plugi
 4. **CLI ja Service:** Diagnostiikkaa ja alustus/sammutus
 
 Tämä on **suora malli** assosiatiivisen muistin pluginille. Oleelliset erot:
+
 - Assosiatiivinen muisti käyttää **assosiaatioita** eikä pelkkää vektorihakua
 - Auto-capture ei riitä: tarvitaan myös assosiaatioiden seuranta `after_tool_call`:sta
 - Konsolidaatio-service tarvitaan (decay, vahvistus, "uni")
@@ -581,11 +609,11 @@ Tämä on **suora malli** assosiatiivisen muistin pluginille. Oleelliset erot:
 
 Plugin-hookien joukossa on **kaksi vaihetta**, jotka voivat injektoida kontekstia:
 
-| Hook                    | Milloin kutsutaan                        | Palauttaa                                 |
-| ----------------------- | ---------------------------------------- | ----------------------------------------- |
-| `before_model_resolve`  | Ensimmäisenä, ennen session-viestejä     | `modelOverride`, `providerOverride`       |
-| `before_prompt_build`   | System prompt -rakennuksen aikana        | `prependContext`, `systemPrompt`          |
-| `before_agent_start`    | Legacyn takia: yhdistää molemmat yllä    | Kaikki yllä olevat                        |
+| Hook                   | Milloin kutsutaan                     | Palauttaa                           |
+| ---------------------- | ------------------------------------- | ----------------------------------- |
+| `before_model_resolve` | Ensimmäisenä, ennen session-viestejä  | `modelOverride`, `providerOverride` |
+| `before_prompt_build`  | System prompt -rakennuksen aikana     | `prependContext`, `systemPrompt`    |
+| `before_agent_start`   | Legacyn takia: yhdistää molemmat yllä | Kaikki yllä olevat                  |
 
 **`before_prompt_build`** on eriytetympi ja tarkempi. **`before_agent_start`** on legacy-yhteensopiva, yhdistää molemmat.
 
@@ -611,6 +639,7 @@ if (result && typeof result.then === "function") {
 ```
 
 **Merkitys muisti-pluginille:** `register()`:n sisällä ei voi tehdä asynkronisia operaatioita (esim. tietokannan alustus). Raskas alustus pitää siirtää:
+
 1. **Service:n `start()`-funktioon** (kutsutaan myöhemmin asynkronisesti)
 2. **Lazy-initialisoitiin** (alustetaan ensimmäisen työkalukutsun yhteydessä)
 3. **Hook-handleriin** (hookit voivat olla asynkronisia)
@@ -648,7 +677,7 @@ Nykyinen chunk ID lasketaan: `SHA-256("${source}:${path}:${startLine}:${endLine}
 **Lähde:** `src/memory/temporal-decay.ts`
 **Havaittu:** research-06, luku 8
 
-Nykyinen temporal decay toimii tiedostotasolla: kaikki chunkit samasta tiedostosta rapautuvat samalla nopeudella. Päiväys haetaan tiedostopolusta (`memory/YYYY-MM-DD.md`) tai mtime:sta. "Evergreen"-tiedostot (MEMORY.md, päiväämättömät memory/*) eivät rapaudu.
+Nykyinen temporal decay toimii tiedostotasolla: kaikki chunkit samasta tiedostosta rapautuvat samalla nopeudella. Päiväys haetaan tiedostopolusta (`memory/YYYY-MM-DD.md`) tai mtime:sta. "Evergreen"-tiedostot (MEMORY.md, päiväämättömät memory/\*) eivät rapaudu.
 
 **Ero design-dokin malliin:** Assosiatiivisen muistin decay on per-muisto-olio: jokainen muisto rapautuu itsenäisesti riippuen siitä, kuinka usein se haetaan (retrieval vahvistaa) ja kuinka vahvat sen assosiaatiot ovat. Tämä on fundamentaalisesti eri malli.
 
@@ -673,6 +702,7 @@ OpenClaw:n embedding-infra (providerit, batch-prosessointi, välimuisti) on hyvi
 Session-memory on bundled-hook, joka kirjoittaa `memory/YYYY-MM-DD-<slug>.md` -tiedostoja `/new`/`/reset`-komennoissa. Se on **itsenäinen memory-core-pluginista** – vaikka assosiatiivinen muisti -plugin korvaa memory-core:n, session-memory jatkaa toimintaansa.
 
 **Vaihtoehdot:**
+
 1. Plugin lukee session-memoryn tuottamat tiedostot ja konvertoi ne omaan tietomalliinsa
 2. Session-memory disabloidaan (vaatii Osa A -muutoksen: ehdon `memory`-slotin perusteella)
 3. Plugin rekisteröi oman `session_reset`-hookin, joka korvaa session-memoryn toiminnallisuuden
@@ -686,11 +716,13 @@ Session-memory on bundled-hook, joka kirjoittaa `memory/YYYY-MM-DD-<slug>.md` -t
 Nykyinen tilanne on implisiittinen: mikään ei kerro, mitä muistimallia workspace käyttää. Jos agentti avaa workspacen, jossa on assosiatiivisen muistin tietomalli, memory-core yrittäisi indeksoida sen sokeasti.
 
 **Ratkaisu: memory-layout manifesti**, joka ilmoittaa aktiivisen muistimallin:
+
 - Esim. `memory-layout: memory-core-v1` tai `memory-layout: associative-memory-v1`
 - Manifesti pitää löytyä **kahdesta paikasta**: tiedostojärjestelmästä (esim. `memory/.layout.json` tai `MEMORY.md` frontmatter) JA tietokannasta (esim. `meta`-tauluun)
 - Jos nämä kaksi ovat ristiriidassa, järjestelmä tietää, että migraatio on kesken tai epäonnistunut → voidaan varoittaa tai estää käynnistyminen
 
 **Migraatioskriptit (to-and-fro):**
+
 - `memory-core-v1 → associative-memory-v1`: Lue flat-tiedostot, luo muisto-oliot stabiileilla ID:illä, rakenna alkuassosiaatiot, alusta tietokanta
 - `associative-memory-v1 → memory-core-v1`: Exporttaa muistot flat-tiedostoiksi (assosiaatiot ja decay-tila menetetään, sisältö säilyy)
 - Polku takaisin pitää olla olemassa – jos plugin ei toimi tai käyttäjä haluaa palata
@@ -704,12 +736,14 @@ Nykyinen tilanne on implisiittinen: mikään ei kerro, mitä muistimallia worksp
 **Havaittu:** research-06 jälkeinen keskustelu
 
 **Nykyinen malli (memory-core):**
+
 ```
 Flat-tiedostot = totuuden lähde
 SQLite = johdettu indeksi (voidaan poistaa ja rakentaa uudelleen tiedostoista)
 ```
 
 **Assosiatiivinen muisti:**
+
 ```
 Flat-tiedostot = muistojen sisältö (totuuden lähde sisällölle)
 Tietokanta = kriittinen osa muistimallia (ei johdettavissa tiedostoista)
@@ -721,6 +755,7 @@ Tietokanta = kriittinen osa muistimallia (ei johdettavissa tiedostoista)
 ```
 
 **Seuraukset:**
+
 1. **Tietokanta tarvitsee varmuuskopioinnin** – uudelleenrakentaminen tiedostoista ei palauta assosiaatioita, decay-tilaa tai konsolidaatiohistoriaa
 2. **Kaksi totuuden lähdettä eri asioille** – tiedostot = sisältö, tietokanta = suhteet ja tila
 3. **Tietokanta pitää versionoida** layout-manifestin kanssa – migraatioskriptin pitää tietää sekä tiedostomalli että tietokantaskeema
@@ -752,11 +787,13 @@ Design-dokin konsolidaatio ("uni") on kuvattu pääasiassa assosiaatiopainojen j
 Perusidea: konsolidaatiovaiheessa (cron/service) käydään läpi muisto-olioita ja lasketaan niiden embedding-vektorien kosinisamankaltaisuus. Muistot, jotka ovat semanttisesti lähellä mutta joilla ei vielä ole eksplisiittistä assosiaatiota, voisivat saada sellaisen automaattisesti. Tämä simuloi ihmismuistin "unen aikana tapahtuvia uusia yhteyksiä".
 
 **Konsolidaation embedding-operaatiot voivat olla merkittäviä:**
+
 - N muistoa → O(N²) parivertailua (tai optimoituna ANN-haulla)
 - Jokainen vertailu vaatii embedding-vektorit (välimuistista tai API:sta)
 - Tämä lisää painetta paikallisen mallin suuntaan (ei API-kustannuksia konsolidaatiosta)
 
 **Avoimet kysymykset:**
+
 1. Pitäisikö konsolidaation luoda uusia assosiaatioita embedding-samankaltaisuuden perusteella, vai vain vahvistaa/heikentää olemassa olevia?
 2. Mikä on kynnysarvo: kuinka samanlaisten muistojen pitää olla ennen kuin syntyy automaattinen assosiaatio?
 3. Pitäisikö embedding-pohjainen konsolidaatio olla erillinen vaihe ("REM-uni") vai osa samaa konsolidaatioprosessia?
@@ -779,6 +816,7 @@ Alkuperäinen huoli: content hash (SHA-256 chunkin tekstistä) ei ole stabiili, 
 **Suunnitteluperiaate:** Kaikki muistoa muuttava koodi päivittää myös assosiaatiot. Tämä on arkkitehtuurisääntö, ei toive.
 
 **Ainoa "hiljainen" katkeamispiste:** Käyttäjä muokkaa muistitiedostoa käsin ulkoisella editorilla. File watcher havaitsee muutoksen, mutta ei tiedä vanhaa hashia suoraan. Ratkaisuvaihtoehdot:
+
 - Tietokannassa on vanha hash → diffataan ja siirretään assosiaatiot lähimpiin uusiin chunkkeihin
 - Tai hyväksytään assosiaatiomenetys ulkoisissa muokkauksissa (käyttäjä teki tietoisen muokkauksen)
 
@@ -790,7 +828,7 @@ Alkuperäinen huoli: content hash (SHA-256 chunkin tekstistä) ei ole stabiili, 
 
 **Havaittu:** research-06 jälkeinen keskustelu
 
-Uusien käyttäjien onboarding vaatii olemassa olevan memory-core-muistin importoinnin assosiatiiviseen muistiin. Kyseessä on käytännössä flat-tiedostojen (MEMORY.md, memory/*.md) pilkkominen **koherenteiksi muistoyksiköiksi** – ei mekaanisiksi 400 tokenin paloiksi kuten nykyinen chunking tekee.
+Uusien käyttäjien onboarding vaatii olemassa olevan memory-core-muistin importoinnin assosiatiiviseen muistiin. Kyseessä on käytännössä flat-tiedostojen (MEMORY.md, memory/\*.md) pilkkominen **koherenteiksi muistoyksiköiksi** – ei mekaanisiksi 400 tokenin paloiksi kuten nykyinen chunking tekee.
 
 **Ongelman ydin:** Miten tunnistaa, mitkä rivit kuuluvat yhteen ja muodostavat yhden "muiston"?
 
@@ -837,7 +875,7 @@ Uusien käyttäjien onboarding vaatii olemassa olevan memory-core-muistin import
 
 **BM25 on mukana eksaktien tokenien takia:** ID:t (`a828e60`), koodisymbolit (`memorySearch.query.hybrid`), virheviestit (`"sqlite-vec unavailable"`). Vektorihaulla näitä ei löydy luotettavasti.
 
-**Painotusta 0.7/0.3 ei perustella numeerisesti.** Dokumentaatio sanoo: *"This isn't 'IR-theory perfect', but it's simple, fast, and tends to improve recall/precision on real notes."* Painot ovat konfiguloitavissa.
+**Painotusta 0.7/0.3 ei perustella numeerisesti.** Dokumentaatio sanoo: _"This isn't 'IR-theory perfect', but it's simple, fast, and tends to improve recall/precision on real notes."_ Painot ovat konfiguloitavissa.
 
 **Suomen kielen ongelma:** BM25/FTS5 vertaa eksakteja tokeneita. Suomi on agglutinoiva kieli – "muisti" ei löydä "muistissa", "muistojen", "muistelemme". Nykyisessä koodissa on query expansion CJK-kielille ja korean partikkelien strippaus (`src/memory/query-expansion.ts`), mutta suomea ei käsitellä lainkaan.
 
@@ -851,12 +889,12 @@ Uusien käyttäjien onboarding vaatii olemassa olevan memory-core-muistin import
 
 Eri muistotyypeillä on fundamentaalisesti eri hakutarpeet:
 
-| Muistotyyppi | Paras hakumenetelmä | Perustelu |
-| --- | --- | --- |
-| Virheviestit, stack tracet | BM25-painotteinen | Eksakti merkkijono ratkaisee |
-| Koodisymbolit, config-avaimet | BM25-painotteinen | Ei ole parafraasi vaan tarkka token |
-| Narratiiviset muistot | Vektori-painotteinen | "Se keskustelu arkkitehtuurista" on semanttinen haku |
-| Päätökset ja perustelut | Hybridi | Voi hakea sekä sanallisesti että semanttisesti |
+| Muistotyyppi                  | Paras hakumenetelmä  | Perustelu                                            |
+| ----------------------------- | -------------------- | ---------------------------------------------------- |
+| Virheviestit, stack tracet    | BM25-painotteinen    | Eksakti merkkijono ratkaisee                         |
+| Koodisymbolit, config-avaimet | BM25-painotteinen    | Ei ole parafraasi vaan tarkka token                  |
+| Narratiiviset muistot         | Vektori-painotteinen | "Se keskustelu arkkitehtuurista" on semanttinen haku |
+| Päätökset ja perustelut       | Hybridi              | Voi hakea sekä sanallisesti että semanttisesti       |
 
 **Ehdotus:** Assosiatiivisessa muistissa voisi olla **erillinen muistipooli (tai muistotyyppi) tool-usage-havainnoille**, jossa hakuparametrit ovat erilaiset – esim. BM25 paino 0.5–0.7 vektorin sijaan. Tämä tarkoittaisi:
 
@@ -879,11 +917,13 @@ Eri muistotyypeillä on fundamentaalisesti eri hakutarpeet:
 MMR:ssä käytetty Jaccard-samankaltaisuus soveltuu konsolidaatioon kahdella tavalla:
 
 **1. Lähes-duplikaattien tunnistaminen (halpa esikarsinta):**
+
 - Korkea Jaccard (esim. > 0.6) → muistot ovat lähes identtisiä → yhdistämiskandidaatteja
 - Nopea, paikallinen, ei API-kutsuja
 - Löytää tapaukset joissa sama asia on kirjattu hieman eri sanoin eri sessioissa
 
 **2. Porrastettu konsolidaatio yhdessä embeddingin kanssa:**
+
 ```
 Vaihe 1: Jaccard (halpa, nopea)
   → tunnista lähes-duplikaatit ja korkean sana-overlapin parit

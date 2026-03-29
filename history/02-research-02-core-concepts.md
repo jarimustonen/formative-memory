@@ -81,33 +81,33 @@ Rakenne (tärkeimmät kentät):
 
 ```typescript
 type SessionEntry = {
-  sessionId: string;        // UUID – yhdistää tietueen JSONL-tiedostoon
-  updatedAt: number;        // Viimeinen päivitys (ms, epoch)
-  sessionFile?: string;     // Polku transkriptitiedostoon (jos poikkeava)
+  sessionId: string; // UUID – yhdistää tietueen JSONL-tiedostoon
+  updatedAt: number; // Viimeinen päivitys (ms, epoch)
+  sessionFile?: string; // Polku transkriptitiedostoon (jos poikkeava)
 
   // Seuranta
   compactionCount?: number; // Montako kertaa konteksti on tiivistetty
-  inputTokens?: number;     // Viimeisin input-tokenimäärä
-  outputTokens?: number;    // Viimeisin output-tokenimäärä
-  totalTokens?: number;     // Kontekstin kokonaistokenit
-  model?: string;           // Viimeisin käytetty malli
+  inputTokens?: number; // Viimeisin input-tokenimäärä
+  outputTokens?: number; // Viimeisin output-tokenimäärä
+  totalTokens?: number; // Kontekstin kokonaistokenit
+  model?: string; // Viimeisin käytetty malli
 
   // Kanava- ja reititystieto
-  lastChannel?: string;     // Viimeisin kanava (telegram, discord...)
-  lastTo?: string;          // Viimeinen vastaanottaja
-  lastAccountId?: string;   // Viimeinen tilintunniste
+  lastChannel?: string; // Viimeisin kanava (telegram, discord...)
+  lastTo?: string; // Viimeinen vastaanottaja
+  lastAccountId?: string; // Viimeinen tilintunniste
   deliveryContext?: DeliveryContext;
 
   // Asetukset
-  thinkingLevel?: string;   // "low" | "medium" | "high"
-  modelOverride?: string;   // Sessiokohtainen mallivaihto
+  thinkingLevel?: string; // "low" | "medium" | "high"
+  modelOverride?: string; // Sessiokohtainen mallivaihto
   providerOverride?: string;
-  sendPolicy?: string;      // "allow" | "deny"
-  queueMode?: string;       // Viestien jonotusmoodi
+  sendPolicy?: string; // "allow" | "deny"
+  queueMode?: string; // Viestien jonotusmoodi
 
   // Spawning
-  spawnedBy?: string;       // Emo-session key (sub-agentille)
-  spawnDepth?: number;      // 0 = pää, 1 = sub, 2 = sub-sub
+  spawnedBy?: string; // Emo-session key (sub-agentille)
+  spawnDepth?: number; // 0 = pää, 1 = sub, 2 = sub-sub
 
   // Skills & system prompt
   skillsSnapshot?: SessionSkillSnapshot;
@@ -138,6 +138,7 @@ Formaatti (yksinkertaistettu esimerkki):
 ```
 
 **JSONL tallentaa siis koko agenttiloopin historian**, mukaan lukien:
+
 - **user**-viestit (käyttäjän lähettämät)
 - **assistant**-viestit, jotka voivat sisältää:
   - Tekstivastauksia (`type: "text"`)
@@ -342,6 +343,7 @@ Workspace-hakemisto sisältää joukon Markdown-tiedostoja, joista kukin palvele
 **Tarkoitus:** Agentin pääasiallinen toimintaohje joka sessiossa. Tämä on "käsikirja", jota agentti seuraa.
 
 **Sisältö (oletusmallista):**
+
 - Session alussa luettavat tiedostot (SOUL.md, USER.md, muistitiedostot)
 - Muistikonventiot: päiväkohtaiset logit (`memory/YYYY-MM-DD.md`), pitkäkestoinen muisti (`MEMORY.md`)
 - Turvallisuussäännöt (ei eksfiltrioi dataa, `trash` > `rm`, kysy ennen ulkoisia toimintoja)
@@ -352,6 +354,7 @@ Workspace-hakemisto sisältää joukon Markdown-tiedostoja, joista kukin palvele
 **Päivittyy:** Käyttäjä tai agentti voi muokata milloin tahansa. Oletus luodaan templatesta workspacen alustuksessa.
 
 **Erityispiirteet:**
+
 - Sisältyy `MINIMAL_BOOTSTRAP_ALLOWLIST`-joukkoon → ladataan myös aliagentille
 - Käytännössä agentin "system prompt -liite"
 
@@ -360,14 +363,16 @@ Workspace-hakemisto sisältää joukon Markdown-tiedostoja, joista kukin palvele
 **Tarkoitus:** Määrittelee agentin persoonallisuuden ja käyttäytymistyylin – "kuka olet".
 
 **Sisältö (oletusmallista):**
+
 - Core truths: ole aidosti avulias (ei performatiivisesti), muodosta mielipiteitä, etsi vastaus ennen kysymistä
 - Rajat: yksityiset asiat pysyvät yksityisinä, kysy ennen ulkoisia toimintoja
 - Vibe: "Be the assistant you'd actually want to talk to"
-- Jatkuvuus: "Each session, you wake up fresh. These files *are* your memory."
+- Jatkuvuus: "Each session, you wake up fresh. These files _are_ your memory."
 
 **Päivittyy:** Agentti voi muokata, mutta mallin mukaan "If you change this file, tell the user — it's your soul". Käyttäjä voi myös muokata suoraan.
 
 **Erityispiirteet:**
+
 - System prompt -rakentaja tunnistaa SOUL.md:n erikseen: "If SOUL.md is present, embody its persona and tone"
 - Sisältyy MINIMAL_BOOTSTRAP_ALLOWLIST-joukkoon
 
@@ -376,6 +381,7 @@ Workspace-hakemisto sisältää joukon Markdown-tiedostoja, joista kukin palvele
 **Tarkoitus:** Strukturoitu metadatatietue agentin identiteetistä.
 
 **Sisältö:**
+
 - Nimi (agentti valitsee onboardingissa)
 - Creature/olento (AI, robotti, henki koneessa...)
 - Vibe (terävä, lämmin, kaoottinen, rauhallinen...)
@@ -385,6 +391,7 @@ Workspace-hakemisto sisältää joukon Markdown-tiedostoja, joista kukin palvele
 **Päivittyy:** Agentti täyttää **onboarding-keskustelussa** (BOOTSTRAP.md:n ohjeen mukaan). Käyttäjä voi muokata myöhemmin.
 
 **Erityispiirteet:**
+
 - Onboarding-tilan seuranta: jos IDENTITY.md:n sisältö eroaa templatesta, workspace katsotaan "onboardatuksi" (legacy-migraatio `ensureAgentWorkspace`:ssa)
 - Sisältyy MINIMAL_BOOTSTRAP_ALLOWLIST-joukkoon
 
@@ -393,6 +400,7 @@ Workspace-hakemisto sisältää joukon Markdown-tiedostoja, joista kukin palvele
 **Tarkoitus:** Tietoa käyttäjästä, jonka kanssa agentti työskentelee.
 
 **Sisältö:**
+
 - Nimi, puhuttelumuoto, pronominit
 - Aikavyöhyke
 - Kontekstia: mitä käyttäjä välittää, mitä projekteja hän tekee, mikä ärsyttää, mikä naurattaa
@@ -400,6 +408,7 @@ Workspace-hakemisto sisältää joukon Markdown-tiedostoja, joista kukin palvele
 **Päivittyy:** Agentti täyttää onboarding-keskustelussa ja päivittää ajan myötä oppiessaan käyttäjästä lisää.
 
 **Erityispiirteet:**
+
 - Samoin kuin IDENTITY.md, käytetään onboarding-tilan evaluoinnissa
 - Sisältyy MINIMAL_BOOTSTRAP_ALLOWLIST-joukkoon
 
@@ -408,6 +417,7 @@ Workspace-hakemisto sisältää joukon Markdown-tiedostoja, joista kukin palvele
 **Tarkoitus:** Käyttäjän laitteistokohtainen tieto, jota skillit eivät tiedä.
 
 **Sisältö (esimerkkejä):**
+
 - Kameroiden nimet ja sijainnit
 - SSH-hostit ja aliakset
 - TTS-ääniasetukset
@@ -417,6 +427,7 @@ Workspace-hakemisto sisältää joukon Markdown-tiedostoja, joista kukin palvele
 **Päivittyy:** Käyttäjä tai agentti lisää tietoa sitä mukaa kun uusia laitteita/palveluja konfiguroitaan.
 
 **Erityispiirteet:**
+
 - System prompt huomauttaa eksplisiittisesti: "TOOLS.md does not control tool availability; it is user guidance for how to use external tools." Toisin sanoen TOOLS.md EI määrittele mitä työkaluja agentti voi käyttää – se on muistilista ympäristökohtaisista yksityiskohdista.
 - Sisältyy MINIMAL_BOOTSTRAP_ALLOWLIST-joukkoon
 
@@ -425,12 +436,14 @@ Workspace-hakemisto sisältää joukon Markdown-tiedostoja, joista kukin palvele
 **Tarkoitus:** Agentin säännöllisesti tarkistettavien asioiden lista.
 
 **Sisältö (oletusmalli):**
+
 - Tyhjä (vain kommentti). Tyhjänä heartbeat-pollaukset ohitetaan.
 - Agentti lisää tehtäviä tarpeen mukaan (esim. "tarkista sähköpostit", "katso kalenteri")
 
 **Päivittyy:** Agentti muokkaa heartbeat-tehtäviä dynaamisesti. Käyttäjä voi myös muokata.
 
 **Erityispiirteet:**
+
 - **Ei sisälly** MINIMAL_BOOTSTRAP_ALLOWLIST-joukkoon → aliagenttisessiot eivät saa tätä
 - Heartbeat-mekanismi lukee tämän tiedoston säännöllisesti (konfiguroitu `agents.defaults.heartbeat.every`)
 
@@ -439,6 +452,7 @@ Workspace-hakemisto sisältää joukon Markdown-tiedostoja, joista kukin palvele
 **Tarkoitus:** "Syntymätodistus" – ohjaa agentin ensimmäistä keskustelua.
 
 **Sisältö:**
+
 - Ohjeet ensimmäiseen keskusteluun: "Hey. I just came online. Who am I? Who are you?"
 - Tehtävät: selvitä nimi, olemus, vibe, emoji käyttäjän kanssa
 - Päivitä IDENTITY.md ja USER.md oppimillasi tiedoilla
@@ -447,6 +461,7 @@ Workspace-hakemisto sisältää joukon Markdown-tiedostoja, joista kukin palvele
 - **Lopussa: poista tämä tiedosto**
 
 **Elinkaari:**
+
 1. `ensureAgentWorkspace()` luo BOOTSTRAP.md:n templatesta **vain** jos workspace on uusi (mikään muu bootstrap-tiedosto ei ole vielä muokattu)
 2. Agentti lukee BOOTSTRAP.md:n ensimmäisessä sessiossa
 3. Onboarding-keskustelu: agentti selvittää identiteettinsä, täyttää IDENTITY.md ja USER.md
@@ -454,6 +469,7 @@ Workspace-hakemisto sisältää joukon Markdown-tiedostoja, joista kukin palvele
 5. Järjestelmä seuraa tilaa `workspace-state.json`:ssa: `bootstrapSeededAt`, `onboardingCompletedAt`
 
 **Erityispiirteet:**
+
 - **Ei sisälly** MINIMAL_BOOTSTRAP_ALLOWLIST-joukkoon
 - Tiedoston läsnäolo laukaisee workspaceNotes-lisäyksen system promptiin: "Reminder: commit your changes in this workspace after edits."
 - Legacy-migraatio: jos IDENTITY.md tai USER.md on jo muokattu (eroaa templatesta), BOOTSTRAP.md:tä ei luoda (workspace katsotaan jo onboardatuksi)
@@ -467,6 +483,7 @@ Workspace-hakemisto sisältää joukon Markdown-tiedostoja, joista kukin palvele
 **Päivittyy:** Agentti kirjoittaa merkittäviä tapahtumia, päätöksiä, opittuja asioita. AGENTS.md kehottaa: "Over time, review your daily files and update MEMORY.md with what's worth keeping."
 
 **Erityispiirteet:**
+
 - **Ei sisälly** MINIMAL_BOOTSTRAP_ALLOWLIST-joukkoon → turvallisuussyistä, MEMORY.md sisältää henkilökohtaista dataa
 - AGENTS.md ohjeistaa: "ONLY load in main session. DO NOT load in shared contexts (Discord, group chats, sessions with other people)"
 - Tukee myös vaihtoehtoista nimeä `memory.md` (case-insensitive fallback)
@@ -477,16 +494,16 @@ Workspace-hakemisto sisältää joukon Markdown-tiedostoja, joista kukin palvele
 
 Kaikki 8 tiedostoa ladataan pääsessioissa (main, direct, group). Aliagentti- ja cron-sessiot saavat **supistetun joukon**:
 
-| Tiedosto      | Pääsessio | Aliagentti/Cron |
-| ------------- | --------- | --------------- |
-| AGENTS.md     | ✅         | ✅               |
-| SOUL.md       | ✅         | ✅               |
-| TOOLS.md      | ✅         | ✅               |
-| IDENTITY.md   | ✅         | ✅               |
-| USER.md       | ✅         | ✅               |
-| HEARTBEAT.md  | ✅         | ❌               |
-| BOOTSTRAP.md  | ✅         | ❌               |
-| MEMORY.md     | ✅         | ❌               |
+| Tiedosto     | Pääsessio | Aliagentti/Cron |
+| ------------ | --------- | --------------- |
+| AGENTS.md    | ✅        | ✅              |
+| SOUL.md      | ✅        | ✅              |
+| TOOLS.md     | ✅        | ✅              |
+| IDENTITY.md  | ✅        | ✅              |
+| USER.md      | ✅        | ✅              |
+| HEARTBEAT.md | ✅        | ❌              |
+| BOOTSTRAP.md | ✅        | ❌              |
+| MEMORY.md    | ✅        | ❌              |
 
 `MINIMAL_BOOTSTRAP_ALLOWLIST` (`src/agents/workspace.ts`) määrittää tämän: `{AGENTS.md, TOOLS.md, SOUL.md, IDENTITY.md, USER.md}`.
 
@@ -526,18 +543,18 @@ Bootstrap-tiedostojen matka workspacesta LLM:n konteksti-ikkunaan:
 
 ### 3.12 Yhteenvetotaulukko
 
-| Tiedosto      | Tarkoitus                    | Luoja           | Päivittäjä       | Template | Aliagentti |
-| ------------- | ---------------------------- | --------------- | ---------------- | -------- | ---------- |
-| AGENTS.md     | Workspace-ohjeet             | Järjestelmä     | Käyttäjä/Agentti | Kyllä    | ✅          |
-| SOUL.md       | Persoonallisuus              | Järjestelmä     | Agentti/Käyttäjä | Kyllä    | ✅          |
-| IDENTITY.md   | Identiteettimetadata         | Järjestelmä     | Agentti          | Kyllä    | ✅          |
-| USER.md       | Käyttäjäprofiili             | Järjestelmä     | Agentti          | Kyllä    | ✅          |
-| TOOLS.md      | Ympäristömuistiinpanot       | Järjestelmä     | Käyttäjä/Agentti | Kyllä    | ✅          |
-| HEARTBEAT.md  | Heartbeat-tehtävät           | Järjestelmä     | Agentti          | Kyllä    | ❌          |
-| BOOTSTRAP.md  | Onboarding (kertakäyttöinen) | Järjestelmä (*) | Agentti (poistaa)| Kyllä    | ❌          |
-| MEMORY.md     | Pitkäkestoinen muisti        | Agentti         | Agentti          | Ei       | ❌          |
+| Tiedosto     | Tarkoitus                    | Luoja            | Päivittäjä        | Template | Aliagentti |
+| ------------ | ---------------------------- | ---------------- | ----------------- | -------- | ---------- |
+| AGENTS.md    | Workspace-ohjeet             | Järjestelmä      | Käyttäjä/Agentti  | Kyllä    | ✅         |
+| SOUL.md      | Persoonallisuus              | Järjestelmä      | Agentti/Käyttäjä  | Kyllä    | ✅         |
+| IDENTITY.md  | Identiteettimetadata         | Järjestelmä      | Agentti           | Kyllä    | ✅         |
+| USER.md      | Käyttäjäprofiili             | Järjestelmä      | Agentti           | Kyllä    | ✅         |
+| TOOLS.md     | Ympäristömuistiinpanot       | Järjestelmä      | Käyttäjä/Agentti  | Kyllä    | ✅         |
+| HEARTBEAT.md | Heartbeat-tehtävät           | Järjestelmä      | Agentti           | Kyllä    | ❌         |
+| BOOTSTRAP.md | Onboarding (kertakäyttöinen) | Järjestelmä (\*) | Agentti (poistaa) | Kyllä    | ❌         |
+| MEMORY.md    | Pitkäkestoinen muisti        | Agentti          | Agentti           | Ei       | ❌         |
 
-(*) BOOTSTRAP.md luodaan vain jos workspace on uusi eikä onboardingia ole tehty.
+(\*) BOOTSTRAP.md luodaan vain jos workspace on uusi eikä onboardingia ole tehty.
 
 ---
 
@@ -556,11 +573,11 @@ type AgentMessage = {
 
 **Kolme roolia:**
 
-| Rooli | Sisältö | Kuka tuottaa |
-|-------|---------|-------------|
-| `user` | Käyttäjän viesti (teksti, kuvat) | Käyttäjä kanavalta |
-| `assistant` | Agentin vastaus TAI työkalukutsu(t) | LLM |
-| `tool` | Työkalun palauttama tulos | Työkalun suoritus |
+| Rooli       | Sisältö                             | Kuka tuottaa       |
+| ----------- | ----------------------------------- | ------------------ |
+| `user`      | Käyttäjän viesti (teksti, kuvat)    | Käyttäjä kanavalta |
+| `assistant` | Agentin vastaus TAI työkalukutsu(t) | LLM                |
+| `tool`      | Työkalun palauttama tulos           | Työkalun suoritus  |
 
 **Tärkeä nyansi:** `assistant`-viesti voi sisältää **sekä tekstiä että työkalukutsuja**. Yhdellä käyttäjävuorolla voi syntyä pitkä ketju:
 
@@ -581,31 +598,31 @@ Nämä viestit lähetetään myös LLM:lle konteksti-ikkunassa: seuraavalla LLM-
 
 ```typescript
 type MsgContext = {
-  Body?: string;              // Viestin teksti
-  BodyForAgent?: string;      // Muotoiltu versio agentille
-  From?: string;              // Lähettäjän tunniste
-  To?: string;                // Vastaanottaja
-  SessionKey?: string;        // Resolved sessioavain
-  AccountId?: string;         // Kanavatilin tunniste
+  Body?: string; // Viestin teksti
+  BodyForAgent?: string; // Muotoiltu versio agentille
+  From?: string; // Lähettäjän tunniste
+  To?: string; // Vastaanottaja
+  SessionKey?: string; // Resolved sessioavain
+  AccountId?: string; // Kanavatilin tunniste
 
   // Reititys
   OriginatingChannel?: string; // Mistä kanavasta viesti tuli
-  OriginatingTo?: string;      // Mihin vastaus pitää reitittää
-  ChatType?: string;           // "direct" | "group" | "channel"
-  MessageThreadId?: string;    // Ketjutunniste
+  OriginatingTo?: string; // Mihin vastaus pitää reitittää
+  ChatType?: string; // "direct" | "group" | "channel"
+  MessageThreadId?: string; // Ketjutunniste
 
   // Lähettäjän tiedot
   SenderName?: string;
   SenderId?: string;
   SenderUsername?: string;
-  SenderE164?: string;         // Puhelinnumero (E.164-muoto)
-  SenderIsOwner?: boolean;     // Onko botin omistaja
+  SenderE164?: string; // Puhelinnumero (E.164-muoto)
+  SenderIsOwner?: boolean; // Onko botin omistaja
 
   // Ryhmäkonteksti
   GroupSubject?: string;
   GroupChannel?: string;
   GroupMembers?: string;
-  InboundHistory?: Array<{sender: string; body: string; timestamp?: number}>;
+  InboundHistory?: Array<{ sender: string; body: string; timestamp?: number }>;
 
   // Media
   MediaUrls?: string[];
@@ -625,7 +642,7 @@ type MsgContext = {
 | ------------- | ------------------------------------------------ | ----------------------------------- |
 | **Elinkaari** | Yksi saapuva viesti                              | Koko keskusteluhistoria             |
 | **Sisältö**   | Reititystieto + metadata + body                  | role + content (teksti/tool/result) |
-| **Käyttö**    | Kanavakäsittelijä → reititys → promptin muotoilu | LLM API -kutsu + looppi            |
+| **Käyttö**    | Kanavakäsittelijä → reititys → promptin muotoilu | LLM API -kutsu + looppi             |
 | **Tallennus** | Ei tallenneta sellaisenaan                       | Tallennetaan JSONL:ään (append)     |
 
 **MsgContextin rooli virrassa:**
@@ -810,16 +827,16 @@ Viesti saapuu:
 
 ## 7. Yhteenveto
 
-| Käsite                   | Mikä se on                                   | Missä se elää                                                |
-| ------------------------ | -------------------------------------------- | ------------------------------------------------------------ |
-| **Sessio**               | Nimetty keskustelu agentin kanssa            | Avain + metadata (sessions.json) + transkripti (.jsonl)      |
-| **Sessioavain**          | Deterministinen tunniste sessiosta           | Rakennetaan dynaamisesti viestikontekstista                  |
-| **SessionEntry**         | Session metadata (tokenit, malli, kanava...) | `sessions.json`                                              |
-| **JSONL-transkripti**    | Keskusteluhistoria rivi per viesti            | `<sessionId>.jsonl`                                          |
-| **AgentConfig**          | Agentin identiteetti ja asetukset            | `openclaw.json` + `agents/<id>/agent/`                       |
-| **Bootstrap-tiedostot**  | Workspacen Markdown-tiedostot (8 kpl)        | Workspace-hakemisto, injektoidaan system promptiin           |
-| **MsgContext**           | Yksittäisen viestin reititysmetadata         | Ajonaikainen rakenne, ei tallenneta                          |
-| **Konteksti-ikkuna**     | Kaikki mitä LLM näkee                        | Rakennetaan ajonaikaisesti system prompt + historia + viesti |
-| **Compaction**           | Historian tiivistys yhteenvedoksi            | Tapahtuu kun konteksti lähestyy rajaa                        |
+| Käsite                  | Mikä se on                                   | Missä se elää                                                |
+| ----------------------- | -------------------------------------------- | ------------------------------------------------------------ |
+| **Sessio**              | Nimetty keskustelu agentin kanssa            | Avain + metadata (sessions.json) + transkripti (.jsonl)      |
+| **Sessioavain**         | Deterministinen tunniste sessiosta           | Rakennetaan dynaamisesti viestikontekstista                  |
+| **SessionEntry**        | Session metadata (tokenit, malli, kanava...) | `sessions.json`                                              |
+| **JSONL-transkripti**   | Keskusteluhistoria rivi per viesti           | `<sessionId>.jsonl`                                          |
+| **AgentConfig**         | Agentin identiteetti ja asetukset            | `openclaw.json` + `agents/<id>/agent/`                       |
+| **Bootstrap-tiedostot** | Workspacen Markdown-tiedostot (8 kpl)        | Workspace-hakemisto, injektoidaan system promptiin           |
+| **MsgContext**          | Yksittäisen viestin reititysmetadata         | Ajonaikainen rakenne, ei tallenneta                          |
+| **Konteksti-ikkuna**    | Kaikki mitä LLM näkee                        | Rakennetaan ajonaikaisesti system prompt + historia + viesti |
+| **Compaction**          | Historian tiivistys yhteenvedoksi            | Tapahtuu kun konteksti lähestyy rajaa                        |
 
 Seuraavassa raportissa (03) tarkastellaan **miten agenttiajo oikeasti toimii** – eli mikä on se silmukka, joka lukee session, kutsuu LLM:ää, suorittaa työkaluja ja kirjoittaa tulokset takaisin.

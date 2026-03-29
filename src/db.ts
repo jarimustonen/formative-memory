@@ -159,9 +159,7 @@ export class MemoryDatabase {
       this.db.prepare("DELETE FROM memories WHERE id = ?").run(id);
       this.db.prepare("DELETE FROM memory_embeddings WHERE id = ?").run(id);
       this.db.prepare("DELETE FROM memory_fts WHERE id = ?").run(id);
-      this.db
-        .prepare("DELETE FROM associations WHERE memory_a = ? OR memory_b = ?")
-        .run(id, id);
+      this.db.prepare("DELETE FROM associations WHERE memory_a = ? OR memory_b = ?").run(id, id);
     });
     del();
   }
@@ -222,7 +220,13 @@ export class MemoryDatabase {
       | { embedding: Buffer }
       | undefined;
     if (!row) return null;
-    return Array.from(new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4));
+    return Array.from(
+      new Float32Array(
+        row.embedding.buffer,
+        row.embedding.byteOffset,
+        row.embedding.byteLength / 4,
+      ),
+    );
   }
 
   getAllEmbeddings(): Array<{ id: string; embedding: number[] }> {
@@ -232,7 +236,13 @@ export class MemoryDatabase {
     }>;
     return rows.map((row) => ({
       id: row.id,
-      embedding: Array.from(new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4)),
+      embedding: Array.from(
+        new Float32Array(
+          row.embedding.buffer,
+          row.embedding.byteOffset,
+          row.embedding.byteLength / 4,
+        ),
+      ),
     }));
   }
 
@@ -246,9 +256,7 @@ export class MemoryDatabase {
 
   searchFts(query: string, limit = 20): Array<{ id: string; rank: number }> {
     return this.db
-      .prepare(
-        `SELECT id, rank FROM memory_fts WHERE memory_fts MATCH ? ORDER BY rank LIMIT ?`,
-      )
+      .prepare(`SELECT id, rank FROM memory_fts WHERE memory_fts MATCH ? ORDER BY rank LIMIT ?`)
       .all(query, limit) as Array<{ id: string; rank: number }>;
   }
 
@@ -287,9 +295,7 @@ export class MemoryDatabase {
     consolidated: number;
     associations: number;
   } {
-    const total = (
-      this.db.prepare("SELECT COUNT(*) as c FROM memories").get() as { c: number }
-    ).c;
+    const total = (this.db.prepare("SELECT COUNT(*) as c FROM memories").get() as { c: number }).c;
     const working = (
       this.db.prepare("SELECT COUNT(*) as c FROM memories WHERE consolidated = 0").get() as {
         c: number;

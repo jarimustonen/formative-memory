@@ -51,6 +51,7 @@ Uni
 ```
 
 **Järjestys on tärkeä:**
+
 - Retrieval-vahvistus ennen decayta (päivän käyttö huomioidaan ensin)
 - Decay ennen working→consolidated-siirtoa (heikot muistot karsiutuvat)
 - Assosiaatiot ennen kertautuvaa assosiaatiota (tarvitsee päivitetyt painot)
@@ -152,6 +153,7 @@ Transitiossa olevat muistot merkitään – before_prompt_build pakkoinjektoi ne
 5. Atominen transaktio
 
 **Konsolidaation progressio:**
+
 ```
 1. kerta: "Jari kertoi menevänsä Tampereelle"
 2. kerta: "Jari sanoi olevansa matkalla"
@@ -172,6 +174,7 @@ Muistoja päivitetään uudemman tiedon perusteella (design-03, kohta 6):
 4. Päivitetty muisto saa uuden hashin → assosiaatiot siirretään atomisesti
 
 **Esimerkki:**
+
 - Alkuperäinen: "Jari harkitsee projektin aloittamista"
 - Uudempi assosioitu muisto: "Jari aloitti projektin"
 - Väritetty: "Jari aloitti projektin jonka hän oli harkinnut"
@@ -205,11 +208,11 @@ weight < 0.01 → poistetaan
 
 ## 14. Ajastus ja trigger
 
-| Trigger | Kuvaus |
-| --- | --- |
-| **Cron** | Ajastettu aika (esim. yöllä) – ensisijainen |
-| **Inaktiivisuus** | Käyttäjä ei aktiivinen N tuntiin |
-| **Manuaalinen** | `openclaw memory consolidate` tai agentin pyyntö |
+| Trigger           | Kuvaus                                           |
+| ----------------- | ------------------------------------------------ |
+| **Cron**          | Ajastettu aika (esim. yöllä) – ensisijainen      |
+| **Inaktiivisuus** | Käyttäjä ei aktiivinen N tuntiin                 |
+| **Manuaalinen**   | `openclaw memory consolidate` tai agentin pyyntö |
 
 Plugin rekisteröi servicen joka tarkistaa ajastuksen ja suorittaa konsolidaation kun trigger laukeaa.
 
@@ -229,6 +232,7 @@ Konsolidaatio vaatii LLM-kutsuja duplikaattien yhdistämiseen ja muistojen väri
 ## 16. V2-laajennettavuus
 
 Myöhemmin uniprosessiin voidaan lisätä:
+
 - **Uusien assosiaatioiden löytäminen:** satunnainen otanta muistoja → embedding-haku → semanttisesti samankaltaisille luodaan assosiaatioita (löytää yhteyksiä joita co-retrieval ei ole paljastanut)
 - **Muistotyyppikohtainen decay:** eri tyypit rapautuvat eri nopeudella
 
@@ -246,15 +250,15 @@ Myöhemmin uniprosessiin voidaan lisätä:
 
 ## 18. Päätökset
 
-| # | Päätös | Perustelu |
-| - | ------ | --------- |
-| 1 | Uni on ainoa tilan muuttaja (V1) | Yksinkertainen, ennustettava |
-| 2 | 10-vaiheinen prosessi kiinteässä järjestyksessä | Vahvistus → decay → assosiaatiot → siirto → väritys → pruning |
-| 3 | Working → consolidated: strength → 1.0 | Pitkäkestomuistiin siirtyminen = uusi alku |
-| 4 | Eri decay: working ×0.906, consolidated ×0.977 | Tuoreet karsiutuvat nopeasti |
-| 5 | Muistoja päivitetään funktionaalisiksi, ei pidetä totuudenmukaisina | Konsolidaatio yhdistää, tiivistää ja päivittää vapaasti |
-| 6 | Kertautuva assosiaatio vahvistaa epäsuoria yhteyksiä | Löytää piilossa olevia relevansseja |
-| 7 | Väritys päivittää muistoja assosioituvien uudempien muistojen perusteella | Funktionaalisuusperiaate: muistot pysyvät relevantteina |
+| #   | Päätös                                                                    | Perustelu                                                     |
+| --- | ------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| 1   | Uni on ainoa tilan muuttaja (V1)                                          | Yksinkertainen, ennustettava                                  |
+| 2   | 10-vaiheinen prosessi kiinteässä järjestyksessä                           | Vahvistus → decay → assosiaatiot → siirto → väritys → pruning |
+| 3   | Working → consolidated: strength → 1.0                                    | Pitkäkestomuistiin siirtyminen = uusi alku                    |
+| 4   | Eri decay: working ×0.906, consolidated ×0.977                            | Tuoreet karsiutuvat nopeasti                                  |
+| 5   | Muistoja päivitetään funktionaalisiksi, ei pidetä totuudenmukaisina       | Konsolidaatio yhdistää, tiivistää ja päivittää vapaasti       |
+| 6   | Kertautuva assosiaatio vahvistaa epäsuoria yhteyksiä                      | Löytää piilossa olevia relevansseja                           |
+| 7   | Väritys päivittää muistoja assosioituvien uudempien muistojen perusteella | Funktionaalisuusperiaate: muistot pysyvät relevantteina       |
 
 ---
 

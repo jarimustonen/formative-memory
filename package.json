@@ -39,11 +39,6 @@
   "peerDependencies": {
     "openclaw": ">=2026.3.24"
   },
-  "openclaw": {
-    "extensions": [
-      "./index.ts"
-    ]
-  },
   "engines": {
     "node": ">=22.12.0"
   },
@@ -52,6 +47,11 @@
     "onlyBuiltDependencies": [
       "better-sqlite3",
       "esbuild"
+    ]
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
     ]
   }
 }

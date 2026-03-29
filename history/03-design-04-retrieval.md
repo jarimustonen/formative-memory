@@ -64,6 +64,7 @@ Strength-arvo on muiston nykyinen vahvuus tietokannassa (päivitetään konsolid
 ### 3.3 V2-laajennettavuus
 
 Myöhemmin hakuputkeen voidaan lisätä:
+
 - **Assosiaatio-boosting:** Nostaa muistoja jotka assosioituvat kontekstissa oleviin
 - **Kertautuva assosiaatio:** Tuo "piilomuistoja" jotka assosioituvat useaan haettuun muistoon
 - **MMR (Maximal Marginal Relevance):** Estää liian samankaltaisten muistojen kertyminen
@@ -109,14 +110,15 @@ Kontekstibudjetti on rajallinen. Auto-recall ei saa viedä liikaa tilaa.
 
 Jokainen haku ja auto-recall kirjataan retrieval.log:iin (design-01, kohta 5):
 
-| Tapahtuma | Lähde | Esimerkki |
-| --- | --- | --- |
-| `search` | Agentti kutsui `memory_search` | `2026-03-05T14:30:00Z search a1b2c3d4 e5f6a7b8` |
-| `recall` | Auto-recall (before_prompt_build) | `2026-03-05T14:30:00Z recall a1b2c3d4 c9d0e1f2` |
-| `feedback` | Agentti kutsui `memory_feedback` | `2026-03-05T14:31:00Z feedback a1b2c3d4:3 e5f6a7b8:1` |
-| `store` | Agentti kutsui `memory_store` | `2026-03-05T14:35:12Z store f3a4b5c6 context:a1b2c3d4` |
+| Tapahtuma  | Lähde                             | Esimerkki                                              |
+| ---------- | --------------------------------- | ------------------------------------------------------ |
+| `search`   | Agentti kutsui `memory_search`    | `2026-03-05T14:30:00Z search a1b2c3d4 e5f6a7b8`        |
+| `recall`   | Auto-recall (before_prompt_build) | `2026-03-05T14:30:00Z recall a1b2c3d4 c9d0e1f2`        |
+| `feedback` | Agentti kutsui `memory_feedback`  | `2026-03-05T14:31:00Z feedback a1b2c3d4:3 e5f6a7b8:1`  |
+| `store`    | Agentti kutsui `memory_store`     | `2026-03-05T14:35:12Z store f3a4b5c6 context:a1b2c3d4` |
 
 Konsolidaatio prosessoi lokin ja päivittää:
+
 - **Strength-vahvistus:** painotettu palautteella (design-03, kohta 4.2)
 - **Assosiaatiot:** co-retrieval-parit (design-02, kohta 5)
 
@@ -135,16 +137,17 @@ Konsolidaatio prosessoi lokin ja päivittää:
 
 ### 6.1 Työkalut
 
-| Työkalu | Kuvaus | Parametrit |
-| --- | --- | --- |
-| `memory_search` | Semanttinen haku hakuputkella | `query`, `limit?` |
-| `memory_store` | Uuden muiston tallentaminen | `content`, `type`, `temporal_anchor?` |
+| Työkalu           | Kuvaus                                 | Parametrit                                     |
+| ----------------- | -------------------------------------- | ---------------------------------------------- |
+| `memory_search`   | Semanttinen haku hakuputkella          | `query`, `limit?`                              |
+| `memory_store`    | Uuden muiston tallentaminen            | `content`, `type`, `temporal_anchor?`          |
 | `memory_feedback` | Relevanssipalaute haetuille muistoille | `ratings` (lista: id + tähdet 1-3), `comment?` |
-| `memory_get` | Yksittäisen muiston haku id:llä | `id` |
+| `memory_get`      | Yksittäisen muiston haku id:llä        | `id`                                           |
 
 ### 6.2 memory_search
 
 Agentti tekee semanttisen haun. Parametrit:
+
 - `query` (pakollinen): hakukysely
 - `limit` (valinnainen, oletus 10): maksimitulokset
 
@@ -153,11 +156,13 @@ Palauttaa listan muistoja (id, sisältö, tyyppi, strength, luontiaika). Kirjaa 
 ### 6.3 memory_store
 
 Agentti tallentaa uuden muiston. Parametrit:
+
 - `content` (pakollinen): muiston narratiivinen sisältö
 - `type` (pakollinen): vapaamuotoinen kategoria (esim. narrative, fact, decision, preference)
 - `temporal_anchor` (valinnainen): päivämäärä jos muistolla on ajallinen ankkuri
 
 Plugin:
+
 1. Laskee SHA-256-hashin sisällöstä
 2. Lisää chunkin working.md:hen
 3. Lisää muiston tietokantaan (embedding + FTS indeksointi)
@@ -166,6 +171,7 @@ Plugin:
 ### 6.4 memory_feedback
 
 Agentti arvioi haettujen muistojen relevanssin. Parametrit:
+
 - `ratings` (pakollinen): lista muisto-id + tähdet (1-3)
   - ★ = heikosti relevantti
   - ★★ = osittain relevantti
@@ -219,14 +225,14 @@ This helps the memory system learn which memories matter.
 
 ## 9. Päätökset
 
-| # | Päätös | Perustelu |
-| - | ------ | --------- |
-| 1 | Ei assosiaatio-boostia hakuputkessa (V1) | Yksinkertainen putki, assosiaatiot vaikuttavat epäsuorasti strengthin kautta |
-| 2 | Kiinteä embedding/BM25-painotus (V1) | Muistotyyppikohtainen painotus V2:ssa kun on dataa |
-| 3 | Retrieval ei muuta tietokantaa – vain retrieval.log | V1-periaate: kaikki muutokset konsolidaatiossa |
-| 4 | Temporaalinen pakkoinjektio auto-recallissa | Transitiomuistot pakotetaan kontekstiin, eivät vain boostattuja |
-| 5 | memory_feedback-työkalu (1-3 tähteä) | Agentti arvioi relevanssin, konsolidaatio painottaa |
-| 6 | Interpretation pois muistotyypeistä | Konsolidaation tuottama muisto saa normaalin tyypin, source=consolidation kertoo alkuperän |
+| #   | Päätös                                              | Perustelu                                                                                  |
+| --- | --------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| 1   | Ei assosiaatio-boostia hakuputkessa (V1)            | Yksinkertainen putki, assosiaatiot vaikuttavat epäsuorasti strengthin kautta               |
+| 2   | Kiinteä embedding/BM25-painotus (V1)                | Muistotyyppikohtainen painotus V2:ssa kun on dataa                                         |
+| 3   | Retrieval ei muuta tietokantaa – vain retrieval.log | V1-periaate: kaikki muutokset konsolidaatiossa                                             |
+| 4   | Temporaalinen pakkoinjektio auto-recallissa         | Transitiomuistot pakotetaan kontekstiin, eivät vain boostattuja                            |
+| 5   | memory_feedback-työkalu (1-3 tähteä)                | Agentti arvioi relevanssin, konsolidaatio painottaa                                        |
+| 6   | Interpretation pois muistotyypeistä                 | Konsolidaation tuottama muisto saa normaalin tyypin, source=consolidation kertoo alkuperän |
 
 ---
 

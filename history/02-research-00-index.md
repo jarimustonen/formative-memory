@@ -25,36 +25,36 @@ Assosiatiivisen muistin plugin. Suunnittelu: `03-design-00-index.md`.
 
 ### 01 – Idea
 
-| Tiedosto                                | Sisältö                                         | Tila  |
-| --------------------------------------- | ----------------------------------------------- | ----- |
-| `01-idea-associative-memory-plugin.md`  | Alkuperäiset suunnittelumuistiinpanot (Jarin ideat) | Valmis |
+| Tiedosto                               | Sisältö                                             | Tila   |
+| -------------------------------------- | --------------------------------------------------- | ------ |
+| `01-idea-associative-memory-plugin.md` | Alkuperäiset suunnittelumuistiinpanot (Jarin ideat) | Valmis |
 
 ### 02 – Research (OpenClaw:n ymmärtäminen)
 
-| #  | Tiedosto                                        | Sisältö                                                    | Tila      |
-| -- | ----------------------------------------------- | ---------------------------------------------------------- | --------- |
-| 00 | `02-research-00-index.md`                       | Tämä indeksi                                               | –         |
-| 01 | `02-research-01-gateway.md`                     | Gateway-arkkitehtuuri: viestien vastaanotto ja reititys     | Valmis    |
-| 02 | `02-research-02-core-concepts.md`               | Peruskäsitteet: sessio, bootstrap, konteksti-ikkuna        | Valmis    |
-| 03 | `02-research-03-agent-system.md`                | Agenttijärjestelmä: agenttinen looppi, LLM-kutsut, työkalut| Valmis    |
-| 04 | `02-research-04-hooks-and-pi-agent-boundary.md` | Hook-järjestelmä ja pi-coding-agent-rajapinta              | Valmis    |
-| 05 | `02-research-05-plugins.md`                     | Plugin-järjestelmä: lataus, rekisteröinti, SDK              | Valmis    |
-| 06 | `02-research-06-current-memory.md`              | Nykyinen muistijärjestelmä: SQLite, chunking, hybrid-haku  | Valmis    |
-| 07 | `02-research-07-observations.md`                | Havainnot, avoimet kysymykset ja Osa A -muutokset          | Käynnissä |
-| 08 | `02-research-08-references.md`                  | Lähdetiedostot koodikannasta (viittausindeksi)             | Käynnissä |
+| #   | Tiedosto                                        | Sisältö                                                     | Tila      |
+| --- | ----------------------------------------------- | ----------------------------------------------------------- | --------- |
+| 00  | `02-research-00-index.md`                       | Tämä indeksi                                                | –         |
+| 01  | `02-research-01-gateway.md`                     | Gateway-arkkitehtuuri: viestien vastaanotto ja reititys     | Valmis    |
+| 02  | `02-research-02-core-concepts.md`               | Peruskäsitteet: sessio, bootstrap, konteksti-ikkuna         | Valmis    |
+| 03  | `02-research-03-agent-system.md`                | Agenttijärjestelmä: agenttinen looppi, LLM-kutsut, työkalut | Valmis    |
+| 04  | `02-research-04-hooks-and-pi-agent-boundary.md` | Hook-järjestelmä ja pi-coding-agent-rajapinta               | Valmis    |
+| 05  | `02-research-05-plugins.md`                     | Plugin-järjestelmä: lataus, rekisteröinti, SDK              | Valmis    |
+| 06  | `02-research-06-current-memory.md`              | Nykyinen muistijärjestelmä: SQLite, chunking, hybrid-haku   | Valmis    |
+| 07  | `02-research-07-observations.md`                | Havainnot, avoimet kysymykset ja Osa A -muutokset           | Käynnissä |
+| 08  | `02-research-08-references.md`                  | Lähdetiedostot koodikannasta (viittausindeksi)              | Käynnissä |
 
 ### 03 – Design (uuden muistimallin suunnittelu)
 
-| #  | Tiedosto                         | Sisältö                                                          | Tila    |
-| -- | -------------------------------- | ---------------------------------------------------------------- | ------- |
-| 00 | `03-design-00-index.md`          | Design-indeksi ja vaiheistussuunnitelma                          | –       |
-| 01 | `03-design-01-data-model.md`     | Tietomalli: muisto-olio, muistotyypit, content hash, skeema      | Tulossa |
-| 02 | `03-design-02-associations.md`   | Assosiaatiot: rakenne, tyypit, painot, päivitysmekaniikat         | Tulossa |
-| 03 | `03-design-03-lifecycle.md`      | Muistin elinkaari: luonti, temporaalinen tila, tick, decay        | Tulossa |
-| 04 | `03-design-04-retrieval.md`      | Haku: retrieval-pipeline, assosiaatio-boosting, strategiat        | Tulossa |
-| 05 | `03-design-05-consolidation.md`  | Konsolidaatio: "uni", Jaccard + embedding, REM-vaihe             | Tulossa |
-| 06 | `03-design-06-integration.md`    | Integraatio: plugin-rakenne, hookit, Osa A -riippuvuudet         | Tulossa |
-| 07 | `03-design-07-migration.md`      | Migraatio: memory-core → assosiatiivinen muisti, rollback        | Tulossa |
+| #   | Tiedosto                        | Sisältö                                                     | Tila    |
+| --- | ------------------------------- | ----------------------------------------------------------- | ------- |
+| 00  | `03-design-00-index.md`         | Design-indeksi ja vaiheistussuunnitelma                     | –       |
+| 01  | `03-design-01-data-model.md`    | Tietomalli: muisto-olio, muistotyypit, content hash, skeema | Tulossa |
+| 02  | `03-design-02-associations.md`  | Assosiaatiot: rakenne, tyypit, painot, päivitysmekaniikat   | Tulossa |
+| 03  | `03-design-03-lifecycle.md`     | Muistin elinkaari: luonti, temporaalinen tila, tick, decay  | Tulossa |
+| 04  | `03-design-04-retrieval.md`     | Haku: retrieval-pipeline, assosiaatio-boosting, strategiat  | Tulossa |
+| 05  | `03-design-05-consolidation.md` | Konsolidaatio: "uni", Jaccard + embedding, REM-vaihe        | Tulossa |
+| 06  | `03-design-06-integration.md`   | Integraatio: plugin-rakenne, hookit, Osa A -riippuvuudet    | Tulossa |
+| 07  | `03-design-07-migration.md`     | Migraatio: memory-core → assosiatiivinen muisti, rollback   | Tulossa |
 
 ---
 

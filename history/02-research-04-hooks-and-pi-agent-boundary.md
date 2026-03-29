@@ -30,6 +30,7 @@ triggerInternalHook({ type: "command:new", ... })
 ```
 
 Tapahtumatyypit:
+
 - `command` – komentotapahtumat (`command:new`, `command:reset`)
 - `session` – sessiotapahtumat
 - `agent` – agenttitapahtumat (bootstrap)
@@ -39,6 +40,7 @@ Tapahtumatyypit:
 Sisäiset hookit ovat käytössä mm. bundled-hookeissa kuten `session-memory` (joka tallentaa session-kontekstin muistiin `/new` tai `/reset` yhteydessä).
 
 **Konteksti-tyypit:**
+
 - `AgentBootstrapHookContext`: `workspaceDir`, `bootstrapFiles`, `cfg`, `sessionKey`, `sessionId`, `agentId`
 - `MessageReceivedHookContext`: `from`, `content`, `timestamp`, `channelId`, `accountId`, `conversationId`, `messageId`, `metadata`
 
@@ -92,6 +94,7 @@ Muisti-plugin käyttäisi todennäköisesti molempia: `api.on()` lifecycle-hooke
 **Konteksti:** `PluginHookToolContext` = `{ agentId?, sessionKey?, toolName }`
 
 **Fasadit:** Kaikilla työkaluhookeilla on valmiit fasadimetodit `HookRunner`:ssa:
+
 - `runBeforeToolCall(event, ctx)` – sekventiaalinen, voi muokata/estää
 - `runAfterToolCall(event, ctx)` – rinnakkainen (fire-and-forget)
 - `runToolResultPersist(event, ctx)` – **synkroninen** (hot path)
@@ -105,10 +108,12 @@ Muisti-plugin käyttäisi todennäköisesti molempia: `api.on()` lifecycle-hooke
 | `after_compaction`  | fire-and-forget | Compaction päättyy | `messageCount`, `tokenCount?`, `compactedCount`, `sessionFile?`                |
 
 **Fasadit:** Molemmat compaction-hookit on toteutettu fasadeina `HookRunner`:ssa:
+
 - `runBeforeCompaction(event, ctx)` – fire-and-forget (`runVoidHook`)
 - `runAfterCompaction(event, ctx)` – fire-and-forget (`runVoidHook`)
 
 **Kutsupaikat:** Compaction-hookeja kutsutaan **kahdesta paikasta**:
+
 1. **Subscribe-handleri** (`pi-embedded-subscribe.handlers.compaction.ts`) – agenttiloopin aikana tapahtuva auto-compaction
 2. **Erillinen compact.ts** (`pi-embedded-runner/compact.ts`) – erillinen compaction-ajo (esim. manuaalinen tai schedule-pohjainen)
 
@@ -192,6 +197,7 @@ Pi-coding-agent tarjoaa myös oman `ExtensionAPI`/`ExtensionFactory`-mallin, jok
 2. **`context-pruning`** – rekisteröi `api.on("context", ...)` handlerin, joka voi muokata messages-listaa ennen LLM-kutsua
 
 Extension API -tapahtumat:
+
 - `"context"` → `ContextEvent` (messages) → voi palauttaa `{ messages: AgentMessage[] }`
 - `"session_before_compact"` → compaction-data → voi palauttaa `{ compaction: { summary, ... } }` tai `{ cancel: true }`
 
@@ -275,11 +281,13 @@ export default {
 **Lähde:** `extensions/memory-core/index.ts`
 
 Rekisteröi kaksi työkalua:
+
 - `memory_search` – haku memory-tiedostoista (via `api.runtime.tools.createMemorySearchTool()`)
 - `memory_get` – yksittäisen tiedoston luku (via `api.runtime.tools.createMemoryGetTool()`)
 - CLI-komento: `api.runtime.tools.registerMemoryCli(program)`
 
 Huomionarvoisesti: memory-core käyttää **api.runtime.tools** -rajapintaa, joka tarjoaa valmiit muistityökalut. Assosiatiivinen muisti -plugin voisi joko:
+
 1. Käyttää samoja runtime-työkaluja pohjana ja laajentaa niitä
 2. Tai korvata ne kokonaan omilla työkaluillaan
 
@@ -288,6 +296,7 @@ Huomionarvoisesti: memory-core käyttää **api.runtime.tools** -rajapintaa, jok
 **Lähde:** `src/hooks/bundled/session-memory/handler.ts`
 
 Erillinen bundled-hook (ei plugin), joka:
+
 - Kuuntelee `command:new` ja `command:reset` -tapahtumia
 - Lukee JSONL-transkriptin, generoi LLM-slugin
 - Tallentaa `memory/YYYY-MM-DD-<slug>.md` -tiedoston
@@ -315,6 +324,7 @@ Tämä hook toimii memory-core-pluginin rinnalla. Assosiatiivisen muistin plugin
 | `on(hookName, handler, { priority? })`   | Plugin hook -handleri              |
 
 Pluginilla on myös pääsy:
+
 - `api.config` – OpenClaw-konfiguraatio
 - `api.pluginConfig` – pluginin oma konfiguraatio
 - `api.runtime` – `PluginRuntime` (sisältää mm. tools-rajapinnan)
@@ -342,6 +352,7 @@ Tick-laskenta on mahdollista observoimalla subscribe-tapahtumia hookien kautta:
 **Rajoitus:** `llm_input` kutsutaan vain **kerran per attempt.ts-ajo** (rivi 1150), ei jokaisella agenttiloopin LLM-kutsulla. Pi-agent-kirjaston sisäiset uudelleenkutsut (työkalukutsun jälkeiset LLM-kutsut) eivät laukaise `llm_input`-hookia.
 
 **Parempi lähestymistapa:** Käyttää `after_tool_call` -hookia primary tick-lähteenä. Jokainen työkalukutsu = yksi tick. Tämä on tarkempi kuin LLM-kutsujen laskenta, koska:
+
 - Jokaisella tool_execution_start/end:llä voi inkrementoida laskuria
 - after_tool_call saa `toolName` ja `durationMs` – hyödyllistä lisätietoa
 - message_start/end -tapahtumat voi observoida `onAgentEvent`-callbackilla
@@ -355,9 +366,11 @@ Tick-laskenta on mahdollista observoimalla subscribe-tapahtumia hookien kautta:
 **Mahdollisuudet:**
 
 1. **`after_tool_call` -hook** – seurataan memory_search -kutsuja ja niiden tuloksia:
+
    ```
    after_tool_call: toolName="memory_search", params={query: "..."}, result={...}
    ```
+
    Plugin voi analysoida, mitkä muistichunkit palautuivat samassa haussa.
 
 2. **`before_tool_call` -hook** – voi jopa muokata memory_search -kutsun parametreja tai estää sen, jos plugin korvaa muistityökalut.
@@ -388,6 +401,7 @@ Tick-laskenta on mahdollista observoimalla subscribe-tapahtumia hookien kautta:
 **Ongelma:** Plugin-hookit (luku 3) ovat OpenClaw-tason wrappereita. Pi-agent Extension API on kirjaston sisäinen. Plugin ei voi suoraan rekisteröidä ExtensionFactory:a – se vaatii OpenClaw-muutoksen (`buildEmbeddedExtensionFactories()`).
 
 **Suositeltava ratkaisu (Osa A):** Lisätä OpenClaw:iin mekanismi, jolla plugin voi rekisteröidä pi-agent ExtensionFactory:n. Tämä mahdollistaisi:
+
 - Pääsyn `context`-tapahtumaan (viestien muokkaus ennen LLM-kutsua)
 - Pääsyn `session_before_compact`-tapahtumaan (compaction-integraatio)
 
@@ -396,6 +410,7 @@ Tick-laskenta on mahdollista observoimalla subscribe-tapahtumia hookien kautta:
 **Design-dokin tarve:** Hiljaisen ajan konsolidaatiovaihe.
 
 **Mahdollisuudet:**
+
 - Cron-ajojen kautta (research-01:ssä tunnistettu)
 - Plugin rekisteröi `registerService()` – taustaprosessi, joka herää ajastettuna
 - Konsolidaatio-service käyttää pluginin omia työkaluja muistin analysointiin
@@ -419,6 +434,7 @@ Tick-laskenta on mahdollista observoimalla subscribe-tapahtumia hookien kautta:
    - Voi korvata MEMORY.md:n sisällön, muokata AGENTS.md:n muistiosioita
 
 **Suositeltava strategia:**
+
 - `before_prompt_build` injektoi assosiaatioiden perusteella haetut muistot `prependContext`-kenttään
 - Bootstrap-hook muokkaa AGENTS.md:n muistiohjeet vastaamaan assosiatiivista muistia
 
@@ -492,6 +508,7 @@ Tämän tutkimuksen perusteella tunnistetut OpenClaw-muutokset:
 OpenClaw:n plugin-arkkitehtuuri on yllättävän kypsä muistin korvaamiseen:
 
 **Vahvuudet:**
+
 - 23 hookia kattaa koko elinkaaren
 - Eksklusiivinen slot-järjestelmä (`kind: "memory"`) on suunniteltu muistipluginien korvaamiseen
 - `before_prompt_build` mahdollistaa kontekstin injektoinnin
@@ -500,6 +517,7 @@ OpenClaw:n plugin-arkkitehtuuri on yllättävän kypsä muistin korvaamiseen:
 - `registerService()` mahdollistaa taustakonsolidaation
 
 **Heikkoudet:**
+
 - Pi-agent Extension API ei ole pluginien saavutettavissa (suurin puute)
 - System promptin muistiosio on hardkoodattu
 - `after_compaction` on dataltaan köyhä

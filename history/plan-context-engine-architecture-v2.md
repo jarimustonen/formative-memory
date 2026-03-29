@@ -12,6 +12,7 @@
 An **associative memory plugin** for OpenClaw (an open-source AI agent framework). The plugin gives an AI agent persistent, biologically-inspired long-term memory that survives across sessions.
 
 Key features of the memory model:
+
 - **Content-addressed memories** (SHA-256 hash identity)
 - **Weighted associations** between memories (co-retrieval tracking)
 - **Strength model** with retrieval-based reinforcement and time-based decay
@@ -53,6 +54,7 @@ The plugin claims both OpenClaw plugin slots. No hook-based fallback mode.
 By claiming `contextEngine`, we prevent other context engines (safety filters, RAG, scratchpads) from running alongside us. This is the strongest argument against this architecture.
 
 Mitigations:
+
 - Delegate compaction to OpenClaw runtime — we don't replace core context behavior, only add memory
 - If OpenClaw later supports composable context middleware, our code can be refactored to participate in a pipeline
 - Code is organized clearly so memory logic and OpenClaw integration are distinguishable, but we do not introduce premature abstraction boundaries or adapter interfaces
@@ -63,10 +65,10 @@ Mitigations:
 
 ### What each slot provides
 
-| Slot | Capabilities used |
-|---|---|
-| **Memory** (`kind: "memory"`) | `registerTool()` (4 memory tools), `registerMemoryPromptSection()` (system prompt) |
-| **Context Engine** | `assemble()`, `afterTurn()`, `compact()`, `ingest()`, `dispose()` — see §15 for unused methods |
+| Slot                          | Capabilities used                                                                              |
+| ----------------------------- | ---------------------------------------------------------------------------------------------- |
+| **Memory** (`kind: "memory"`) | `registerTool()` (4 memory tools), `registerMemoryPromptSection()` (system prompt)             |
+| **Context Engine**            | `assemble()`, `afterTurn()`, `compact()`, `ingest()`, `dispose()` — see §15 for unused methods |
 
 ---
 
@@ -202,11 +204,11 @@ CLOSED (normal) ──fail×2──► OPEN (skip embeddings) ──30s──►
       └──────────────────── success ─────────────────────────────┘
 ```
 
-| State | Behavior | Latency |
-|---|---|---|
-| CLOSED | Embedding + BM25 hybrid search, 500ms timeout | Normal |
-| OPEN | BM25-only search, no network calls | Zero overhead |
-| HALF-OPEN | Try one embedding call to test recovery | One probe |
+| State     | Behavior                                      | Latency       |
+| --------- | --------------------------------------------- | ------------- |
+| CLOSED    | Embedding + BM25 hybrid search, 500ms timeout | Normal        |
+| OPEN      | BM25-only search, no network calls            | Zero overhead |
+| HALF-OPEN | Try one embedding call to test recovery       | One probe     |
 
 ### BM25-only mode and non-English languages
 
@@ -235,7 +237,7 @@ Hash the last N messages' content plus total message count:
 function transcriptFingerprint(messages: AgentMessage[], N: number): string {
   const tailSize = Math.min(N, messages.length);
   const tail = messages.slice(-tailSize);
-  const tailFp = tail.map(m => `${m.id}:${sha256(m.content)}`).join("\n");
+  const tailFp = tail.map((m) => `${m.id}:${sha256(m.content)}`).join("\n");
   return sha256(`${messages.length}:${tailFp}`);
 }
 ```
@@ -245,6 +247,7 @@ function transcriptFingerprint(messages: AgentMessage[], N: number): string {
 ### Developer logging
 
 Every assemble() call logs (developer-level):
+
 ```
 { transcriptChanged: boolean, N1Changed: boolean, N3Changed: boolean, messageCount: number }
 ```
@@ -253,11 +256,11 @@ Specifically tracked: cases where N=1 would not have detected a change but N=3 d
 
 ### Cache strategy
 
-| Fingerprint result | Action |
-|---|---|
-| Unchanged | Return cached injection |
-| Changed | Re-evaluate: check if recall needs updating |
-| Message count decreased | Full reset (compaction occurred) |
+| Fingerprint result      | Action                                      |
+| ----------------------- | ------------------------------------------- |
+| Unchanged               | Return cached injection                     |
+| Changed                 | Re-evaluate: check if recall needs updating |
+| Message count decreased | Full reset (compaction occurred)            |
 
 ---
 
@@ -296,16 +299,16 @@ CREATE TABLE message_memory_attribution (
 
 ### Confidence scale
 
-| Evidence | Confidence | How determined |
-|---|---|---|
-| `agent_feedback_positive` | 0.95 | LLM called memory_feedback with rating ≥ 4 |
-| `tool_search_used` | 0.85 | Memory appeared in search results that influenced the response |
-| `tool_get` | 0.6 | Agent opened memory by ID (but may not have used it) |
-| `agent_feedback_neutral` | 0.4 | LLM called memory_feedback with rating = 3 |
-| `tool_search_returned` | 0.3 | Returned by search, unknown if used |
-| `auto_injected` | 0.15 | Offered via systemPromptAddition |
-| `agent_feedback_negative` | -0.5 | LLM called memory_feedback with rating ≤ 2 |
-| `rejected` | -1.0 | Explicitly rejected by user or agent |
+| Evidence                  | Confidence | How determined                                                 |
+| ------------------------- | ---------- | -------------------------------------------------------------- |
+| `agent_feedback_positive` | 0.95       | LLM called memory_feedback with rating ≥ 4                     |
+| `tool_search_used`        | 0.85       | Memory appeared in search results that influenced the response |
+| `tool_get`                | 0.6        | Agent opened memory by ID (but may not have used it)           |
+| `agent_feedback_neutral`  | 0.4        | LLM called memory_feedback with rating = 3                     |
+| `tool_search_returned`    | 0.3        | Returned by search, unknown if used                            |
+| `auto_injected`           | 0.15       | Offered via systemPromptAddition                               |
+| `agent_feedback_negative` | -0.5       | LLM called memory_feedback with rating ≤ 2                     |
+| `rejected`                | -1.0       | Explicitly rejected by user or agent                           |
 
 **V1 heuristic for `tool_search_used` vs `tool_search_returned`:** All search results are initially `tool_search_returned` (0.3). If the agent subsequently gives positive feedback to a result, it's promoted. We do not attempt to infer usage from response content in V1.
 
@@ -322,6 +325,7 @@ BM25-only retrieval events get additional dampening (`mode_weight = 0.5` for bm2
 ### Provenance garbage collection
 
 Runs during consolidation (Phase 4):
+
 - Session deleted/expired → delete exposure rows for that session
 - Memory pruned → keep attribution (historical), delete exposure
 - Exposure older than 30 days and memory alive → delete (reinforcement already processed)
@@ -347,11 +351,11 @@ Memories are identified by SHA-256(content). This ID is immutable — if content
 
 Consolidation never modifies memories in-place. It creates new memories and manages the old ones:
 
-| Operation | Old memories | New memory | Associations |
-|---|---|---|---|
-| **Merge** (A + B → C) | A, B weakened (strength × 0.1). If A or B was itself a consolidation product (`source: "consolidation"`), it's deleted instead. | C gets new ID, `source: "consolidation"`, strength 1.0 | C inherits all associations from A and B |
-| **Working → consolidated** | Same memory, metadata changes only | N/A (same ID) | Unchanged |
-| **Pruning** | Deleted (strength ≤ 0.05) | N/A | Associations deleted |
+| Operation                  | Old memories                                                                                                                    | New memory                                             | Associations                             |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ---------------------------------------- |
+| **Merge** (A + B → C)      | A, B weakened (strength × 0.1). If A or B was itself a consolidation product (`source: "consolidation"`), it's deleted instead. | C gets new ID, `source: "consolidation"`, strength 1.0 | C inherits all associations from A and B |
+| **Working → consolidated** | Same memory, metadata changes only                                                                                              | N/A (same ID)                                          | Unchanged                                |
+| **Pruning**                | Deleted (strength ≤ 0.05)                                                                                                       | N/A                                                    | Associations deleted                     |
 
 ### Coloring is implicit
 
@@ -396,12 +400,12 @@ All retrieval operations resolve aliases transparently. The alias table stays sm
 
 ## 10. Token Budget Strategy
 
-| Budget class | Remaining budget | Injection policy |
-|---|---|---|
-| High | > 75% | Top-N memories with summaries |
-| Medium | 25-75% | Top-K memories, compressed format |
-| Low | 5-25% | Top-1 memory, ID + one-line hint |
-| None | < 5% | No injection — active conversation takes precedence |
+| Budget class | Remaining budget | Injection policy                                    |
+| ------------ | ---------------- | --------------------------------------------------- |
+| High         | > 75%            | Top-N memories with summaries                       |
+| Medium       | 25-75%           | Top-K memories, compressed format                   |
+| Low          | 5-25%            | Top-1 memory, ID + one-line hint                    |
+| None         | < 5%             | No injection — active conversation takes precedence |
 
 No hard floor. Zero injection is valid. A bad memory in a cramped context is worse than no memory.
 
@@ -422,6 +426,7 @@ All state lives in SQLite: memories, associations, embeddings, FTS, provenance, 
 `working.md` and `consolidated.md` are generated from SQLite for human readability. Not edited by humans. Regenerated when needed.
 
 **Future:** A standalone **memory viewer/analyzer** tool will replace markdown files as the primary human interface:
+
 - Search and browse with full metadata
 - Association graph visualization
 - Retrieval log analysis
@@ -442,6 +447,7 @@ Until the viewer exists, markdown files are a temporary bridge.
 ### Async analysis (Phase 5+, fire-and-forget)
 
 Optional background process using a fast model to:
+
 - Detect user feedback signals in conversation (confirmation, correction, rejection)
 - Identify memorizable content from the turn
 - Extract and queue candidate memories for storage
@@ -459,6 +465,7 @@ The async process writes results to SQLite independently. No blocking. No race c
 All memories in V1 are stored by the agent via `memory_store` and treated equally. No trust differentiation is needed because there is only one source.
 
 If/when additional sources are added (import functionality, automatic afterTurn extraction via LLM), a `trust_class` field will be introduced to differentiate:
+
 - Injection eligibility (some sources may not be eligible for auto-injection)
 - Reinforcement weight (lower-trust sources get dampened reinforcement)
 - Content treatment (untrusted sources shown in summary form only)
@@ -500,6 +507,7 @@ Core memory infrastructure and tool registration. 63 tests passing. `registerMem
 **Trigger:** Aligned with OpenClaw's session reset (default: 4am) + explicit command (`/memory sleep` or `/memory consolidate`).
 
 Key behaviors:
+
 - Merged memories are new (new ID, inherits associations via probabilistic OR)
 - Intermediates (source: "consolidation") are deleted on re-merge — chain is kept flat
 - Originals are weakened (strength × 0.1) but preserved
@@ -510,9 +518,11 @@ Key behaviors:
 **Blocking UX consideration:** Consolidation blocks the agent for the full duration. The agent should notify the user when consolidation starts (e.g., "Starting memory consolidation — this may take up to a minute...") and report completion with a brief summary of what changed (memories merged, pruned, etc.). The exact UX will be refined during implementation.
 
 **Association inheritance on merge** uses probabilistic OR:
+
 ```
 f(a, b) = a + b - a × b
 ```
+
 Properties: f(0,0)=0, f(1,1)=1, f(a,b) > max(a,b) when both > 0, always ≤ 1. Shared associations are boosted without exceeding bounds.
 
 **Sleep debt warning:** `assemble()` checks time since last consolidation. If > 72 hours, adds warning to systemPromptAddition nudging `/memory sleep`.
@@ -531,17 +541,18 @@ Properties: f(0,0)=0, f(1,1)=1, f(a,b) > max(a,b) when both > 0, always ≤ 1. S
 
 The OpenClaw context engine API offers several methods we do not use in V1. Listed here for completeness.
 
-| Method | Status | Rationale |
-|---|---|---|
-| `bootstrap(params)` | No-op | Could be used for session-start initialization (ledger setup, sleep debt check). Not needed in V1 — these can be done lazily on first `assemble()` call. |
-| `ingestBatch(params)` | Not implemented | Batch alternative to `ingest()`. Not needed since `ingest()` is a no-op. |
-| `prepareSubagentSpawn(params)` | Not implemented | Memory sharing across subagent boundaries. Deferred — no clear requirement yet. |
-| `onSubagentEnded(params)` | Not implemented | Cleanup after subagent ends. Deferred with above. |
-| `dispose()` | **Implemented** | Called by runtime at the end of each run/compact operation (in a `finally` block). Closes SQLite connections and flushes pending state. Essential for resource cleanup. |
+| Method                         | Status          | Rationale                                                                                                                                                               |
+| ------------------------------ | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bootstrap(params)`            | No-op           | Could be used for session-start initialization (ledger setup, sleep debt check). Not needed in V1 — these can be done lazily on first `assemble()` call.                |
+| `ingestBatch(params)`          | Not implemented | Batch alternative to `ingest()`. Not needed since `ingest()` is a no-op.                                                                                                |
+| `prepareSubagentSpawn(params)` | Not implemented | Memory sharing across subagent boundaries. Deferred — no clear requirement yet.                                                                                         |
+| `onSubagentEnded(params)`      | Not implemented | Cleanup after subagent ends. Deferred with above.                                                                                                                       |
+| `dispose()`                    | **Implemented** | Called by runtime at the end of each run/compact operation (in a `finally` block). Closes SQLite connections and flushes pending state. Essential for resource cleanup. |
 
 ### Error Recovery
 
 Error recovery (SQLite corruption, embedding dimension changes, DB/file desync) is explicitly deferred from this architecture plan. During implementation:
+
 - Log extensively at all boundaries (DB writes, embedding calls, file operations)
 - Study how OpenClaw handles error recovery in its own context engines
 - Address recovery strategies when breaking Phase 3 into implementation tasks

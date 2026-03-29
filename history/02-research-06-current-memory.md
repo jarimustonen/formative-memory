@@ -86,6 +86,7 @@ Muistin lähdeaineisto ovat tavallisia Markdown-tiedostoja:
 **Lähde:** `src/memory/internal.ts`, rivi 80–146 (`listMemoryFiles`)
 
 Tiedostojen listaus:
+
 1. Tarkistetaan `MEMORY.md` ja `memory.md` (workspace root)
 2. Kävellään `memory/`-kansio rekursiivisesti (vain `.md`-tiedostot, ei symlinkkejä)
 3. Lisätään konfiguraation `extraPaths`-polut
@@ -98,6 +99,7 @@ Toinen lähde ovat **JSONL-sessiotranskriptit** (`~/.openclaw/agents/<agentId>/s
 **Lähde:** `src/memory/session-files.ts`, `src/memory/manager-sync-ops.ts`
 
 Sessiotiedostot parsitaan `buildSessionEntry()`:llä, joka:
+
 - Lukee JSONL-rivit
 - Poimii `user`/`assistant`-viestit tekstiksi (`User: .../Assistant: ...`)
 - Redaktoi herkät tiedot
@@ -215,10 +217,10 @@ Chunking on **rivipohjainen** (ei Markdown-semanttinen):
 
 ```typescript
 type MemoryChunk = {
-  startLine: number;  // 1-indeksoitu
-  endLine: number;    // 1-indeksoitu
-  text: string;       // Chunkin teksti
-  hash: string;       // SHA-256(text)
+  startLine: number; // 1-indeksoitu
+  endLine: number; // 1-indeksoitu
+  text: string; // Chunkin teksti
+  hash: string; // SHA-256(text)
 };
 ```
 
@@ -232,7 +234,7 @@ Jos yksittäinen rivi on pidempi kuin `maxChars`, se segmentoidaan `maxChars`-ko
 
 ```typescript
 const chunkId = hashText(
-  `${source}:${relPath}:${chunk.startLine}:${chunk.endLine}:${chunk.hash}:${providerModel}`
+  `${source}:${relPath}:${chunk.startLine}:${chunk.endLine}:${chunk.hash}:${providerModel}`,
 );
 ```
 
@@ -263,6 +265,7 @@ Provideri valitaan automaattisesti (`"auto"`-moodi) tarkistamalla API-avainten s
 Chunkit ryhmitellään eräiksi (`buildEmbeddingBatches`) max. 8000 tokenia per erä. Kunkin erän chunkit lähetetään providerille yhdessä API-kutsussa.
 
 Virheenhallinta:
+
 - Max. 3 uudelleenyritystä per erä (eksponentiaalinen backoff)
 - Jos virheitä kertyy `BATCH_FAILURE_LIMIT` (2) kappaletta, embedding-operaatiot lopetetaan ja siirrytään FTS-only-tilaan
 
@@ -305,6 +308,7 @@ Kaksi polkua:
 **Lähde:** `src/memory/manager-search.ts`, rivi 136–191
 
 FTS5-haku `chunks_fts`-taulusta:
+
 - Query tokenisoidaan ja muunnetaan AND-yhdistetyksi FTS5-kyselyksi: `"sana1" AND "sana2"`
 - BM25-rank muunnetaan [0,1]-pisteytykseksi: `1 / (1 + rank)`
 
@@ -327,6 +331,7 @@ Jos chunk löytyy vain toisesta hausta, puuttuva pisteytys on 0.
 **Lähde:** `src/memory/query-expansion.ts`
 
 Kun embedding-provideria ei ole:
+
 - Käytetään pelkkää FTS5-hakua
 - Query laajennetaan: poistetaan stop-sanat (monikielinen: EN, ES, PT, AR, KO, JA, ZH), validoidaan avainsanat
 - Korean kielessä poistetaan sanan lopun partikkelit
@@ -348,6 +353,7 @@ decayed_score = score × exp(-λ × age_in_days)
 ```
 
 Oletuskonfiguraatio:
+
 - **Käytössä:** `false` (disabled by default)
 - **Puoliintumisaika:** 30 päivää
 
@@ -406,6 +412,7 @@ MMR sovelletaan **lajittelun jälkeen** – se uudelleenjärjestää jo pistemä
 ### 10.3 Tiedostovahti
 
 chokidar valvoo:
+
 - `MEMORY.md`, `memory.md`
 - `memory/**/*.md`
 - Extra paths -konfiguraation polut
@@ -415,6 +422,7 @@ Muutostapahtumissa asetetaan `dirty = true` ja synkronoidaan debouncen jälkeen.
 ### 10.4 Safe Reindex
 
 Täydellinen uudelleenindeksointi käyttää **atomista swap-mekanismia**:
+
 1. Luo väliaikainen tietokanta
 2. Indeksoi kaikki tiedostot sinne
 3. Vaihda vanhan tilalle
@@ -429,6 +437,7 @@ Täydellinen uudelleenindeksointi käyttää **atomista swap-mekanismia**:
 **Lähde:** `src/agents/tools/memory-tool.ts` (`createMemorySearchTool`)
 
 Schema:
+
 ```json
 {
   "query": "string (required)",
@@ -438,6 +447,7 @@ Schema:
 ```
 
 Toiminta:
+
 1. Hae `MemorySearchManager` → kutsu `search(query, { maxResults, minScore })`
 2. Muotoile tulokset citation-muodossa: `path#startLine-endLine`
 3. Chat-tyyppisissä kanavissa (esim. Telegram) viittaukset voivat olla erilaisia
@@ -447,6 +457,7 @@ Toiminta:
 **Lähde:** `src/agents/tools/memory-tool.ts` (`createMemoryGetTool`)
 
 Schema:
+
 ```json
 {
   "path": "string (required)",
@@ -456,6 +467,7 @@ Schema:
 ```
 
 Toiminta:
+
 1. Validoi polku: `isMemoryPath()` tai sallittu extra path
 2. Lue tiedosto, palauta pyydetty rivialue
 3. Vain `.md`-tiedostot sallittu
@@ -467,12 +479,12 @@ Toiminta:
 ```typescript
 const memoryCore = {
   id: "memory-core",
-  kind: "memory" as const,  // eksklusiivinen slotti
+  kind: "memory" as const, // eksklusiivinen slotti
   register(api: OpenClawPluginApi) {
     api.registerTool(api.runtime.tools.createMemorySearchTool());
     api.registerTool(api.runtime.tools.createMemoryGetTool());
     api.runtime.tools.registerMemoryCli(api);
-  }
+  },
 };
 ```
 
@@ -496,6 +508,7 @@ memory snippets.
 ```
 
 **Ehdot:**
+
 - Ei näytetä `isMinimal`-tilassa (aliagentti/cron) → aliagentti ei käytä muistia automaattisesti
 - Ei näytetä jos `memory_search` ja `memory_get` eivät ole saatavilla (ei memory-pluginia)
 - Citations-moodi `"off"` → "do not mention file paths or line numbers"
@@ -551,6 +564,7 @@ Jos assosiatiivinen muisti -plugin korvaa memory-core:n, session-memory-hook **j
 ### 14.3 Backendin valinta
 
 `getMemorySearchManager()` ratkaisee backendin konfiguraatiosta:
+
 - Jos `qmd`-backend on konfiguroitu, käytetään sitä (fallback builtin:iin)
 - Muutoin käytetään builtin-backendia
 - Tulos välimuistitetaan (`SEARCH_MANAGER_CACHE`)
@@ -563,16 +577,22 @@ Jos assosiatiivinen muisti -plugin korvaa memory-core:n, session-memory-hook **j
 
 ```typescript
 interface MemorySearchManager {
-  search(query: string, options?: {
-    maxResults?: number;
-    minScore?: number;
-    sources?: MemorySource[];
-  }): Promise<MemorySearchResult[]>;
+  search(
+    query: string,
+    options?: {
+      maxResults?: number;
+      minScore?: number;
+      sources?: MemorySource[];
+    },
+  ): Promise<MemorySearchResult[]>;
 
-  readFile(relPath: string, range?: {
-    from?: number;
-    lines?: number;
-  }): Promise<string | null>;
+  readFile(
+    relPath: string,
+    range?: {
+      from?: number;
+      lines?: number;
+    },
+  ): Promise<string | null>;
 
   status(): Promise<MemoryProviderStatus>;
   sync(): Promise<void>;
@@ -633,11 +653,13 @@ Snippet on rajoitettu 700 merkkiin (`SNIPPET_MAX_CHARS`).
 ### 17.3 Chunk-identiteetin ongelma (kriittinen)
 
 Nykyinen chunk ID on:
+
 ```
 SHA-256("${source}:${path}:${startLine}:${endLine}:${chunkHash}:${providerModel}")
 ```
 
 Tämä tarkoittaa:
+
 - **Rivin lisäys tiedostoon** → kaikki alla olevat chunkit saavat uuden `startLine/endLine` → uudet ID:t
 - **Providerin vaihto** → kaikki chunkit saavat uuden ID:n
 - **Tiedoston uudelleennimeäminen** → kaikki chunkit saavat uuden ID:n
@@ -645,6 +667,7 @@ Tämä tarkoittaa:
 Assosiatiivinen muisti **ei voi linkittää muistoja näillä ID:illä**, koska assosiaatiot katkeaisivat jokaisella muokkauksella.
 
 **Ratkaisuvaihtoehdot (research-07:ssä tarkemmin):**
+
 1. Plugin generoi omat stabiilit UUID:t muisto-olioille (ei johda tiedostorakenteesta)
 2. Yksi tiedosto = yksi muisto (tiedostonimi = ID)
 3. Muistot frontmatter-kentillä (YAML id: ...)

@@ -20,25 +20,27 @@ Määritellä assosiatiivisen muistin **perusyksikkö** – muisto-olio (Memory)
 Muisto on **koherentti semanttinen yksikkö** – ei mekaaninen tekstipalanen. Se edustaa yhtä asiaa, joka agentilla on "mielessä": tapahtumaa, faktaa, päätöstä, havaintoa tai tulkintaa.
 
 Erona nykyiseen memory-core-chunkkiin:
+
 - Chunk = mekaaninen tekstipalanen (400 tokenia, 80 tokenin overlap)
 - Muisto = semanttinen yksikkö (koko vaihtelee sisällön mukaan)
 
 ### 2.2 Rakenne (kenttäluettelo)
 
-| Kenttä | Tyyppi | Kuvaus |
-| --- | --- | --- |
-| `id` | string | Content hash (SHA-256 tekstisisällöstä) |
-| `content` | string | Muiston sisältö (narratiivinen teksti) |
-| `type` | string | Vapaamuotoinen muistotyyppi (ks. luku 3) |
-| `temporal_state` | enum | `future` \| `present` \| `past` |
-| `temporal_anchor` | ISO datetime? | Päivämäärä johon muisto ankkuroituu |
-| `created_at` | ISO datetime | Luontiaika |
-| `strength` | float | Muiston vahvuus (0.0–1.0, 1.0 = täysi vahvuus) |
-| `source` | enum | Miten muisto syntyi: `agent_tool`, `hook_capture`, `consolidation`, `import` |
-| `consolidated` | boolean | Onko muisto konsolidoitu vähintään kerran |
-| `embedding` | float[] | Embedding-vektori (dimensio riippuu providerista) |
+| Kenttä            | Tyyppi        | Kuvaus                                                                       |
+| ----------------- | ------------- | ---------------------------------------------------------------------------- |
+| `id`              | string        | Content hash (SHA-256 tekstisisällöstä)                                      |
+| `content`         | string        | Muiston sisältö (narratiivinen teksti)                                       |
+| `type`            | string        | Vapaamuotoinen muistotyyppi (ks. luku 3)                                     |
+| `temporal_state`  | enum          | `future` \| `present` \| `past`                                              |
+| `temporal_anchor` | ISO datetime? | Päivämäärä johon muisto ankkuroituu                                          |
+| `created_at`      | ISO datetime  | Luontiaika                                                                   |
+| `strength`        | float         | Muiston vahvuus (0.0–1.0, 1.0 = täysi vahvuus)                               |
+| `source`          | enum          | Miten muisto syntyi: `agent_tool`, `hook_capture`, `consolidation`, `import` |
+| `consolidated`    | boolean       | Onko muisto konsolidoitu vähintään kerran                                    |
+| `embedding`       | float[]       | Embedding-vektori (dimensio riippuu providerista)                            |
 
 **Muutokset vedos 1:stä:**
+
 - `decay` → `strength` (selkeämpi semantiikka: korkea = vahva)
 - Tick-kentät poistettu (yksinkertaistus: päivätaso riittää V1:ssä)
 - `last_retrieved_at`, `retrieval_count` poistettu (johdetaan retrieval.log:sta konsolidaatiossa)
@@ -50,6 +52,7 @@ Erona nykyiseen memory-core-chunkkiin:
 **Päätös #1 (tehty):** Muiston identiteetti = SHA-256(content).
 
 Perusteet:
+
 - Content-addressable: sama sisältö = sama id, deduplikaatio ilmaiseksi
 - Ei erillistä ID-rekisteriä
 - Kun sisältö muuttuu (konsolidaatio, väritys), uusi hash syntyy → assosiaatiot siirretään atomisesti samassa transaktiossa
@@ -59,6 +62,7 @@ Perusteet:
 ### 2.4 Muiston koko
 
 **Ehdotus:** Dynaaminen koko, semanttinen koherenssi määrää.
+
 - Alaraja: ~20 tokenia (yksittäinen fakta)
 - Yläraja: ~500 tokenia (pehmeä raja, varoitus konsolidaatiossa)
 - Ei mekaanista pilkkomista – muisto on niin pitkä kuin tarvitsee, mutta ei pidempi
@@ -71,13 +75,13 @@ Perusteet:
 
 Muistotyyppi on **vapaamuotoinen merkkijono** – ei enum. Agentti valitsee luontevimman kategorian tilanteeseen. System prompt antaa esimerkkejä ohjaukseksi:
 
-| Esimerkki | Kuvaus | Käyttö |
-| --- | --- | --- |
-| `narrative` | Tapahtuma, kokemus, keskustelu | "Jari kertoi projektipalaverin menneen hyvin" |
-| `fact` | Faktuaalinen tieto | "Jarin koiran nimi on Namu" |
-| `decision` | Tehty päätös ja perustelu | "Päätettiin käyttää SQLiteä koska..." |
-| `tool_usage` | Virheviesti, config, komento | "sqlite-vec unavailable -virhe korjattiin..." |
-| `preference` | Käyttäjän tai agentin preferenssi | "Jari haluaa vastaukset suomeksi" |
+| Esimerkki    | Kuvaus                            | Käyttö                                        |
+| ------------ | --------------------------------- | --------------------------------------------- |
+| `narrative`  | Tapahtuma, kokemus, keskustelu    | "Jari kertoi projektipalaverin menneen hyvin" |
+| `fact`       | Faktuaalinen tieto                | "Jarin koiran nimi on Namu"                   |
+| `decision`   | Tehty päätös ja perustelu         | "Päätettiin käyttää SQLiteä koska..."         |
+| `tool_usage` | Virheviesti, config, komento      | "sqlite-vec unavailable -virhe korjattiin..." |
+| `preference` | Käyttäjän tai agentin preferenssi | "Jari haluaa vastaukset suomeksi"             |
 
 Nämä ovat esimerkkejä, eivät rajoituksia. Agentti voi käyttää mitä tahansa kuvaavaa kategoriaa.
 
@@ -88,6 +92,7 @@ Muistotyyppi on **metadataa** joka auttaa agenttia ja ihmistä ymmärtämään m
 ### 3.3 Tyypin määritys
 
 Muistotyyppi asetetaan **luontihetkellä**:
+
 - Agentin luomille muistoille: agentti valitsee tyypin (työkalu-parametri)
 - Hook-capturen muistoille: plugin päättelee kontekstista
 - Konsolidaation muistoille: heuristisesti valittu
@@ -122,12 +127,16 @@ memory/
 # Working Memory
 
 <!-- chunk:a1b2c3d4 type:narrative created:2026-02-28T14:30:00Z -->
+
 Jari kertoi projektipalaverin menneen hyvin. Keskusteltiin muisti-pluginin
 arkkitehtuurista ja päätettiin käyttää flat-tiedostoja tietokannan rinnalla.
+
 <!-- /chunk -->
 
 <!-- chunk:e5f6a7b8 type:fact created:2026-02-28T15:00:00Z -->
+
 Jarin koiran nimi on Namu.
+
 <!-- /chunk -->
 ```
 
@@ -137,12 +146,16 @@ Jarin koiran nimi on Namu.
 # Consolidated Memory
 
 <!-- chunk:c9d0e1f2 type:narrative strength:0.85 created:2026-02-25 -->
+
 Jari kertoi projektipalaverin menneen hyvin. Arkkitehtuuripäätökset tehtiin
 yhdessä ja päädyttiin flat-tiedostoihin.
+
 <!-- /chunk -->
 
 <!-- chunk:a3b4c5d6 type:fact strength:0.92 created:2026-02-20 -->
+
 Jarin koiran nimi on Namu.
+
 <!-- /chunk -->
 ```
 
@@ -158,12 +171,14 @@ Co-retrieval-tapahtumat kirjataan append-only-lokitiedostoon `memory/retrieval.l
 ```
 
 Neljä tapahtumatyyppiä:
+
 - `search` = agentti haki aktiivisesti muistoja (memory_search)
 - `recall` = plugin injektoi muistoja kontekstiin (auto-recall, before_prompt_build)
 - `feedback` = agentti arvioi muistojen relevanssin (1-3 tähteä + vapaamuotoinen kommentti)
 - `store` = uusi muisto luotiin näiden kontekstissa (co-creation, vahvin signaali)
 
 Retrieval.log palvelee kolmea tarkoitusta:
+
 1. **Co-retrieval-parit** → assosiaatiopäivitykset konsolidaatiossa
 2. **Yksittäisten muistojen retrieval-kerrat** → strength-vahvistus konsolidaatiossa
 3. **Relevanssi-palaute** → painottaa vahvistusta ja ruokkii konsolidaation päätöksiä
@@ -171,6 +186,7 @@ Retrieval.log palvelee kolmea tarkoitusta:
 **V1-periaate: minimoidaan tietokantakirjoitukset normaalikäytössä.** Kaikki tilamuutokset (strength, assosiaatiot, decay) tapahtuvat konsolidaatiossa. Päivän aikana plugin lisää rivejä lokiin ja lukee tietokantaa hakujen yhteydessä. Ainoa poikkeus: uuden muiston luonti (memory_store, hook_capture) vaatii DB-kirjoituksen, jotta muisto on haettavissa heti.
 
 Perusteet:
+
 - Ei tietokantakirjoituksia normaalikäytössä (vain tiedosto-append)
 - Ihmisluettava – näkee suoraan mitä agentti on hakenut
 - Debug-ystävällinen – retrieval-patternit näkyvissä ennen konsolidaatiota
@@ -259,12 +275,13 @@ Muiston vahvuus (`strength`) muuttuu konsolidaatiossa kolmella tavalla:
 strength ← strength × e^(-λ)
 ```
 
-| Muiston tila | λ | Puoliintumisaika | Kerroin/uni |
-| --- | --- | --- | --- |
-| **Working** (konsolidoimaton) | `ln(2)/7 ≈ 0.099` | 7 unta | ×0.906 |
-| **Consolidated** (konsolidoitu) | `ln(2)/30 ≈ 0.0231` | 30 unta | ×0.977 |
+| Muiston tila                    | λ                   | Puoliintumisaika | Kerroin/uni |
+| ------------------------------- | ------------------- | ---------------- | ----------- |
+| **Working** (konsolidoimaton)   | `ln(2)/7 ≈ 0.099`   | 7 unta           | ×0.906      |
+| **Consolidated** (konsolidoitu) | `ln(2)/30 ≈ 0.0231` | 30 unta          | ×0.977      |
 
 Working-muistot rapautuvat ~4× nopeammin. Tämä on tarkoituksellista:
+
 - Tuoreet muistot jotka eivät ole relevantteja häviävät nopeasti
 - Konsolidaatio "testaa" muiston – jos se selviää, se on kestävämpi
 - Konsolidaation läpäisseet muistot saavat strength → 1.0 (uusi alku pitkäkestomuistina)
@@ -277,14 +294,14 @@ strength ← 1 - (1 - strength) × e^(-η × w)
 
 Missä `w` on painotettu retrieval-pisteet päivältä (lasketaan retrieval.log:sta):
 
-| Tapahtuma | Paino | Perustelu |
-| --- | --- | --- |
-| `search` (ilman palautetta) | 1.0 per kerta | Agentti haki aktiivisesti |
-| `feedback` ★★★ | 3/3 = 1.0 | Täysin relevantti |
-| `feedback` ★★ | 2/3 ≈ 0.67 | Osittain relevantti |
-| `feedback` ★ | 1/3 ≈ 0.33 | Heikosti relevantti |
-| `recall` (ilman palautetta) | 0.5 per kerta | Passiivinen injektio, ei vahvistusta |
-| `store context:` | 2.0 per kerta | Agentti loi uutta tämän perusteella – vahvin signaali |
+| Tapahtuma                   | Paino         | Perustelu                                             |
+| --------------------------- | ------------- | ----------------------------------------------------- |
+| `search` (ilman palautetta) | 1.0 per kerta | Agentti haki aktiivisesti                             |
+| `feedback` ★★★              | 3/3 = 1.0     | Täysin relevantti                                     |
+| `feedback` ★★               | 2/3 ≈ 0.67    | Osittain relevantti                                   |
+| `feedback` ★                | 1/3 ≈ 0.33    | Heikosti relevantti                                   |
+| `recall` (ilman palautetta) | 0.5 per kerta | Passiivinen injektio, ei vahvistusta                  |
+| `store context:`            | 2.0 per kerta | Agentti loi uutta tämän perusteella – vahvin signaali |
 
 Esimerkki: muisto haettiin 2× searchilla (1.0+1.0), sai palautteen ★★★ (1.0) ja oli kontekstina uudelle muistolle (2.0) → `w = 4.0`.
 
@@ -321,17 +338,17 @@ Kun muisto siirtyy working → consolidated, sen strength **nollataan 1.0:aan**.
 
 ## 7. Päätökset
 
-| # | Päätös | Perustelu |
-| - | ------ | --------- |
-| 1 | Content hash (SHA-256) identiteettinä | Content-addressable, yksinkertainen, atominen |
-| 2 | SQLite backendiksi | ACID, sqlite-vec + FTS5, oikea skaala |
-| 3 | Plugin ei valitse embedding-mallia | Käyttäjän konfiguraatio |
-| 4 | Kaksi tiedostoa: working.md + consolidated.md | Ihmisluettava, yksinkertainen, selkeä elinkaari |
-| 5 | Strength-malli: decay nukkuessa, retrieval vahvistaa | Eksponentiaalinen, [0,1] |
-| 6 | Eri decay-nopeus: working 7 unta, consolidated 30 unta | Tuoreet muistot karsiutuvat nopeasti, konsolidoidut kestävät |
-| 7 | Konsolidaation jälkeen strength → 1.0 | Pitkäkestomuistiin siirtyminen = uusi alku |
-| 8 | retrieval.log: search, recall, feedback, store | 4 tapahtumatyyppiä, painotettu relevanssi-palaute |
-| 9 | memory_feedback -työkalu (1-3 tähteä + kommentti) | Agentti arvioi muistojen relevanssin, painottaa vahvistusta |
+| #   | Päätös                                                 | Perustelu                                                    |
+| --- | ------------------------------------------------------ | ------------------------------------------------------------ |
+| 1   | Content hash (SHA-256) identiteettinä                  | Content-addressable, yksinkertainen, atominen                |
+| 2   | SQLite backendiksi                                     | ACID, sqlite-vec + FTS5, oikea skaala                        |
+| 3   | Plugin ei valitse embedding-mallia                     | Käyttäjän konfiguraatio                                      |
+| 4   | Kaksi tiedostoa: working.md + consolidated.md          | Ihmisluettava, yksinkertainen, selkeä elinkaari              |
+| 5   | Strength-malli: decay nukkuessa, retrieval vahvistaa   | Eksponentiaalinen, [0,1]                                     |
+| 6   | Eri decay-nopeus: working 7 unta, consolidated 30 unta | Tuoreet muistot karsiutuvat nopeasti, konsolidoidut kestävät |
+| 7   | Konsolidaation jälkeen strength → 1.0                  | Pitkäkestomuistiin siirtyminen = uusi alku                   |
+| 8   | retrieval.log: search, recall, feedback, store         | 4 tapahtumatyyppiä, painotettu relevanssi-palaute            |
+| 9   | memory_feedback -työkalu (1-3 tähteä + kommentti)      | Agentti arvioi muistojen relevanssin, painottaa vahvistusta  |
 
 ---
 

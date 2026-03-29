@@ -40,29 +40,30 @@
 **Subhead:** "Formative Memory is an open source plugin that gives AI coding agents biologically-inspired memory — memories that form associations, strengthen through use, decay without reinforcement, and consolidate during sleep."
 
 **The Problem (2–3 sentences):**
+
 > Every AI coding session starts from scratch. Your agent doesn't remember that you prefer Tailwind over styled-components, that the auth module was refactored last week, or that the CI breaks on Node 18. You've been teaching the same lessons over and over. Flat-file memory is a band-aid — a pile of text with no structure, no prioritization, no forgetting.
 
 **Core value proposition pillars:**
 
-| Pillar | One-liner | Detail |
-|--------|-----------|--------|
-| **Associations** | Memories link to related memories | When your agent recalls "auth module," it automatically surfaces the related refactor, the deployment config, and that edge case you debugged |
-| **Strength** | Important memories surface, irrelevant ones fade | Memories you use grow stronger. Memories you never reference decay. No manual curation needed |
-| **Consolidation** | Your agent sleeps on it | A background "sleep" process merges duplicates, updates outdated memories, and strengthens patterns — just like biological memory |
-| **Hybrid Search** | Find by meaning and by keyword | Embedding similarity + BM25 full-text search, weighted by memory strength |
+| Pillar            | One-liner                                        | Detail                                                                                                                                        |
+| ----------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Associations**  | Memories link to related memories                | When your agent recalls "auth module," it automatically surfaces the related refactor, the deployment config, and that edge case you debugged |
+| **Strength**      | Important memories surface, irrelevant ones fade | Memories you use grow stronger. Memories you never reference decay. No manual curation needed                                                 |
+| **Consolidation** | Your agent sleeps on it                          | A background "sleep" process merges duplicates, updates outdated memories, and strengthens patterns — just like biological memory             |
+| **Hybrid Search** | Find by meaning and by keyword                   | Embedding similarity + BM25 full-text search, weighted by memory strength                                                                     |
 
 **Before/After comparison:**
 
-| | Flat-file memory | Formative Memory |
-|---|---|---|
-| Structure | Append-only text file | Content-addressed memory objects with associations |
-| Relevance | Everything is equal | Strength-weighted: used memories surface, unused ones decay |
-| Duplicates | Accumulate forever | Merged during consolidation |
-| Outdated info | Stays forever | Updated ("colored") based on newer associated memories |
-| Connections | None | Weighted bidirectional associations |
-| Maintenance | Manual pruning | Automatic via sleep process |
+|               | Flat-file memory      | Formative Memory                                            |
+| ------------- | --------------------- | ----------------------------------------------------------- |
+| Structure     | Append-only text file | Content-addressed memory objects with associations          |
+| Relevance     | Everything is equal   | Strength-weighted: used memories surface, unused ones decay |
+| Duplicates    | Accumulate forever    | Merged during consolidation                                 |
+| Outdated info | Stays forever         | Updated ("colored") based on newer associated memories      |
+| Connections   | None                  | Weighted bidirectional associations                         |
+| Maintenance   | Manual pruning        | Automatic via sleep process                                 |
 
-**Tone:** Direct and technical on the front page. Not marketing-speak. The audience is developers — show the architecture, show the algorithm, explain *why* this is different. The biological metaphor is the hook, but the engineering is the substance.
+**Tone:** Direct and technical on the front page. Not marketing-speak. The audience is developers — show the architecture, show the algorithm, explain _why_ this is different. The biological metaphor is the hook, but the engineering is the substance.
 
 ### 1.3 Animation Storyboard: "How Memory Works"
 
@@ -75,6 +76,7 @@ A single horizontal-scrolling or vertical-scrolling animated sequence. Minimalis
 #### Frame 1: "Store" (0–10s)
 
 **Visual:**
+
 - A code snippet appears on the left: a user telling the agent "We use Tailwind, not styled-components"
 - A glowing dot (a "memory node") materializes in the center of the canvas
 - The dot gets a label: `preference: tailwind-over-styled`
@@ -83,9 +85,11 @@ A single horizontal-scrolling or vertical-scrolling animated sequence. Minimalis
 - A small strength bar appears next to it, full (1.0)
 
 **Text overlay:**
+
 > "When your agent learns something, it creates a memory object — content-addressed, timestamped, typed."
 
 **Technical detail (smaller text):**
+
 > "Content hash ensures identity. No duplicates from the start."
 
 ---
@@ -93,6 +97,7 @@ A single horizontal-scrolling or vertical-scrolling animated sequence. Minimalis
 #### Frame 2: "Associate" (10–25s)
 
 **Visual:**
+
 - Two more memory dots appear in quick succession:
   - `decision: migrate-to-tailwind-v4`
   - `fact: tailwind-config-in-root`
@@ -102,9 +107,11 @@ A single horizontal-scrolling or vertical-scrolling animated sequence. Minimalis
 - Camera pulls back to reveal a small network graph of ~8 nodes with various connection strengths
 
 **Text overlay:**
+
 > "Memories don't exist in isolation. They form associations — weighted links that grow stronger when memories are retrieved together."
 
 **Technical detail:**
+
 > "Co-retrieval tracking: when two memories appear in the same search, their association weight increases. Hebbian learning — neurons that fire together wire together."
 
 ---
@@ -117,32 +124,38 @@ A single horizontal-scrolling or vertical-scrolling animated sequence. Minimalis
 - The animation cycles through sub-steps, each with a brief visual:
 
 **3a. Strengthen & Decay (3s)**
+
 - Memory dots pulse: frequently-used ones glow brighter (strength bar fills up)
 - Unused ones fade slightly (strength bar shrinks)
 - One very faint dot blinks out entirely (pruned)
 - Small formula appears: `strength × 0.977 per sleep cycle`
 
 **3b. Move to Long-term (3s)**
+
 - Dots from the Working Memory zone slide rightward into the Consolidated Memory zone
 - Their strength bars reset to full (1.0)
 - Label: "Working → Consolidated: a fresh start in long-term memory"
 
 **3c. Merge Duplicates (4s)**
+
 - Two similar dots in Consolidated zone pulse, then merge into one with a brief flash
 - Before: `"user prefers Tailwind"` + `"always use Tailwind, not styled-components"`
 - After: `"project uses Tailwind exclusively — never styled-components"`
 - Association lines from both original dots transfer to the merged node
 
 **3d. Color (Update) (4s)**
+
 - A dot labeled `"considering migration to Tailwind v4"` is connected to a newer dot `"migrated to Tailwind v4 last week"`
 - The older dot morphs/rewrites: `"considering migration..."` → `"completed migration to Tailwind v4"`
 - Text: "Memories update based on newer information — they stay functional, not archival"
 
 **3e. Prune (2s)**
+
 - A few very faint dots and thin association lines dissolve away
 - `strength ≤ 0.05 → removed`
 
 **Text overlay:**
+
 > "During consolidation — 'sleep' — the system strengthens what matters, merges duplicates, updates outdated memories, and prunes what's irrelevant. 10 steps. Fully automatic."
 
 ---
@@ -150,6 +163,7 @@ A single horizontal-scrolling or vertical-scrolling animated sequence. Minimalis
 #### Frame 4: "Recall" (45–60s)
 
 **Visual:**
+
 - Daytime returns. The canvas brightens
 - A search query appears: `"what CSS framework do we use?"`
 - Ripples emanate from the query through the network graph
@@ -159,6 +173,7 @@ A single horizontal-scrolling or vertical-scrolling animated sequence. Minimalis
 - Faint text: "Next time, these memories will surface even more easily"
 
 **Text overlay:**
+
 > "Retrieval is hybrid: semantic similarity + keyword search, weighted by memory strength. And every retrieval makes the memory stronger — just like in your brain."
 
 ---
@@ -194,6 +209,7 @@ A single horizontal-scrolling or vertical-scrolling animated sequence. Minimalis
 **Timing:** Tuesday or Wednesday, 8–10am US Eastern. Avoid Mondays (crowded) and Fridays (low engagement).
 
 **Title options (pick one):**
+
 1. `Show HN: Formative Memory – biologically-inspired memory for AI coding agents`
 2. `Show HN: Formative Memory – giving AI agents memory that actually works like memory`
 3. `Show HN: I built a memory system for AI coding agents modeled on how human memory works`
@@ -201,6 +217,7 @@ A single horizontal-scrolling or vertical-scrolling animated sequence. Minimalis
 Option 3 is the most HN-native (first person, builder's voice).
 
 **What resonates with HN:**
+
 - Technical depth. Link to the consolidation algorithm design doc or a blog post explaining the neuroscience inspiration
 - Honest scope: "this is an OpenClaw plugin today, the vision is broader"
 - Open source with real architecture, not a wrapper around an API
@@ -208,6 +225,7 @@ Option 3 is the most HN-native (first person, builder's voice).
 - Don't oversell. "It's early" is fine — HN respects that
 
 **Post body structure:**
+
 ```
 I built an open source memory plugin for AI coding agents that replaces
 flat-file memory with something modeled on how biological memory actually
@@ -235,14 +253,14 @@ Would love feedback on the approach.
 
 ### 2.2 Reddit
 
-| Subreddit | Subscribers | Why | Post format |
-|-----------|------------|-----|-------------|
-| r/LocalLLaMA | 500k+ | Power users running local AI, deeply technical audience | Technical deep-dive post with architecture diagram |
-| r/ChatGPTCoding | 200k+ | AI coding users — direct target audience | Before/after demo, practical angle |
-| r/ClaudeAI | 100k+ | Claude users, many use Claude Code (which OpenClaw is based on) | "I built a memory plugin" angle, show real examples |
-| r/MachineLearning | 2.5M+ | Academic/research angle: the neuroscience-inspired architecture | Paper-style post focused on the consolidation algorithm |
-| r/programming | 6M+ | General programming audience | Blog post link, focus on the problem ("why AI agents forget") |
-| r/SideProject | 100k+ | Makers/builders | Project showcase |
+| Subreddit         | Subscribers | Why                                                             | Post format                                                   |
+| ----------------- | ----------- | --------------------------------------------------------------- | ------------------------------------------------------------- |
+| r/LocalLLaMA      | 500k+       | Power users running local AI, deeply technical audience         | Technical deep-dive post with architecture diagram            |
+| r/ChatGPTCoding   | 200k+       | AI coding users — direct target audience                        | Before/after demo, practical angle                            |
+| r/ClaudeAI        | 100k+       | Claude users, many use Claude Code (which OpenClaw is based on) | "I built a memory plugin" angle, show real examples           |
+| r/MachineLearning | 2.5M+       | Academic/research angle: the neuroscience-inspired architecture | Paper-style post focused on the consolidation algorithm       |
+| r/programming     | 6M+         | General programming audience                                    | Blog post link, focus on the problem ("why AI agents forget") |
+| r/SideProject     | 100k+       | Makers/builders                                                 | Project showcase                                              |
 
 **Format by subreddit:**
 
@@ -261,12 +279,12 @@ Wait for a blog post or Show HN post and cross-post the link. Don't self-promote
 
 ### 2.3 Discord
 
-| Server | Why | Approach |
-|--------|-----|----------|
-| **OpenClaw Discord** (if exists) | Home turf — the plugin ecosystem | Post in plugin/extension channel. This should be the *first* place you announce. Engage with other plugin developers |
-| **Cursor Discord** | AI coding agent users | Share in general or showcase. Frame as "this is for OpenClaw today, but the approach applies to any AI agent" |
-| **LMStudio / Ollama Discord** | Local LLM users, technical | Technical approach. These users care about running things locally |
-| **AI/ML servers** (MLOps, Weights & Biases, etc.) | ML practitioners | Research angle: "biologically-inspired memory consolidation" |
+| Server                                            | Why                              | Approach                                                                                                             |
+| ------------------------------------------------- | -------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| **OpenClaw Discord** (if exists)                  | Home turf — the plugin ecosystem | Post in plugin/extension channel. This should be the _first_ place you announce. Engage with other plugin developers |
+| **Cursor Discord**                                | AI coding agent users            | Share in general or showcase. Frame as "this is for OpenClaw today, but the approach applies to any AI agent"        |
+| **LMStudio / Ollama Discord**                     | Local LLM users, technical       | Technical approach. These users care about running things locally                                                    |
+| **AI/ML servers** (MLOps, Weights & Biases, etc.) | ML practitioners                 | Research angle: "biologically-inspired memory consolidation"                                                         |
 
 **Approach:** Don't drop a link and leave. Introduce yourself, explain the problem you're solving, share the link, and stick around to answer questions. Discord is a conversation medium, not a billboard.
 
@@ -333,6 +351,7 @@ Wait for a blog post or Show HN post and cross-post the link. Don't self-promote
 **Hashtags:** `#AI` `#OpenSource` `#DevTools` `#AIAgents` `#LLM` — use sparingly, 2–3 per tweet max. On X, hashtag-heavy posts look like spam.
 
 **Who to tag/engage with:**
+
 - **AI coding tool creators:** @aaborovkov (Roo Code), @aikirai_dev, @mckaywrigley (Cursor users), @aaborovkov
 - **AI/LLM influencers who cover developer tools:** @swyx, @simonw (Simon Willison — covers AI developer tools extensively), @karpathy (if the neuroscience angle is strong enough)
 - **Open source AI accounts:** @huggingface, @LangChainAI
@@ -341,6 +360,7 @@ Wait for a blog post or Show HN post and cross-post the link. Don't self-promote
 Don't @ everyone in the launch tweet — engage individually after they naturally discover it, or in reply to their relevant posts.
 
 **Ongoing presence:**
+
 - Share short insights from building: "TIL about Hebbian learning applied to code memory," "Here's what happens when you let AI memory decay"
 - Respond to posts about AI memory/context problems with "I'm building something for this: [link]"
 - Post technical snippets: the consolidation algorithm, the decay math, real before/after examples
@@ -367,12 +387,12 @@ Write 2–3 blog posts (publish on dev.to and cross-post):
 
 Target AI/developer podcasts for guest appearances:
 
-| Podcast | Why |
-|---------|-----|
-| Latent Space | AI engineering focus, perfect audience |
-| Changelog | Open source focus, large developer audience |
-| Practical AI | Applied AI, broad developer reach |
-| AI-Powered Devs (various YouTube channels) | Direct target audience |
+| Podcast                                    | Why                                         |
+| ------------------------------------------ | ------------------------------------------- |
+| Latent Space                               | AI engineering focus, perfect audience      |
+| Changelog                                  | Open source focus, large developer audience |
+| Practical AI                               | Applied AI, broad developer reach           |
+| AI-Powered Devs (various YouTube channels) | Direct target audience                      |
 
 **Pitch angle:** "I built an open source memory system modeled on neuroscience for AI coding agents — here's why flat-file memory doesn't work and what the brain can teach us about AI context."
 
@@ -391,7 +411,7 @@ Submit ~1 week after the initial launch, once there's social proof (stars, comme
 
 ## 3. README Structure
 
-```markdown
+````markdown
 # 🧠 Formative Memory
 
 **Biologically-inspired associative memory for AI coding agents.**
@@ -418,16 +438,20 @@ You end up teaching your agent the same things over and over.
 ## How Formative Memory Works
 
 ### Store
+
 Memories are content-addressed objects (SHA-256). When your agent learns
 something, it creates a typed memory object with stable identity.
 
 ### Associate
+
 Memories form weighted bidirectional associations. When two memories are
 retrieved together, their connection strengthens — Hebbian learning for
 AI agents.
 
 ### Consolidate ("Sleep")
+
 A background process runs when your agent is idle:
+
 1. **Strengthen** memories based on usage
 2. **Decay** unused memories (working: 7-cycle half-life, consolidated:
    30-cycle)
@@ -438,6 +462,7 @@ A background process runs when your agent is idle:
 7. **Prune** irrelevant memories and weak associations
 
 ### Recall
+
 Hybrid search: embedding similarity + BM25 full-text, weighted by
 memory strength. Important memories surface first.
 
@@ -448,6 +473,7 @@ memory strength. Important memories surface first.
 ```bash
 openclaw plugin install formative-memory
 ```
+````
 
 ### That's it
 
@@ -459,11 +485,11 @@ needed — it works out of the box with sensible defaults.
 ```yaml
 # .openclaw/plugins/formative-memory.yaml
 consolidation:
-  schedule: "0 3 * * *"  # 3am daily
-  model: "claude-haiku"  # cheaper model for consolidation
+  schedule: "0 3 * * *" # 3am daily
+  model: "claude-haiku" # cheaper model for consolidation
 search:
-  embedding_weight: 0.6  # vs BM25
-  auto_recall_budget: 2000  # tokens
+  embedding_weight: 0.6 # vs BM25
+  auto_recall_budget: 2000 # tokens
 ```
 
 ## Architecture
@@ -489,15 +515,15 @@ search:
 
 Formative Memory is modeled on how human memory actually works:
 
-| Human Memory | Formative Memory |
-|---|---|
-| Short-term → long-term memory | Working → consolidated (with strength reset) |
-| Memories strengthen through recall | Retrieval-based strength reinforcement |
-| Unused memories fade | Exponential decay during "sleep" |
-| Sleep consolidation | Background consolidation process |
-| Associative recall | Weighted bidirectional associations |
-| Memory reconsolidation | "Coloring" — updating memories with newer context |
-| Forgetting | Pruning (strength ≤ 0.05) |
+| Human Memory                       | Formative Memory                                  |
+| ---------------------------------- | ------------------------------------------------- |
+| Short-term → long-term memory      | Working → consolidated (with strength reset)      |
+| Memories strengthen through recall | Retrieval-based strength reinforcement            |
+| Unused memories fade               | Exponential decay during "sleep"                  |
+| Sleep consolidation                | Background consolidation process                  |
+| Associative recall                 | Weighted bidirectional associations               |
+| Memory reconsolidation             | "Coloring" — updating memories with newer context |
+| Forgetting                         | Pruning (strength ≤ 0.05)                         |
 
 ## Roadmap
 
@@ -514,6 +540,7 @@ Formative Memory is modeled on how human memory actually works:
 We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Areas where help is especially welcome:
+
 - Consolidation algorithm tuning
 - Embedding model benchmarks
 - Adapters for other AI coding agents
@@ -529,6 +556,7 @@ MIT
 - 📖 [Architecture docs](history/)
 - 💬 [Discord][discord]
 - 🐛 [Issues][issues]
+
 ```
 
 ---
@@ -686,3 +714,4 @@ MIT
 - 1+ adapter for a non-OpenClaw agent
 
 These are aspirational targets, not commitments. The real metric is: are developers actually using this and finding it valuable?
+```

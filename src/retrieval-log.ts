@@ -39,11 +39,7 @@ export function appendFeedbackEvent(
   appendFileSync(logPath, line);
 }
 
-export function appendStoreEvent(
-  logPath: string,
-  newId: string,
-  contextIds: string[],
-): void {
+export function appendStoreEvent(logPath: string, newId: string, contextIds: string[]): void {
   const ts = new Date().toISOString();
   const contextPart = contextIds.length > 0 ? ` context:${contextIds.join(",")}` : "";
   const line = `${ts} store    ${newId}${contextPart}\n`;

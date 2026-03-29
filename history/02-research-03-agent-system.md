@@ -105,18 +105,19 @@ System prompt koostetaan `buildEmbeddedSystemPrompt()`:lla ja se sisältää:
 
 ```typescript
 sessionManager = guardSessionManager(
-  SessionManager.open(params.sessionFile),  // JSONL-tiedosto
+  SessionManager.open(params.sessionFile), // JSONL-tiedosto
   {
     agentId,
     sessionKey,
     inputProvenance,
     allowSyntheticToolResults,
     allowedToolNames,
-  }
+  },
 );
 ```
 
 `guardSessionManager` on wrapper joka:
+
 - Estää tuntemattomien työkalujen tulosten kirjoittamisen
 - Validoi input provenancen
 - Seuraa sessiokirjoituksia turvallisuussyistä
@@ -272,6 +273,7 @@ const abortTimer = setTimeout(() => {
 ### Abort
 
 Kolme abort-lähdettä:
+
 1. **Timeout** – aikaraja ylittyi
 2. **Manuaalinen** – käyttäjä tai gateway peruuttaa
 3. **Ulkoinen** – AbortSignal parametrista (esim. kanavapuolen timeout)
@@ -290,14 +292,14 @@ Kun `session.prompt()` palaa:
 
 ```typescript
 deliverAgentCommandResult({
-  messageChannel: resolvedChannel,  // "telegram" | "discord" | ...
-  to: resolvedTo,                   // vastaanottaja-ID
-  threadId: resolvedThreadId,       // ketjutunniste
-  assistantTexts,                   // agentin vastauslohkot
-  toolMetas,                        // työkalujen metatiedot
-  bestEffortDeliver,                // älä kaadu jos delivery epäonnistuu
-  messagingToolSentTexts,           // jos agentti jo lähetti itse
-})
+  messageChannel: resolvedChannel, // "telegram" | "discord" | ...
+  to: resolvedTo, // vastaanottaja-ID
+  threadId: resolvedThreadId, // ketjutunniste
+  assistantTexts, // agentin vastauslohkot
+  toolMetas, // työkalujen metatiedot
+  bestEffortDeliver, // älä kaadu jos delivery epäonnistuu
+  messagingToolSentTexts, // jos agentti jo lähetti itse
+});
 ```
 
 ## 7. Työkalut (pintapuolisesti)
@@ -338,6 +340,7 @@ Agenttiloopin aikana LLM voi kutsua työkaluja. Työkalut luodaan `createOpenCla
 ### Sandbox
 
 Agentti voi ajaa sandbox-moodissa, jossa:
+
 - **exec**-työkalu suorittaa komennot Docker-kontissa
 - Tiedostojärjestelmä on eristetty
 - Verkkoyhteyksiä voidaan rajoittaa
@@ -356,6 +359,7 @@ Agentti voi ajaa sandbox-moodissa, jossa:
 ### Plugin-integraatio
 
 Pluginit voivat:
+
 - Rekisteröidä lisätyökaluja (tool definitions)
 - Lisätä kontekstia system promptiin
 - Suorittaa hookeja eri pisteissä

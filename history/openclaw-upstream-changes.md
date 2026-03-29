@@ -51,9 +51,9 @@ Implemented locally in the plugin (`.layout.json` + SQLite state table). No upst
 
 ## PR Status
 
-| PR | Subject | State | Relevance to us |
-|---|---|---|---|
-| #40126 | Pluggable memory prompt (A1) | **Merged** | In use |
-| #38945 | Unicode tokenizer (A5) | **Merged** | Indirect benefit |
-| #40781 | sessionFile after_compaction (A3) | Open | No longer needed — context engine replaces this |
-| #38724 | Docs: AGENTS.md reference | Open | Trivial, no impact |
+| PR     | Subject                           | State      | Relevance to us                                 |
+| ------ | --------------------------------- | ---------- | ----------------------------------------------- |
+| #40126 | Pluggable memory prompt (A1)      | **Merged** | In use                                          |
+| #38945 | Unicode tokenizer (A5)            | **Merged** | Indirect benefit                                |
+| #40781 | sessionFile after_compaction (A3) | Open       | No longer needed — context engine replaces this |
+| #38724 | Docs: AGENTS.md reference         | Open       | Trivial, no impact                              |

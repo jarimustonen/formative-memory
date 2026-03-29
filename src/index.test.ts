@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import plugin from "./index.ts";
 
 // Capture registered tools
-let registeredTools: Array<{ factory?: Function; opts?: Record<string, unknown>; tool?: unknown }> = [];
+let registeredTools: Array<{ factory?: Function; opts?: Record<string, unknown>; tool?: unknown }> =
+  [];
 let tmpDir: string;
 
 const fakeApi = () => ({
@@ -19,7 +20,11 @@ const fakeApi = () => ({
   runtime: {},
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
   registerTool: vi.fn((toolOrFactory: unknown, opts?: Record<string, unknown>) => {
-    registeredTools.push({ factory: typeof toolOrFactory === "function" ? toolOrFactory : undefined, tool: typeof toolOrFactory !== "function" ? toolOrFactory : undefined, opts });
+    registeredTools.push({
+      factory: typeof toolOrFactory === "function" ? toolOrFactory : undefined,
+      tool: typeof toolOrFactory !== "function" ? toolOrFactory : undefined,
+      opts,
+    });
   }),
   registerHook: vi.fn(),
   registerHttpRoute: vi.fn(),
@@ -175,7 +180,8 @@ describe("plugin registration", () => {
       "fetch",
       vi.fn().mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve({ data: [{ embedding: Array.from({ length: 1536 }, () => 0) }] }),
+        json: () =>
+          Promise.resolve({ data: [{ embedding: Array.from({ length: 1536 }, () => 0) }] }),
       }),
     );
     await storeTool.execute("call-0", { content: "bootstrap", type: "fact" });

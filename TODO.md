@@ -104,6 +104,7 @@ Tiivistelmä: content hash (SHA-256), SQLite backend, working.md + consolidated.
   ```
   transcriptFingerprint + messageCount + budgetClass + retrievalMode + ledgerVersion
   ```
+
   - Sama transcript + eri token budget → cache miss
   - Sama transcript + circuit breaker -tilamuutos → cache miss
   - Sama transcript + ledger-muutos (uusi tool-kutsu) → cache miss
@@ -243,13 +244,13 @@ Tiivistelmä: content hash (SHA-256), SQLite backend, working.md + consolidated.
 
 Erillinen kuvaus: `history/openclaw-upstream-changes.md`
 
-| Tehtävä | PR | Tila | Prioriteetti |
-|---|---|---|---|
-| A1. buildMemorySection() pluggable | #40126 | Merged ✅ | — |
-| A3. sessionFile after_compaction | #40781 | Open | P2 — Phase 5 async analysis |
-| A5. Unicode MMR/FTS tokenizer | #38945 | Open | P2 — bugikorjaus |
-| Docs: AGENTS.md viite | #38724 | Open | P3 |
-| Context engine API | — | Tarkista nykytila | P1 — Phase 3 riippuvuus |
+| Tehtävä                            | PR     | Tila              | Prioriteetti                |
+| ---------------------------------- | ------ | ----------------- | --------------------------- |
+| A1. buildMemorySection() pluggable | #40126 | Merged ✅         | —                           |
+| A3. sessionFile after_compaction   | #40781 | Open              | P2 — Phase 5 async analysis |
+| A5. Unicode MMR/FTS tokenizer      | #38945 | Open              | P2 — bugikorjaus            |
+| Docs: AGENTS.md viite              | #38724 | Open              | P3                          |
+| Context engine API                 | —      | Tarkista nykytila | P1 — Phase 3 riippuvuus     |
 
 > **Huom:** v2-arkkitehtuuri ei enää vaadi hookeja (A3 ei ole Phase 3 -blokkeri). Context engine -slot on avoin.
 

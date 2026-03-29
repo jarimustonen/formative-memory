@@ -27,12 +27,12 @@ Kun memory-core poistuu, sen rekisteröimät `memory_search` ja `memory_get` -ty
 
 Plugin rekisteröi omat agenttityökalunsa, jotka korvaavat memory-core:n työkalut:
 
-| Työkalu | Kuvaus |
-| --- | --- |
-| `memory_search` | Semanttinen haku hakuputkella (design-04) |
-| `memory_store` | Uuden muiston tallentaminen |
+| Työkalu           | Kuvaus                                     |
+| ----------------- | ------------------------------------------ |
+| `memory_search`   | Semanttinen haku hakuputkella (design-04)  |
+| `memory_store`    | Uuden muiston tallentaminen                |
 | `memory_feedback` | Relevanssipalaute (1–3 tähteä + kommentti) |
-| `memory_get` | Muiston haku id:llä |
+| `memory_get`      | Muiston haku id:llä                        |
 
 Työkalut voidaan rekisteröidä factory-funktiolla, joka saa session-kontekstin (workspaceDir, sessionKey, agentId). Factory kutsutaan jokaisella agenttiajon alussa.
 
@@ -42,13 +42,13 @@ Työkalut voidaan rekisteröidä factory-funktiolla, joka saa session-kontekstin
 
 Plugin käyttää tyypitettyä hook-rajapintaa kiinnittyäkseen agentin elinkaareen:
 
-| Hook | Käyttötarkoitus | Tyyppi |
-| --- | --- | --- |
-| `before_prompt_build` | Auto-recall: hae muistoja ja injektoi kontekstiin `prependContext`-palautuksella | muokattava |
-| `after_tool_call` | retrieval.log-kirjaus (search/store/feedback-tapahtumat) | fire-and-forget |
-| `agent_end` | Automaattinen muistojen kaappaus session-transkriptistä | fire-and-forget |
-| `before_reset` | Session-muistojen tallennus ennen /new tai /reset | fire-and-forget |
-| `before_compaction` | SessionFile-polun tallennus myöhempää käyttöä varten | fire-and-forget |
+| Hook                  | Käyttötarkoitus                                                                  | Tyyppi          |
+| --------------------- | -------------------------------------------------------------------------------- | --------------- |
+| `before_prompt_build` | Auto-recall: hae muistoja ja injektoi kontekstiin `prependContext`-palautuksella | muokattava      |
+| `after_tool_call`     | retrieval.log-kirjaus (search/store/feedback-tapahtumat)                         | fire-and-forget |
+| `agent_end`           | Automaattinen muistojen kaappaus session-transkriptistä                          | fire-and-forget |
+| `before_reset`        | Session-muistojen tallennus ennen /new tai /reset                                | fire-and-forget |
+| `before_compaction`   | SessionFile-polun tallennus myöhempää käyttöä varten                             | fire-and-forget |
 
 Lisäksi bootstrap-hook (`api.registerHook("agent.bootstrap", ...)`) muokkaa AGENTS.md:n muistiohjeet vastaamaan assosiatiivisen muistin käyttöliittymää.
 
@@ -60,10 +60,10 @@ Konsolidaatio ("uni") toteutetaan taustaprosessina, joka käynnistyy gatewayn mu
 
 Plugin rekisteröi diagnostiikkakomennot:
 
-| Komento | Kuvaus |
-| --- | --- |
-| `memory stats` | Muistojen ja assosiaatioiden tilastot |
-| `memory consolidate` | Manuaalinen konsolidaatio |
+| Komento               | Kuvaus                                    |
+| --------------------- | ----------------------------------------- |
+| `memory stats`        | Muistojen ja assosiaatioiden tilastot     |
+| `memory consolidate`  | Manuaalinen konsolidaatio                 |
 | `memory inspect <id>` | Yksittäisen muiston tiedot + assosiaatiot |
 
 ---
@@ -108,16 +108,17 @@ Nämä muutokset tehdään erillisenä pull requestina OpenClaw-repoon. Ne ovat 
 
 MVP voidaan rakentaa ilman yhtään OpenClaw-muutosta:
 
-| Ominaisuus | Miten toimii |
-| --- | --- |
-| Omat työkalut | `memory_search`/`memory_get`-nimet → hardkoodatut system prompt -ohjeet toimivat sattumalta |
-| Uudet työkalut (`memory_store`, `memory_feedback`) | Bootstrap-hook muokkaa AGENTS.md:n ohjeet |
-| Auto-recall | `before_prompt_build` → `prependContext` |
-| retrieval.log-kirjaus | `after_tool_call` → fire-and-forget |
-| Konsolidaatio | `registerService()` → ajastettu taustaprosessi |
-| Session-muistojen tallennus | `before_reset` + `agent_end` |
+| Ominaisuus                                         | Miten toimii                                                                                |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Omat työkalut                                      | `memory_search`/`memory_get`-nimet → hardkoodatut system prompt -ohjeet toimivat sattumalta |
+| Uudet työkalut (`memory_store`, `memory_feedback`) | Bootstrap-hook muokkaa AGENTS.md:n ohjeet                                                   |
+| Auto-recall                                        | `before_prompt_build` → `prependContext`                                                    |
+| retrieval.log-kirjaus                              | `after_tool_call` → fire-and-forget                                                         |
+| Konsolidaatio                                      | `registerService()` → ajastettu taustaprosessi                                              |
+| Session-muistojen tallennus                        | `before_reset` + `agent_end`                                                                |
 
 **Rajoitukset MVP:ssä:**
+
 - System promptin Memory Recall -osio ei kuvaa pluginin kaikkia työkaluja (vain search/get)
 - `session-memory`-hook tuottaa duplikaatteja → käyttäjä voi disabloida sen manuaalisesti
 - Compaction-integraatio rajoittuu `before_compaction`-hookiin (ei post-compaction-analyysiä)
@@ -126,13 +127,13 @@ MVP voidaan rakentaa ilman yhtään OpenClaw-muutosta:
 
 ## 5. Päätökset
 
-| # | Päätös | Perustelu |
-| - | ------ | --------- |
-| 1 | retrieval.log-kirjaus `after_tool_call`:sta | Append-only, ei DB-kirjoituksia normaalikäytössä |
-| 2 | Temporaalinen tarkistus yhdistetty auto-recalliin | Yksi hook (`before_prompt_build`), ei erillistä temporal-check:iä |
-| 3 | `memory_feedback` lisätty, `memory_forget` poistettu (V1) | Palaute on arvokkaampi kuin eksplisiittinen poisto |
-| 4 | MVP mahdollinen ilman Osa A -muutoksia | Pluginin omilla workaroundeilla päästään alkuun |
-| 5 | Osa A -muutokset tehdään erillisenä PR:nä | Taaksepäin yhteensopivat, hyödyttävät kaikkia memory-plugineja |
+| #   | Päätös                                                    | Perustelu                                                         |
+| --- | --------------------------------------------------------- | ----------------------------------------------------------------- |
+| 1   | retrieval.log-kirjaus `after_tool_call`:sta               | Append-only, ei DB-kirjoituksia normaalikäytössä                  |
+| 2   | Temporaalinen tarkistus yhdistetty auto-recalliin         | Yksi hook (`before_prompt_build`), ei erillistä temporal-check:iä |
+| 3   | `memory_feedback` lisätty, `memory_forget` poistettu (V1) | Palaute on arvokkaampi kuin eksplisiittinen poisto                |
+| 4   | MVP mahdollinen ilman Osa A -muutoksia                    | Pluginin omilla workaroundeilla päästään alkuun                   |
+| 5   | Osa A -muutokset tehdään erillisenä PR:nä                 | Taaksepäin yhteensopivat, hyödyttävät kaikkia memory-plugineja    |
 
 ---
 

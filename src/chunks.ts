@@ -15,8 +15,7 @@ export type ChunkEntry = {
   content: string;
 };
 
-const CHUNK_OPEN_RE =
-  /^<!-- chunk:(\S+)((?:\s+\w+:\S+)*)\s*-->$/;
+const CHUNK_OPEN_RE = /^<!-- chunk:(\S+)((?:\s+\w+:\S+)*)\s*-->$/;
 const CHUNK_CLOSE_RE = /^<!-- \/chunk -->$/;
 
 function parseAttrs(attrString: string): Record<string, string> {

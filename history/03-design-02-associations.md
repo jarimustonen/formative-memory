@@ -9,7 +9,7 @@
 
 ## 1. Tarkoitus
 
-Määritellä miten muistojen väliset assosiaatiot rakentuvat, päivittyvät ja vaikuttavat muistijärjestelmän toimintaan. Assosiaatiot ovat koko järjestelmän ydin – ne tekevät muistista *assosiatiivisen*.
+Määritellä miten muistojen väliset assosiaatiot rakentuvat, päivittyvät ja vaikuttavat muistijärjestelmän toimintaan. Assosiaatiot ovat koko järjestelmän ydin – ne tekevät muistista _assosiatiivisen_.
 
 ---
 
@@ -23,13 +23,13 @@ Biologinen analogia: Hebin sääntö – "neurons that fire together wire togeth
 
 ### 2.2 Assosiaation ominaisuudet (V1, minimaaliset)
 
-| Ominaisuus | Tyyppi | Kuvaus |
-| --- | --- | --- |
-| `memory_a` | string | Muisto A (aakkosjärjestyksessä pienempi hash) |
-| `memory_b` | string | Muisto B (aakkosjärjestyksessä suurempi hash) |
-| `weight` | float | Assosiaation vahvuus [0.0, 1.0] |
-| `created_at` | datetime | Milloin assosiaatio syntyi |
-| `last_updated_at` | datetime | Milloin viimeksi päivitetty |
+| Ominaisuus        | Tyyppi   | Kuvaus                                        |
+| ----------------- | -------- | --------------------------------------------- |
+| `memory_a`        | string   | Muisto A (aakkosjärjestyksessä pienempi hash) |
+| `memory_b`        | string   | Muisto B (aakkosjärjestyksessä suurempi hash) |
+| `weight`          | float    | Assosiaation vahvuus [0.0, 1.0]               |
+| `created_at`      | datetime | Milloin assosiaatio syntyi                    |
+| `last_updated_at` | datetime | Milloin viimeksi päivitetty                   |
 
 **V1-yksinkertaistus:** Ei assosiaatiotyyppejä – pelkkä weight riittää. Tyypit (co_retrieval, co_creation, temporal) voidaan lisätä V2:ssa.
 
@@ -78,6 +78,7 @@ Co-retrieval-tapahtumat kirjataan append-only-lokitiedostoon `memory/retrieval.l
 Esimerkki: haku palauttaa muistot {A, B, C} → lokiin kirjataan yksi `search`-rivi kolmella hash:lla. Konsolidaatio laskee parit (A-B, A-C, B-C) ja niiden esiintymiskerrat.
 
 **Miksi lokitiedosto eikä SQLite-taulu:**
+
 - Ei tietokantakirjoituksia normaalikäytössä (vain tiedosto-append)
 - Ihmisluettava – näkee suoraan mitä agentti on hakenut
 - Debug-ystävällinen – retrieval-patternit näkyvissä ennen konsolidaatiota
@@ -114,6 +115,7 @@ Jokaiselle parille (A, B) lokissa:
 Missä `α` on vahvistuskerroin (konfiguroitava, esim. 0.1).
 
 **Painotuksen perustelu:**
+
 - `store` saa 2× painon koska agentti loi uutta näiden muistojen perusteella – vahvin relevanssi-indikaattori
 - `feedback` ★★★ saa täyden painon, ★ vain kolmasosan
 - `recall` saa heikomman painon koska se on passiivinen injektio
@@ -184,13 +186,13 @@ CREATE INDEX idx_assoc_weight ON associations(weight DESC);
 
 ## 9. Päätökset
 
-| # | Päätös | Perustelu |
-| - | ------ | --------- |
-| 1 | Kaksisuuntaiset assosiaatiot | Yksinkertainen, symmetrinen malli |
-| 2 | Ei assosiaatiotyyppejä V1:ssä | Pelkkä weight riittää, tyypit V2:ssa |
-| 3 | Co-retrieval-seuranta lokitiedostoon (retrieval.log), prosessointi konsolidaatiossa | Ei DB-kirjoituksia normaalikäytössä, ihmisluettava, yksinkertainen |
-| 4 | Sama vahvistuskaava kuin muistoille | 1 - (1-w) × e^(-α×count), ei ylitä 1.0 |
-| 5 | Painotettu assosiaatiovahvistus: store 2×, feedback tähdet, recall ½ | Eri signaalit = eri relevanssi |
+| #   | Päätös                                                                              | Perustelu                                                          |
+| --- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| 1   | Kaksisuuntaiset assosiaatiot                                                        | Yksinkertainen, symmetrinen malli                                  |
+| 2   | Ei assosiaatiotyyppejä V1:ssä                                                       | Pelkkä weight riittää, tyypit V2:ssa                               |
+| 3   | Co-retrieval-seuranta lokitiedostoon (retrieval.log), prosessointi konsolidaatiossa | Ei DB-kirjoituksia normaalikäytössä, ihmisluettava, yksinkertainen |
+| 4   | Sama vahvistuskaava kuin muistoille                                                 | 1 - (1-w) × e^(-α×count), ei ylitä 1.0                             |
+| 5   | Painotettu assosiaatiovahvistus: store 2×, feedback tähdet, recall ½                | Eri signaalit = eri relevanssi                                     |
 
 ---
 

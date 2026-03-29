@@ -3,11 +3,7 @@ import { join } from "node:path";
 import { appendChunk, formatChunkFile, parseChunks } from "./chunks.ts";
 import { MemoryDatabase } from "./db.ts";
 import { contentHash } from "./hash.ts";
-import {
-  appendRecallEvent,
-  appendSearchEvent,
-  appendStoreEvent,
-} from "./retrieval-log.ts";
+import { appendRecallEvent, appendSearchEvent, appendStoreEvent } from "./retrieval-log.ts";
 import type { LayoutManifest, Memory, MemorySource, TemporalState } from "./types.ts";
 
 export type EmbeddingProvider = {
