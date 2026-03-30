@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   CONTEXT_ENGINE_ID,
+  buildCacheKey,
   classifyBudget,
   createAssociativeMemoryContextEngine,
   escapeMemoryContent,
   estimateMessageTokens,
   extractLastUserMessage,
   formatRecalledMemories,
+  transcriptFingerprint,
 } from "./context-engine.ts";
 import type { MemoryManager, SearchResult } from "./memory-manager.ts";
 import type { Memory } from "./types.ts";
@@ -274,6 +276,79 @@ describe("extractLastUserMessage", () => {
   });
 });
 
+// -- Unit tests: transcriptFingerprint --
+
+describe("transcriptFingerprint", () => {
+  it("produces stable hash for same messages", () => {
+    const messages = [{ role: "user", content: "hello" }, { role: "assistant", content: "hi" }];
+    const fp1 = transcriptFingerprint(messages, 3);
+    const fp2 = transcriptFingerprint(messages, 3);
+    expect(fp1).toBe(fp2);
+    expect(fp1).toHaveLength(64); // SHA-256 hex
+  });
+
+  it("changes when last message changes", () => {
+    const base = [{ role: "user", content: "hello" }];
+    const modified = [{ role: "user", content: "hello" }, { role: "assistant", content: "reply" }];
+    expect(transcriptFingerprint(base, 3)).not.toBe(transcriptFingerprint(modified, 3));
+  });
+
+  it("changes when message count changes even if tail is same", () => {
+    // Same last message, different total count
+    const short = [{ role: "user", content: "msg" }];
+    const long = [{ role: "user", content: "old" }, { role: "user", content: "msg" }];
+    expect(transcriptFingerprint(short, 1)).not.toBe(transcriptFingerprint(long, 1));
+  });
+
+  it("handles empty messages", () => {
+    const fp = transcriptFingerprint([], 3);
+    expect(fp).toHaveLength(64);
+  });
+
+  it("only hashes last N messages", () => {
+    const msgs1 = [{ content: "a" }, { content: "b" }, { content: "c" }];
+    const msgs2 = [{ content: "x" }, { content: "b" }, { content: "c" }];
+    // N=2 should only look at last 2, so first message change doesn't matter
+    // But message count is the same, so fingerprint includes count
+    const fp1 = transcriptFingerprint(msgs1, 2);
+    const fp2 = transcriptFingerprint(msgs2, 2);
+    expect(fp1).toBe(fp2);
+  });
+
+  it("detects change within N window", () => {
+    const msgs1 = [{ content: "a" }, { content: "b" }, { content: "c" }];
+    const msgs2 = [{ content: "a" }, { content: "b" }, { content: "d" }];
+    expect(transcriptFingerprint(msgs1, 2)).not.toBe(transcriptFingerprint(msgs2, 2));
+  });
+});
+
+// -- Unit tests: buildCacheKey --
+
+describe("buildCacheKey", () => {
+  it("includes all dimensions", () => {
+    const messages = [{ role: "user", content: "hello" }];
+    const key = buildCacheKey(messages, "high", false, 3);
+    expect(key.fingerprint).toHaveLength(64);
+    expect(key.messageCount).toBe(1);
+    expect(key.budgetClass).toBe("high");
+    expect(key.bm25Only).toBe(false);
+  });
+
+  it("differs when budget class changes", () => {
+    const messages = [{ role: "user", content: "hello" }];
+    const k1 = buildCacheKey(messages, "high", false, 3);
+    const k2 = buildCacheKey(messages, "medium", false, 3);
+    expect(k1.budgetClass).not.toBe(k2.budgetClass);
+  });
+
+  it("differs when bm25Only changes", () => {
+    const messages = [{ role: "user", content: "hello" }];
+    const k1 = buildCacheKey(messages, "high", false, 3);
+    const k2 = buildCacheKey(messages, "high", true, 3);
+    expect(k1.bm25Only).not.toBe(k2.bm25Only);
+  });
+});
+
 // -- Integration tests: assemble() --
 
 describe("AssociativeMemoryContextEngine assemble()", () => {
@@ -502,6 +577,173 @@ describe("AssociativeMemoryContextEngine assemble()", () => {
     });
 
     expect(result.messages).toBe(messages);
+  });
+});
+
+// -- Assemble cache tests --
+
+describe("AssociativeMemoryContextEngine cache", () => {
+  it("returns cached result on repeated assemble with same messages", async () => {
+    const manager = stubManager([makeResult()]);
+    const engine = createEngine(manager);
+    const params = {
+      sessionId: "s1",
+      messages: [{ role: "user", content: "hello" }] as any,
+      prompt: "hello",
+    };
+
+    const r1 = await engine.assemble(params);
+    const r2 = await engine.assemble(params);
+
+    expect(r1.systemPromptAddition).toBe(r2.systemPromptAddition);
+    // recall should only be called once (cache hit on second call)
+    expect(manager.recall).toHaveBeenCalledTimes(1);
+  });
+
+  it("invalidates cache when messages change", async () => {
+    const manager = stubManager([makeResult()]);
+    const engine = createEngine(manager);
+
+    await engine.assemble({
+      sessionId: "s1",
+      messages: [{ role: "user", content: "hello" }] as any,
+      prompt: "hello",
+    });
+
+    await engine.assemble({
+      sessionId: "s1",
+      messages: [
+        { role: "user", content: "hello" },
+        { role: "assistant", content: "hi" },
+        { role: "user", content: "new question" },
+      ] as any,
+    });
+
+    expect(manager.recall).toHaveBeenCalledTimes(2);
+  });
+
+  it("invalidates cache when budget class changes", async () => {
+    const manager = stubManager([makeResult()]);
+    const engine = createEngine(manager);
+
+    // High budget
+    await engine.assemble({
+      sessionId: "s1",
+      messages: [{ role: "user", content: "hello" }] as any,
+      tokenBudget: 100_000,
+    });
+
+    // Same messages, low budget (add large assistant content to shift budget)
+    await engine.assemble({
+      sessionId: "s1",
+      messages: [
+        { role: "user", content: "hello" },
+      ] as any,
+      tokenBudget: 10, // tiny budget → "none"
+    });
+
+    // "none" skips recall entirely, so recall called only once
+    expect(manager.recall).toHaveBeenCalledTimes(1);
+  });
+
+  it("invalidates cache when circuit breaker state changes", async () => {
+    let bm25Only = false;
+    const manager = stubManager([makeResult()]);
+    const engine = createEngine(manager, { isBm25Only: () => bm25Only });
+    const params = {
+      sessionId: "s1",
+      messages: [{ role: "user", content: "hello" }] as any,
+    };
+
+    await engine.assemble(params);
+    bm25Only = true;
+    await engine.assemble(params);
+
+    expect(manager.recall).toHaveBeenCalledTimes(2);
+  });
+
+  it("resets cache when message count decreases (compaction)", async () => {
+    const manager = stubManager([makeResult()]);
+    const engine = createEngine(manager);
+
+    // Initial: 3 messages
+    await engine.assemble({
+      sessionId: "s1",
+      messages: [
+        { role: "user", content: "a" },
+        { role: "assistant", content: "b" },
+        { role: "user", content: "c" },
+      ] as any,
+    });
+
+    // After compaction: 1 message (count decreased)
+    await engine.assemble({
+      sessionId: "s1",
+      messages: [{ role: "user", content: "compacted summary" }] as any,
+    });
+
+    expect(manager.recall).toHaveBeenCalledTimes(2);
+  });
+
+  it("logs debug info on cache hit", async () => {
+    const manager = stubManager([makeResult()]);
+    const logger = { warn: vi.fn(), debug: vi.fn() };
+    const engine = createEngine(manager, { logger });
+    const params = {
+      sessionId: "s1",
+      messages: [{ role: "user", content: "hello" }] as any,
+    };
+
+    await engine.assemble(params); // miss
+    await engine.assemble(params); // hit
+
+    expect(logger.debug).toHaveBeenCalledTimes(2);
+    const hitCall = logger.debug.mock.calls[1];
+    expect(hitCall[0]).toContain("cache hit");
+    expect(hitCall[1]).toMatchObject({ cacheHit: true });
+  });
+
+  it("logs debug info on cache miss with transcript change tracking", async () => {
+    const manager = stubManager([makeResult()]);
+    const logger = { warn: vi.fn(), debug: vi.fn() };
+    const engine = createEngine(manager, { logger });
+
+    await engine.assemble({
+      sessionId: "s1",
+      messages: [{ role: "user", content: "hello" }] as any,
+    });
+
+    await engine.assemble({
+      sessionId: "s1",
+      messages: [
+        { role: "user", content: "hello" },
+        { role: "user", content: "new" },
+      ] as any,
+    });
+
+    const missCall = logger.debug.mock.calls[1];
+    expect(missCall[0]).toContain("cache miss");
+    expect(missCall[1]).toMatchObject({
+      cacheHit: false,
+      transcriptChanged: true,
+      messageCount: 2,
+    });
+  });
+
+  it("dispose resets cache", async () => {
+    const manager = stubManager([makeResult()]);
+    const engine = createEngine(manager);
+    const params = {
+      sessionId: "s1",
+      messages: [{ role: "user", content: "hello" }] as any,
+    };
+
+    await engine.assemble(params);
+    await engine.dispose!();
+    await engine.assemble(params);
+
+    // Should have called recall twice (cache was reset by dispose)
+    expect(manager.recall).toHaveBeenCalledTimes(2);
   });
 });
 

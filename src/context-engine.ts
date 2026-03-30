@@ -1,10 +1,11 @@
 /**
  * Associative Memory Context Engine
  *
- * Phase 3.2: assemble() recalls memories and injects via systemPromptAddition.
- * No dedup (3.4) or cache (3.3) yet — may re-inject memories visible in transcript.
+ * Phase 3.3: transcript fingerprinting + assemble cache.
+ * No dedup (3.4) yet — may re-inject memories visible in transcript.
  */
 
+import { createHash } from "node:crypto";
 import type { ContextEngine, ContextEngineInfo } from "openclaw/plugin-sdk";
 import { delegateCompactionToRuntime } from "openclaw/plugin-sdk";
 import type { MemoryManager, SearchResult } from "./memory-manager.ts";
@@ -110,10 +111,76 @@ export function formatRecalledMemories(results: SearchResult[], budgetClass: Bud
   return lines.join("\n");
 }
 
+// -- Transcript fingerprinting --
+
+/**
+ * Compute a fingerprint from the last N messages + total message count.
+ * Used as part of the assemble cache key to detect transcript changes.
+ *
+ * Algorithm: SHA-256 of `messageCount:sha256(msg1)|sha256(msg2)|...`
+ * where msg hashes are computed from JSON serialization of each message.
+ */
+export function transcriptFingerprint(messages: readonly unknown[], n: number): string {
+  const tailSize = Math.min(n, messages.length);
+  const tail = messages.slice(-tailSize);
+  const tailFp = tail.map((m) => sha256(JSON.stringify(m))).join("|");
+  return sha256(`${messages.length}:${tailFp}`);
+}
+
+function sha256(input: string): string {
+  return createHash("sha256").update(input, "utf8").digest("hex");
+}
+
+// -- Assemble cache --
+
+export type AssembleCacheKey = {
+  fingerprint: string;
+  messageCount: number;
+  budgetClass: BudgetClass;
+  bm25Only: boolean;
+};
+
+export type AssembleCacheEntry = {
+  key: AssembleCacheKey;
+  systemPromptAddition: string | undefined;
+};
+
+export type AssembleCacheDebugInfo = {
+  cacheHit: boolean;
+  transcriptChanged: boolean;
+  messageCount: number;
+  n1Changed: boolean;
+  n3Changed: boolean;
+};
+
+export function buildCacheKey(
+  messages: readonly unknown[],
+  budgetClass: BudgetClass,
+  bm25Only: boolean,
+  n: number,
+): AssembleCacheKey {
+  return {
+    fingerprint: transcriptFingerprint(messages, n),
+    messageCount: messages.length,
+    budgetClass,
+    bm25Only,
+  };
+}
+
+function cacheKeysMatch(a: AssembleCacheKey, b: AssembleCacheKey): boolean {
+  return (
+    a.fingerprint === b.fingerprint &&
+    a.messageCount === b.messageCount &&
+    a.budgetClass === b.budgetClass &&
+    a.bm25Only === b.bm25Only
+  );
+}
+
 // -- Engine options --
 
 export type ContextEngineLogger = {
   warn: (msg: string, meta?: unknown) => void;
+  debug?: (msg: string, meta?: unknown) => void;
 };
 
 export type AssociativeMemoryContextEngineOptions = {
@@ -121,20 +188,28 @@ export type AssociativeMemoryContextEngineOptions = {
   getManager: () => MemoryManager;
   /** Dynamic circuit breaker state — returns true when in BM25-only fallback mode. */
   isBm25Only?: () => boolean;
-  /** Optional logger for error reporting. */
+  /** Optional logger for error reporting and debug info. */
   logger?: ContextEngineLogger;
+  /** Fingerprint tail size (default: 3). */
+  fingerprintN?: number;
 };
 
 export function createAssociativeMemoryContextEngine(
   options: AssociativeMemoryContextEngineOptions,
 ): ContextEngine {
   const { getManager } = options;
+  const fpN = options.fingerprintN ?? 3;
 
   const info: ContextEngineInfo = {
     id: CONTEXT_ENGINE_ID,
     name: "Associative Memory",
     ownsCompaction: false,
   };
+
+  // Per-run cache state (reset on dispose)
+  let cachedEntry: AssembleCacheEntry | null = null;
+  let prevFpN1: string | null = null;
+  let prevFpN3: string | null = null;
 
   return {
     info,
@@ -146,9 +221,54 @@ export function createAssociativeMemoryContextEngine(
         return { messages: params.messages, estimatedTokens: 0 };
       }
 
-      // Prefer last user message for recall; fall back to prompt parameter
+      const bm25Only = options.isBm25Only?.() ?? false;
+      const cacheKey = buildCacheKey(params.messages, budgetClass, bm25Only, fpN);
+
+      // Developer logging: track N=1 vs N=3 fingerprint changes
+      const fpN1 = transcriptFingerprint(params.messages, 1);
+      const fpN3 = cacheKey.fingerprint; // already computed with fpN (default 3)
+      const n1Changed = prevFpN1 !== null && fpN1 !== prevFpN1;
+      const n3Changed = prevFpN3 !== null && fpN3 !== prevFpN3;
+      const transcriptChanged = n3Changed;
+
+      // Detect compaction: message count decreased → full cache reset
+      if (cachedEntry && cacheKey.messageCount < cachedEntry.key.messageCount) {
+        cachedEntry = null;
+      }
+
+      // Cache hit check
+      if (cachedEntry && cacheKeysMatch(cachedEntry.key, cacheKey)) {
+        options.logger?.debug?.("assemble cache hit", {
+          cacheHit: true,
+          transcriptChanged: false,
+          messageCount: cacheKey.messageCount,
+          n1Changed: false,
+          n3Changed: false,
+        } satisfies AssembleCacheDebugInfo);
+        prevFpN1 = fpN1;
+        prevFpN3 = fpN3;
+        return {
+          messages: params.messages,
+          estimatedTokens: 0,
+          systemPromptAddition: cachedEntry.systemPromptAddition,
+        };
+      }
+
+      // Cache miss — perform recall
+      options.logger?.debug?.("assemble cache miss", {
+        cacheHit: false,
+        transcriptChanged,
+        messageCount: cacheKey.messageCount,
+        n1Changed,
+        n3Changed,
+      } satisfies AssembleCacheDebugInfo);
+
+      prevFpN1 = fpN1;
+      prevFpN3 = fpN3;
+
       const query = extractLastUserMessage(params.messages) ?? params.prompt ?? null;
       if (!query) {
+        cachedEntry = { key: cacheKey, systemPromptAddition: undefined };
         return { messages: params.messages, estimatedTokens: 0 };
       }
 
@@ -164,18 +284,21 @@ export function createAssociativeMemoryContextEngine(
 
       const memoryBlock = formatRecalledMemories(results, budgetClass);
       if (!memoryBlock) {
+        cachedEntry = { key: cacheKey, systemPromptAddition: undefined };
         return { messages: params.messages, estimatedTokens: 0 };
       }
 
-      // BM25-only notice (outside recalled_memories block so LLM doesn't treat it as data)
-      const bm25Notice = options.isBm25Only?.()
+      const bm25Notice = bm25Only
         ? "\n\n(Note: Memory recall is operating in keyword-only mode — semantic search temporarily unavailable.)"
         : "";
+
+      const systemPromptAddition = memoryBlock + bm25Notice;
+      cachedEntry = { key: cacheKey, systemPromptAddition };
 
       return {
         messages: params.messages,
         estimatedTokens: 0,
-        systemPromptAddition: memoryBlock + bm25Notice,
+        systemPromptAddition,
       };
     },
 
@@ -188,7 +311,10 @@ export function createAssociativeMemoryContextEngine(
     },
 
     async dispose() {
-      void getManager;
+      // Reset per-run cache state
+      cachedEntry = null;
+      prevFpN1 = null;
+      prevFpN3 = null;
     },
   };
 }
