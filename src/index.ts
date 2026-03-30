@@ -75,14 +75,16 @@ function getManager(
   circuitBreaker?: EmbeddingCircuitBreaker,
 ): MemoryManager {
   const memoryDir = resolveMemoryDir(config, workspaceDir);
-  let manager = managers.get(memoryDir);
+  // Include embedding config in cache key so config changes invalidate the cache.
+  const cacheKey = `${memoryDir}:${config.embedding.model}:${config.embedding.apiKey}`;
+  let manager = managers.get(cacheKey);
   if (!manager) {
     const rawEmbedder = createEmbedder(config);
     const embedder = circuitBreaker
       ? { embed: (text: string) => circuitBreaker.call((signal) => rawEmbedder.embed(text, signal)) }
       : rawEmbedder;
     manager = new MemoryManager(memoryDir, embedder);
-    managers.set(memoryDir, manager);
+    managers.set(cacheKey, manager);
   }
   lastCreatedManager = manager;
   return manager;
