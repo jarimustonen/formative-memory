@@ -47,9 +47,10 @@ export class EmbeddingCircuitBreaker {
   }
 
   getState(): CircuitState {
-    // Auto-transition OPEN → HALF_OPEN after cooldown
+    // Compute effective state without mutation.
+    // Actual OPEN → HALF_OPEN transition happens inside call() when a probe starts.
     if (this.state === "OPEN" && this.now() - this.lastFailureAt >= this.cooldownMs) {
-      this.state = "HALF_OPEN";
+      return "HALF_OPEN";
     }
     return this.state;
   }
