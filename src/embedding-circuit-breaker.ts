@@ -22,7 +22,7 @@ export type EmbeddingCircuitBreakerOptions = {
   failureThreshold?: number;
   /** Cooldown in ms before transitioning OPEN → HALF_OPEN (default: 30_000). */
   cooldownMs?: number;
-  /** Timeout in ms for embedding calls in CLOSED/HALF_OPEN state (default: 500). */
+  /** Timeout in ms for embedding calls in CLOSED/HALF_OPEN state (default: 3000). */
   timeoutMs?: number;
   /** Clock function for testability (default: Date.now). */
   now?: () => number;
@@ -42,7 +42,7 @@ export class EmbeddingCircuitBreaker {
   constructor(options: EmbeddingCircuitBreakerOptions = {}) {
     this.failureThreshold = options.failureThreshold ?? 2;
     this.cooldownMs = options.cooldownMs ?? 30_000;
-    this.timeoutMs = options.timeoutMs ?? 500;
+    this.timeoutMs = options.timeoutMs ?? 3000;
     this.now = options.now ?? Date.now;
   }
 
