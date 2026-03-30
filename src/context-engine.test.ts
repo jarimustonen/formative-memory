@@ -980,18 +980,19 @@ describe("AssociativeMemoryContextEngine dedup (ledger)", () => {
     expect(result.systemPromptAddition).toContain("<recalled_memories>");
   });
 
-  it("dispose resets ledger", async () => {
+  it("dispose does not reset ledger (engine does not own ledger lifecycle)", async () => {
     const ledger = new TurnMemoryLedger();
     const manager = stubManager([makeResultWithId(memId1)]);
     const engine = createEngine(manager, { ledger });
 
     ledger.addSearchResults([{ id: memId1, score: 0.9, query: "test" }]);
-    expect(ledger.version).toBeGreaterThan(0);
+    const versionBefore = ledger.version;
 
     await engine.dispose!();
 
-    expect(ledger.version).toBe(0);
-    expect(ledger.searchResults.size).toBe(0);
+    // Ledger state preserved — caller is responsible for reset
+    expect(ledger.version).toBe(versionBefore);
+    expect(ledger.searchResults.size).toBe(1);
   });
 
   it("repeated assemble in same turn with growing ledger", async () => {

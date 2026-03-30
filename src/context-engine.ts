@@ -366,12 +366,11 @@ export function createAssociativeMemoryContextEngine(
     },
 
     async dispose() {
-      // Reset per-run cache state
+      // Reset per-run cache state only — engine does not own the ledger lifecycle.
+      // Ledger reset is the caller's responsibility (e.g. session manager).
       cachedEntry = null;
       prevFpN1 = null;
       prevFpConfigured = null;
-      // Reset turn memory ledger
-      options.ledger?.reset();
     },
   };
 }
