@@ -80,8 +80,15 @@ export class MemoryManager {
       return this.rowToMemory(existing);
     }
 
-    // Generate embedding
-    const embedding = await this.embedder.embed(params.content);
+    // Generate embedding — gracefully degrade to null if unavailable
+    // (circuit breaker open, timeout, API error). Memory is still
+    // retrievable via BM25/FTS. Embedding can be backfilled later.
+    let embedding: number[] | null = null;
+    try {
+      embedding = await this.embedder.embed(params.content);
+    } catch {
+      // Embedding unavailable — store without it
+    }
 
     // Write to DB
     this.db.transaction(() => {
@@ -96,7 +103,9 @@ export class MemoryManager {
         consolidated: false,
         file_path: "working.md",
       });
-      this.db.setEmbedding(id, embedding);
+      if (embedding) {
+        this.db.setEmbedding(id, embedding);
+      }
       this.db.insertFts(id, params.content, params.type);
     });
 
