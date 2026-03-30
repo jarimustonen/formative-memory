@@ -32,6 +32,7 @@ export class EmbeddingCircuitBreaker {
   private state: CircuitState = "CLOSED";
   private consecutiveFailures = 0;
   private lastFailureAt = 0;
+  private halfOpenProbeInFlight = false;
 
   private readonly failureThreshold: number;
   private readonly cooldownMs: number;
@@ -69,6 +70,14 @@ export class EmbeddingCircuitBreaker {
       throw new EmbeddingCircuitOpenError();
     }
 
+    // HALF_OPEN: only one probe at a time. Reject concurrent callers.
+    if (currentState === "HALF_OPEN") {
+      if (this.halfOpenProbeInFlight) {
+        throw new EmbeddingCircuitOpenError();
+      }
+      this.halfOpenProbeInFlight = true;
+    }
+
     try {
       const result = await withTimeout(fn(), this.timeoutMs);
       this.onSuccess();
@@ -76,6 +85,10 @@ export class EmbeddingCircuitBreaker {
     } catch (error) {
       this.onFailure();
       throw error;
+    } finally {
+      if (currentState === "HALF_OPEN") {
+        this.halfOpenProbeInFlight = false;
+      }
     }
   }
 

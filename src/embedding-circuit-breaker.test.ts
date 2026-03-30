@@ -144,6 +144,35 @@ describe("EmbeddingCircuitBreaker", () => {
       await expect(breaker.call(() => Promise.reject(new Error("probe fail")))).rejects.toThrow();
       expect(breaker.getState()).toBe("OPEN");
     });
+
+    it("rejects concurrent callers while probe is in flight", async () => {
+      let time = 1000;
+      const breaker = createBreaker({
+        failureThreshold: 1,
+        cooldownMs: 100,
+        timeoutMs: 5000,
+        now: () => time,
+      });
+
+      await expect(breaker.call(() => Promise.reject(new Error("x")))).rejects.toThrow();
+      time += 100; // → HALF_OPEN
+
+      // Start a slow probe that will eventually succeed
+      let resolveProbe: (v: string) => void;
+      const probePromise = breaker.call(
+        () => new Promise<string>((resolve) => { resolveProbe = resolve; }),
+      );
+
+      // While probe is in flight, concurrent caller should be rejected
+      await expect(breaker.call(() => Promise.resolve("concurrent"))).rejects.toThrow(
+        EmbeddingCircuitOpenError,
+      );
+
+      // Complete the probe
+      resolveProbe!("ok");
+      await expect(probePromise).resolves.toBe("ok");
+      expect(breaker.getState()).toBe("CLOSED");
+    });
   });
 
   describe("timeout", () => {
