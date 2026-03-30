@@ -25,6 +25,7 @@
     "better-sqlite3": "^12.6.2"
   },
   "devDependencies": {
+    "@rolldown/binding-darwin-arm64": "1.0.0-rc.12",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.10.0",
     "@vitest/coverage-v8": "^4.0.18",

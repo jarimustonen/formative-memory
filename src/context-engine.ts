@@ -1,14 +1,15 @@
 /**
  * Associative Memory Context Engine
  *
- * Phase 3.3: transcript fingerprinting + assemble cache.
- * No dedup (3.4) yet — may re-inject memories visible in transcript.
+ * Phase 3.4: turn memory ledger + dedup.
+ * assemble() skips re-injecting memories already visible in transcript via tools.
  */
 
 import { createHash } from "node:crypto";
 import type { ContextEngine, ContextEngineInfo } from "openclaw/plugin-sdk";
 import { delegateCompactionToRuntime } from "openclaw/plugin-sdk";
 import type { MemoryManager, SearchResult } from "./memory-manager.ts";
+import type { TurnMemoryLedger } from "./turn-memory-ledger.ts";
 
 export const CONTEXT_ENGINE_ID = "associative-memory";
 
@@ -173,6 +174,7 @@ export type AssembleCacheKey = {
   messageCount: number;
   budgetClass: BudgetClass;
   bm25Only: boolean;
+  ledgerVersion: number;
 };
 
 export type AssembleCacheEntry = {
@@ -194,12 +196,14 @@ export function buildCacheKey(
   budgetClass: BudgetClass,
   bm25Only: boolean,
   n: number,
+  ledgerVersion: number = 0,
 ): AssembleCacheKey {
   return {
     fingerprint: transcriptFingerprint(messages, n),
     messageCount: messages.length,
     budgetClass,
     bm25Only,
+    ledgerVersion,
   };
 }
 
@@ -208,7 +212,8 @@ function cacheKeysMatch(a: AssembleCacheKey, b: AssembleCacheKey): boolean {
     a.fingerprint === b.fingerprint &&
     a.messageCount === b.messageCount &&
     a.budgetClass === b.budgetClass &&
-    a.bm25Only === b.bm25Only
+    a.bm25Only === b.bm25Only &&
+    a.ledgerVersion === b.ledgerVersion
   );
 }
 
@@ -228,6 +233,8 @@ export type AssociativeMemoryContextEngineOptions = {
   logger?: ContextEngineLogger;
   /** Fingerprint tail size (default: 3). */
   fingerprintN?: number;
+  /** Turn memory ledger for dedup between assemble() and tool calls. */
+  ledger?: TurnMemoryLedger;
 };
 
 export function createAssociativeMemoryContextEngine(
@@ -258,7 +265,8 @@ export function createAssociativeMemoryContextEngine(
       }
 
       const bm25Only = options.isBm25Only?.() ?? false;
-      const cacheKey = buildCacheKey(params.messages, budgetClass, bm25Only, fpN);
+      const ledgerVersion = options.ledger?.version ?? 0;
+      const cacheKey = buildCacheKey(params.messages, budgetClass, bm25Only, fpN, ledgerVersion);
 
       // Developer logging: track N=1 vs configured-N fingerprint changes
       // Only computed when debug logger is present to avoid unnecessary hashing.
@@ -317,6 +325,18 @@ export function createAssociativeMemoryContextEngine(
         return { messages: params.messages, estimatedTokens: 0 };
       }
 
+      // Dedup: remove memories already visible in transcript via tool calls
+      if (options.ledger) {
+        results = results.filter((r) => !options.ledger!.isExposedViaTools(r.memory.id));
+      }
+
+      // Track auto-injected memories in ledger
+      if (options.ledger) {
+        for (const r of results) {
+          options.ledger.addAutoInjected(r.memory.id, r.score);
+        }
+      }
+
       const memoryBlock = formatRecalledMemories(results, budgetClass);
       if (!memoryBlock) {
         cachedEntry = { key: cacheKey, systemPromptAddition: undefined };
@@ -350,6 +370,8 @@ export function createAssociativeMemoryContextEngine(
       cachedEntry = null;
       prevFpN1 = null;
       prevFpConfigured = null;
+      // Reset turn memory ledger
+      options.ledger?.reset();
     },
   };
 }

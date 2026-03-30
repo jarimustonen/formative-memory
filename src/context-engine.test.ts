@@ -12,6 +12,7 @@ import {
   transcriptFingerprint,
 } from "./context-engine.ts";
 import type { MemoryManager, SearchResult } from "./memory-manager.ts";
+import { TurnMemoryLedger } from "./turn-memory-ledger.ts";
 import type { Memory } from "./types.ts";
 
 function makeMemory(overrides: Partial<Memory> = {}): Memory {
@@ -46,7 +47,11 @@ function stubManager(results: SearchResult[] = []): MemoryManager {
 
 function createEngine(
   manager?: MemoryManager,
-  opts?: { isBm25Only?: () => boolean; logger?: { warn: (...args: any[]) => void } },
+  opts?: {
+    isBm25Only?: () => boolean;
+    logger?: { warn: (...args: any[]) => void; debug?: (...args: any[]) => void };
+    ledger?: TurnMemoryLedger;
+  },
 ) {
   return createAssociativeMemoryContextEngine({
     getManager: () => manager ?? stubManager(),
@@ -390,6 +395,7 @@ describe("buildCacheKey", () => {
     expect(key.messageCount).toBe(1);
     expect(key.budgetClass).toBe("high");
     expect(key.bm25Only).toBe(false);
+    expect(key.ledgerVersion).toBe(0);
   });
 
   it("differs when budget class changes", () => {
@@ -404,6 +410,13 @@ describe("buildCacheKey", () => {
     const k1 = buildCacheKey(messages, "high", false, 3);
     const k2 = buildCacheKey(messages, "high", true, 3);
     expect(k1.bm25Only).not.toBe(k2.bm25Only);
+  });
+
+  it("differs when ledgerVersion changes", () => {
+    const messages = [{ role: "user", content: "hello" }];
+    const k1 = buildCacheKey(messages, "high", false, 3, 0);
+    const k2 = buildCacheKey(messages, "high", false, 3, 1);
+    expect(k1.ledgerVersion).not.toBe(k2.ledgerVersion);
   });
 });
 
@@ -840,6 +853,175 @@ describe("AssociativeMemoryContextEngine cache", () => {
 
     // Should have called recall twice (cache was reset by dispose)
     expect(manager.recall).toHaveBeenCalledTimes(2);
+  });
+});
+
+// -- Turn memory ledger dedup tests --
+
+describe("AssociativeMemoryContextEngine dedup (ledger)", () => {
+  const memId1 = "a1b2c3d4" + "0".repeat(56);
+  const memId2 = "e5f6a7b8" + "0".repeat(56);
+
+  function makeResultWithId(id: string, score = 0.9): SearchResult {
+    return makeResult({ memory: { id }, score });
+  }
+
+  it("filters out memories already exposed via search tool", async () => {
+    const ledger = new TurnMemoryLedger();
+    const manager = stubManager([makeResultWithId(memId1), makeResultWithId(memId2)]);
+    const engine = createEngine(manager, { ledger });
+
+    // Simulate: memory_search already returned memId1
+    ledger.addSearchResults([{ id: memId1, score: 0.9, query: "test" }]);
+
+    const result = await engine.assemble({
+      sessionId: "s1",
+      messages: [{ role: "user", content: "test" }] as any,
+    });
+
+    // Only memId2 should be injected
+    expect(result.systemPromptAddition).toContain(memId2.slice(0, 8));
+    expect(result.systemPromptAddition).not.toContain(memId1.slice(0, 8));
+  });
+
+  it("filters out memories already exposed via get tool", async () => {
+    const ledger = new TurnMemoryLedger();
+    const manager = stubManager([makeResultWithId(memId1)]);
+    const engine = createEngine(manager, { ledger });
+
+    ledger.addExplicitlyOpened(memId1);
+
+    const result = await engine.assemble({
+      sessionId: "s1",
+      messages: [{ role: "user", content: "test" }] as any,
+    });
+
+    expect(result.systemPromptAddition).toBeUndefined();
+  });
+
+  it("filters out memories stored this turn", async () => {
+    const ledger = new TurnMemoryLedger();
+    const manager = stubManager([makeResultWithId(memId1)]);
+    const engine = createEngine(manager, { ledger });
+
+    ledger.addStoredThisTurn(memId1);
+
+    const result = await engine.assemble({
+      sessionId: "s1",
+      messages: [{ role: "user", content: "test" }] as any,
+    });
+
+    expect(result.systemPromptAddition).toBeUndefined();
+  });
+
+  it("does not filter auto-injected-only memories (not tool-visible)", async () => {
+    const ledger = new TurnMemoryLedger();
+    const manager = stubManager([makeResultWithId(memId1)]);
+    const engine = createEngine(manager, { ledger });
+
+    // Auto-injected is NOT tool-visible — should still appear
+    ledger.addAutoInjected(memId1, 0.9);
+
+    const result = await engine.assemble({
+      sessionId: "s1",
+      messages: [{ role: "user", content: "different query" }] as any,
+    });
+
+    expect(result.systemPromptAddition).toContain(memId1.slice(0, 8));
+  });
+
+  it("tracks auto-injected memories in ledger", async () => {
+    const ledger = new TurnMemoryLedger();
+    const manager = stubManager([makeResultWithId(memId1, 0.85)]);
+    const engine = createEngine(manager, { ledger });
+
+    await engine.assemble({
+      sessionId: "s1",
+      messages: [{ role: "user", content: "test" }] as any,
+    });
+
+    expect(ledger.autoInjected.has(memId1)).toBe(true);
+    expect(ledger.autoInjected.get(memId1)?.score).toBe(0.85);
+  });
+
+  it("invalidates cache when ledger version changes (tool call between assembles)", async () => {
+    const ledger = new TurnMemoryLedger();
+    const manager = stubManager([makeResultWithId(memId1)]);
+    const engine = createEngine(manager, { ledger });
+    const params = {
+      sessionId: "s1",
+      messages: [{ role: "user", content: "test" }] as any,
+    };
+
+    // First assemble — injects memId1
+    const r1 = await engine.assemble(params);
+    expect(r1.systemPromptAddition).toContain(memId1.slice(0, 8));
+
+    // Simulate: tool call between assembles bumps ledger version
+    ledger.addSearchResults([{ id: memId1, score: 0.9, query: "test" }]);
+
+    // Second assemble — same transcript but ledger changed → cache miss → dedup removes memId1
+    const r2 = await engine.assemble(params);
+    expect(r2.systemPromptAddition).toBeUndefined();
+
+    // Recall called twice (cache invalidated)
+    expect(manager.recall).toHaveBeenCalledTimes(2);
+  });
+
+  it("works without ledger (backward compatible)", async () => {
+    const manager = stubManager([makeResult()]);
+    const engine = createEngine(manager); // no ledger
+
+    const result = await engine.assemble({
+      sessionId: "s1",
+      messages: [{ role: "user", content: "test" }] as any,
+    });
+
+    expect(result.systemPromptAddition).toContain("<recalled_memories>");
+  });
+
+  it("dispose resets ledger", async () => {
+    const ledger = new TurnMemoryLedger();
+    const manager = stubManager([makeResultWithId(memId1)]);
+    const engine = createEngine(manager, { ledger });
+
+    ledger.addSearchResults([{ id: memId1, score: 0.9, query: "test" }]);
+    expect(ledger.version).toBeGreaterThan(0);
+
+    await engine.dispose!();
+
+    expect(ledger.version).toBe(0);
+    expect(ledger.searchResults.size).toBe(0);
+  });
+
+  it("repeated assemble in same turn with growing ledger", async () => {
+    const ledger = new TurnMemoryLedger();
+    const manager = stubManager([makeResultWithId(memId1), makeResultWithId(memId2)]);
+    const engine = createEngine(manager, { ledger });
+    const params = {
+      sessionId: "s1",
+      messages: [{ role: "user", content: "test" }] as any,
+    };
+
+    // First assemble — both injected
+    const r1 = await engine.assemble(params);
+    expect(r1.systemPromptAddition).toContain(memId1.slice(0, 8));
+    expect(r1.systemPromptAddition).toContain(memId2.slice(0, 8));
+
+    // Tool call: search returned memId1
+    ledger.addSearchResults([{ id: memId1, score: 0.9, query: "test" }]);
+
+    // Second assemble — only memId2 should remain
+    const r2 = await engine.assemble(params);
+    expect(r2.systemPromptAddition).toContain(memId2.slice(0, 8));
+    expect(r2.systemPromptAddition).not.toContain(memId1.slice(0, 8));
+
+    // Tool call: get memId2
+    ledger.addExplicitlyOpened(memId2);
+
+    // Third assemble — nothing to inject
+    const r3 = await engine.assemble(params);
+    expect(r3.systemPromptAddition).toBeUndefined();
   });
 });
 

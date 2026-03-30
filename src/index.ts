@@ -17,6 +17,7 @@ import { memoryConfigSchema } from "./config.ts";
 import { CONTEXT_ENGINE_ID, createAssociativeMemoryContextEngine } from "./context-engine.ts";
 import { MemoryManager } from "./memory-manager.ts";
 import { appendFeedbackEvent } from "./retrieval-log.ts";
+import { TurnMemoryLedger } from "./turn-memory-ledger.ts";
 
 function jsonResult(payload: unknown) {
   return {
@@ -74,7 +75,11 @@ function getManager(config: AssociativeMemoryConfig, workspaceDir: string): Memo
   return manager;
 }
 
-function createMemoryTools(config: AssociativeMemoryConfig, workspaceDir: string): AnyAgentTool[] {
+function createMemoryTools(
+  config: AssociativeMemoryConfig,
+  workspaceDir: string,
+  ledger?: TurnMemoryLedger,
+): AnyAgentTool[] {
   const manager = () => getManager(config, workspaceDir);
   const logPath = () => join(resolveMemoryDir(config, workspaceDir), "retrieval.log");
 
@@ -122,6 +127,7 @@ function createMemoryTools(config: AssociativeMemoryConfig, workspaceDir: string
         temporal_anchor: params.temporal_anchor,
         context_ids: params.context_ids,
       });
+      ledger?.addStoredThisTurn(memory.id);
       return jsonResult({
         id: memory.id,
         id_short: memory.id.slice(0, 8),
@@ -143,6 +149,9 @@ function createMemoryTools(config: AssociativeMemoryConfig, workspaceDir: string
     }),
     async execute(_toolCallId, params) {
       const results = await manager().search(params.query, params.limit);
+      ledger?.addSearchResults(
+        results.map((r) => ({ id: r.memory.id, score: r.score, query: params.query })),
+      );
       return jsonResult(
         results.map((r) => ({
           id: r.memory.id,
@@ -170,6 +179,7 @@ function createMemoryTools(config: AssociativeMemoryConfig, workspaceDir: string
       if (!memory) {
         return jsonResult({ error: "Memory not found", id: params.id });
       }
+      ledger?.addExplicitlyOpened(memory.id);
       return jsonResult({
         id: memory.id,
         id_short: memory.id.slice(0, 8),
@@ -214,11 +224,12 @@ const associativeMemoryPlugin = {
 
   register(api: OpenClawPluginApi) {
     const config = memoryConfigSchema.parse(api.pluginConfig);
+    const ledger = new TurnMemoryLedger();
 
     api.registerTool(
       (ctx) => {
         const workspaceDir = ctx.workspaceDir ?? ctx.agentDir ?? ".";
-        return createMemoryTools(config, workspaceDir);
+        return createMemoryTools(config, workspaceDir, ledger);
       },
       { names: ["memory_store", "memory_search", "memory_get", "memory_feedback"] },
     );
@@ -257,6 +268,7 @@ const associativeMemoryPlugin = {
     api.registerContextEngine(CONTEXT_ENGINE_ID, () =>
       createAssociativeMemoryContextEngine({
         getManager: () => getManager(config, "."),
+        ledger,
       }),
     );
 
