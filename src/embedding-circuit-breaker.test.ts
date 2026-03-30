@@ -297,4 +297,62 @@ describe("EmbeddingCircuitBreaker", () => {
       expect(breaker.getState()).toBe("HALF_OPEN");
     });
   });
+
+  describe("concurrency", () => {
+    it("only one concurrent call executes in HALF_OPEN", async () => {
+      let time = 0;
+      const breaker = createBreaker({
+        failureThreshold: 1,
+        cooldownMs: 100,
+        timeoutMs: 5000,
+        now: () => time,
+        jitterFactor: 0,
+      });
+
+      // Open the circuit
+      await expect(breaker.call(() => Promise.reject(new Error("x")))).rejects.toThrow();
+      time += 100; // → HALF_OPEN
+
+      const calls: string[] = [];
+      let resolveProbe: (v: string) => void;
+
+      // Start probe
+      const probePromise = breaker.call((_signal) => {
+        calls.push("probe");
+        return new Promise<string>((r) => { resolveProbe = r; });
+      });
+
+      // Concurrent calls should be rejected
+      const concurrent1 = breaker.call(() => { calls.push("c1"); return Promise.resolve("c1"); });
+      const concurrent2 = breaker.call(() => { calls.push("c2"); return Promise.resolve("c2"); });
+
+      await expect(concurrent1).rejects.toThrow(EmbeddingCircuitOpenError);
+      await expect(concurrent2).rejects.toThrow(EmbeddingCircuitOpenError);
+
+      // Only probe fn was called
+      expect(calls).toEqual(["probe"]);
+
+      resolveProbe!("ok");
+      await probePromise;
+      expect(breaker.getState()).toBe("CLOSED");
+    });
+
+    it("two concurrent failures from CLOSED both count toward threshold", async () => {
+      const breaker = createBreaker({ failureThreshold: 2, timeoutMs: 5000 });
+
+      let reject1: (e: Error) => void;
+      let reject2: (e: Error) => void;
+
+      const p1 = breaker.call(() => new Promise<string>((_, rej) => { reject1 = rej; }));
+      const p2 = breaker.call(() => new Promise<string>((_, rej) => { reject2 = rej; }));
+
+      reject1!(new Error("fail1"));
+      reject2!(new Error("fail2"));
+
+      await expect(p1).rejects.toThrow("fail1");
+      await expect(p2).rejects.toThrow("fail2");
+
+      expect(breaker.getState()).toBe("OPEN");
+    });
+  });
 });
