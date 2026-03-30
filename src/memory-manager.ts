@@ -2,6 +2,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { appendChunk, formatChunkFile, parseChunks } from "./chunks.ts";
 import { MemoryDatabase } from "./db.ts";
+import {
+  EmbeddingCircuitOpenError,
+  EmbeddingTimeoutError,
+} from "./embedding-circuit-breaker.ts";
 import { contentHash } from "./hash.ts";
 import { appendRecallEvent, appendSearchEvent, appendStoreEvent } from "./retrieval-log.ts";
 import type { LayoutManifest, Memory, MemorySource, TemporalState } from "./types.ts";
@@ -145,8 +149,16 @@ export class MemoryManager {
     let queryEmbedding: number[] | null = null;
     try {
       queryEmbedding = await this.embedder.embed(query);
-    } catch {
-      // Embedding unavailable — continue with BM25-only
+    } catch (error) {
+      // Expected breaker/timeout errors → silent BM25 fallback.
+      // Unexpected errors (auth, config, bugs) → rethrow so callers notice.
+      if (
+        !(error instanceof EmbeddingCircuitOpenError) &&
+        !(error instanceof EmbeddingTimeoutError) &&
+        !(error instanceof DOMException && error.name === "AbortError")
+      ) {
+        throw error;
+      }
     }
 
     // Embedding search: cosine similarity against all embeddings
