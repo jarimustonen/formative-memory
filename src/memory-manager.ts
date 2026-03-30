@@ -229,7 +229,11 @@ export class MemoryManager {
     let row = this.db.getMemory(id);
     if (!row && id.length < 64) {
       const all = this.db.getAllMemories();
-      row = all.find((m) => m.id.startsWith(id)) ?? null;
+      const matches = all.filter((m) => m.id.startsWith(id));
+      if (matches.length > 1) {
+        throw new Error(`Ambiguous memory ID prefix "${id}" — matches ${matches.length} memories`);
+      }
+      row = matches[0] ?? null;
     }
     if (!row) return null;
     return this.rowToMemory(row);
