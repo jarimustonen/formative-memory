@@ -19,6 +19,11 @@ export type BudgetClass = "high" | "medium" | "low" | "none";
 /**
  * Estimate token usage from message content size.
  * Uses ≈4 chars/token heuristic (conservative for English + code).
+ *
+ * NOTE: Uses JSON.stringify for non-string content which is O(N) on total
+ * content size. If this becomes a bottleneck for very long transcripts,
+ * consider caching per-message estimates or using a recursive string-length
+ * traversal without serialization overhead.
  */
 export function estimateMessageTokens(messages: readonly unknown[]): number {
   let chars = 0;
@@ -117,18 +122,48 @@ export function formatRecalledMemories(results: SearchResult[], budgetClass: Bud
  * Compute a fingerprint from the last N messages + total message count.
  * Used as part of the assemble cache key to detect transcript changes.
  *
- * Algorithm: SHA-256 of `messageCount:sha256(msg1)|sha256(msg2)|...`
- * where msg hashes are computed from JSON serialization of each message.
+ * Algorithm: SHA-256 of `messageCount:stableHash(msg1)|stableHash(msg2)|...`
+ * Messages are serialized with sorted keys for deterministic output.
  */
 export function transcriptFingerprint(messages: readonly unknown[], n: number): string {
   const tailSize = Math.min(n, messages.length);
   const tail = messages.slice(-tailSize);
-  const tailFp = tail.map((m) => sha256(JSON.stringify(m))).join("|");
+  const tailFp = tail.map((m) => sha256(stableStringify(m))).join("|");
   return sha256(`${messages.length}:${tailFp}`);
 }
 
 function sha256(input: string): string {
   return createHash("sha256").update(input, "utf8").digest("hex");
+}
+
+/**
+ * Deterministic JSON serialization with sorted keys for JSON-like values.
+ * Sorts plain-object keys for stable output; delegates all JSON semantics
+ * to native JSON.stringify. Falls back to "[unserializable]" on circular
+ * refs or other non-serializable input.
+ */
+export function stableStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value, sortedPlainObjectReplacer);
+  } catch {
+    return "[unserializable]";
+  }
+}
+
+function sortedPlainObjectReplacer(_key: string, value: unknown): unknown {
+  if (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.getPrototypeOf(value) === Object.prototype
+  ) {
+    const sorted: Record<string, unknown> = {};
+    for (const k of Object.keys(value).sort()) {
+      sorted[k] = (value as Record<string, unknown>)[k];
+    }
+    return sorted;
+  }
+  return value;
 }
 
 // -- Assemble cache --
@@ -150,7 +185,8 @@ export type AssembleCacheDebugInfo = {
   transcriptChanged: boolean;
   messageCount: number;
   n1Changed: boolean;
-  n3Changed: boolean;
+  configuredWindowChanged: boolean;
+  fingerprintWindow: number;
 };
 
 export function buildCacheKey(
@@ -209,7 +245,7 @@ export function createAssociativeMemoryContextEngine(
   // Per-run cache state (reset on dispose)
   let cachedEntry: AssembleCacheEntry | null = null;
   let prevFpN1: string | null = null;
-  let prevFpN3: string | null = null;
+  let prevFpConfigured: string | null = null;
 
   return {
     info,
@@ -224,16 +260,18 @@ export function createAssociativeMemoryContextEngine(
       const bm25Only = options.isBm25Only?.() ?? false;
       const cacheKey = buildCacheKey(params.messages, budgetClass, bm25Only, fpN);
 
-      // Developer logging: track N=1 vs N=3 fingerprint changes
-      const fpN1 = transcriptFingerprint(params.messages, 1);
-      const fpN3 = cacheKey.fingerprint; // already computed with fpN (default 3)
-      const n1Changed = prevFpN1 !== null && fpN1 !== prevFpN1;
-      const n3Changed = prevFpN3 !== null && fpN3 !== prevFpN3;
-      const transcriptChanged = n3Changed;
-
-      // Detect compaction: message count decreased → full cache reset
-      if (cachedEntry && cacheKey.messageCount < cachedEntry.key.messageCount) {
-        cachedEntry = null;
+      // Developer logging: track N=1 vs configured-N fingerprint changes
+      // Only computed when debug logger is present to avoid unnecessary hashing.
+      let n1Changed = false;
+      let configuredWindowChanged = false;
+      const debugEnabled = !!options.logger?.debug;
+      if (debugEnabled) {
+        const fpN1 = transcriptFingerprint(params.messages, 1);
+        const fpConfigured = cacheKey.fingerprint;
+        n1Changed = prevFpN1 !== null && fpN1 !== prevFpN1;
+        configuredWindowChanged = prevFpConfigured !== null && fpConfigured !== prevFpConfigured;
+        prevFpN1 = fpN1;
+        prevFpConfigured = fpConfigured;
       }
 
       // Cache hit check
@@ -243,10 +281,9 @@ export function createAssociativeMemoryContextEngine(
           transcriptChanged: false,
           messageCount: cacheKey.messageCount,
           n1Changed: false,
-          n3Changed: false,
+          configuredWindowChanged: false,
+          fingerprintWindow: fpN,
         } satisfies AssembleCacheDebugInfo);
-        prevFpN1 = fpN1;
-        prevFpN3 = fpN3;
         return {
           messages: params.messages,
           estimatedTokens: 0,
@@ -257,14 +294,12 @@ export function createAssociativeMemoryContextEngine(
       // Cache miss — perform recall
       options.logger?.debug?.("assemble cache miss", {
         cacheHit: false,
-        transcriptChanged,
+        transcriptChanged: configuredWindowChanged,
         messageCount: cacheKey.messageCount,
         n1Changed,
-        n3Changed,
+        configuredWindowChanged,
+        fingerprintWindow: fpN,
       } satisfies AssembleCacheDebugInfo);
-
-      prevFpN1 = fpN1;
-      prevFpN3 = fpN3;
 
       const query = extractLastUserMessage(params.messages) ?? params.prompt ?? null;
       if (!query) {
@@ -314,7 +349,7 @@ export function createAssociativeMemoryContextEngine(
       // Reset per-run cache state
       cachedEntry = null;
       prevFpN1 = null;
-      prevFpN3 = null;
+      prevFpConfigured = null;
     },
   };
 }

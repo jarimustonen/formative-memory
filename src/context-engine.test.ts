@@ -8,6 +8,7 @@ import {
   estimateMessageTokens,
   extractLastUserMessage,
   formatRecalledMemories,
+  stableStringify,
   transcriptFingerprint,
 } from "./context-engine.ts";
 import type { MemoryManager, SearchResult } from "./memory-manager.ts";
@@ -276,6 +277,49 @@ describe("extractLastUserMessage", () => {
   });
 });
 
+// -- Unit tests: stableStringify --
+
+describe("stableStringify", () => {
+  it("produces same output regardless of key order", () => {
+    const a = { b: 2, a: 1 };
+    const b = { a: 1, b: 2 };
+    expect(stableStringify(a)).toBe(stableStringify(b));
+  });
+
+  it("handles nested objects with sorted keys", () => {
+    const obj = { z: { b: 2, a: 1 }, a: 1 };
+    const result = stableStringify(obj);
+    expect(result).toContain('"a":1');
+    // "a" key should appear before "z" key at top level
+    expect(result.indexOf('"a"')).toBeLessThan(result.indexOf('"z"'));
+  });
+
+  it("handles circular references gracefully", () => {
+    const obj: any = { a: 1 };
+    obj.self = obj;
+    expect(() => stableStringify(obj)).not.toThrow();
+    expect(stableStringify(obj)).toBe("[unserializable]");
+  });
+
+  it("handles shared references correctly (not marked as circular)", () => {
+    const shared = { x: 1 };
+    const value = { a: shared, b: shared };
+    const out = stableStringify(value);
+    expect(out).toBe('{"a":{"x":1},"b":{"x":1}}');
+  });
+
+  it("handles primitives", () => {
+    expect(stableStringify("hello")).toBe('"hello"');
+    expect(stableStringify(42)).toBe("42");
+    expect(stableStringify(null)).toBe("null");
+    expect(stableStringify(true)).toBe("true");
+  });
+
+  it("handles arrays", () => {
+    expect(stableStringify([1, 2, 3])).toBe("[1,2,3]");
+  });
+});
+
 // -- Unit tests: transcriptFingerprint --
 
 describe("transcriptFingerprint", () => {
@@ -319,6 +363,20 @@ describe("transcriptFingerprint", () => {
     const msgs1 = [{ content: "a" }, { content: "b" }, { content: "c" }];
     const msgs2 = [{ content: "a" }, { content: "b" }, { content: "d" }];
     expect(transcriptFingerprint(msgs1, 2)).not.toBe(transcriptFingerprint(msgs2, 2));
+  });
+
+  it("produces same fingerprint regardless of property order", () => {
+    const msgs1 = [{ role: "user", content: "hello" }];
+    const msgs2 = [{ content: "hello", role: "user" }];
+    expect(transcriptFingerprint(msgs1, 1)).toBe(transcriptFingerprint(msgs2, 1));
+  });
+
+  it("does not crash on circular references in messages", () => {
+    const msg: any = { role: "user", content: "hello" };
+    msg.self = msg;
+    // Falls back to "[unserializable]" for circular messages
+    expect(() => transcriptFingerprint([msg], 1)).not.toThrow();
+    expect(transcriptFingerprint([msg], 1)).toHaveLength(64);
   });
 });
 
@@ -728,6 +786,44 @@ describe("AssociativeMemoryContextEngine cache", () => {
       transcriptChanged: true,
       messageCount: 2,
     });
+  });
+
+  it("includes fingerprintWindow in debug info", async () => {
+    const manager = stubManager([makeResult()]);
+    const logger = { warn: vi.fn(), debug: vi.fn() };
+    const engine = createAssociativeMemoryContextEngine({
+      getManager: () => manager,
+      logger,
+      fingerprintN: 5,
+    });
+
+    await engine.assemble({
+      sessionId: "s1",
+      messages: [{ role: "user", content: "hello" }] as any,
+    });
+
+    expect(logger.debug).toHaveBeenCalledOnce();
+    expect(logger.debug.mock.calls[0][1]).toMatchObject({ fingerprintWindow: 5 });
+  });
+
+  it("skips debug fingerprint computation when no debug logger", async () => {
+    const manager = stubManager([makeResult()]);
+    // Logger without debug method
+    const logger = { warn: vi.fn() };
+    const engine = createEngine(manager, { logger });
+
+    // Two calls — second should use cache
+    await engine.assemble({
+      sessionId: "s1",
+      messages: [{ role: "user", content: "hello" }] as any,
+    });
+    await engine.assemble({
+      sessionId: "s1",
+      messages: [{ role: "user", content: "hello" }] as any,
+    });
+
+    // recall still called only once (cache works without debug logger)
+    expect(manager.recall).toHaveBeenCalledTimes(1);
   });
 
   it("dispose resets cache", async () => {
