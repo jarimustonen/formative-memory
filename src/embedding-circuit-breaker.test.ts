@@ -15,6 +15,24 @@ function createBreaker(opts: {
 }
 
 describe("EmbeddingCircuitBreaker", () => {
+  describe("constructor validation", () => {
+    it("rejects failureThreshold < 1", () => {
+      expect(() => createBreaker({ failureThreshold: 0 })).toThrow("failureThreshold must be >= 1");
+    });
+
+    it("rejects negative cooldownMs", () => {
+      expect(() => createBreaker({ cooldownMs: -1 })).toThrow("cooldownMs must be >= 0");
+    });
+
+    it("rejects zero timeoutMs", () => {
+      expect(() => createBreaker({ timeoutMs: 0 })).toThrow("timeoutMs must be > 0");
+    });
+
+    it("accepts valid options", () => {
+      expect(() => createBreaker({ failureThreshold: 1, cooldownMs: 0, timeoutMs: 1 })).not.toThrow();
+    });
+  });
+
   describe("initial state", () => {
     it("starts in CLOSED state", () => {
       const breaker = createBreaker();

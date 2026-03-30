@@ -44,6 +44,16 @@ export class EmbeddingCircuitBreaker {
     this.cooldownMs = options.cooldownMs ?? 30_000;
     this.timeoutMs = options.timeoutMs ?? 3000;
     this.now = options.now ?? Date.now;
+
+    if (this.failureThreshold < 1) {
+      throw new Error("failureThreshold must be >= 1");
+    }
+    if (this.cooldownMs < 0) {
+      throw new Error("cooldownMs must be >= 0");
+    }
+    if (this.timeoutMs <= 0) {
+      throw new Error("timeoutMs must be > 0");
+    }
   }
 
   getState(): CircuitState {
