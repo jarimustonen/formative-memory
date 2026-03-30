@@ -226,9 +226,14 @@ const associativeMemoryPlugin = {
     const config = memoryConfigSchema.parse(api.pluginConfig);
     const ledger = new TurnMemoryLedger();
 
+    // Track resolved workspace so context engine uses the same DB as tools.
+    // Updated lazily when tool factory is invoked with runtime context.
+    let resolvedWorkspaceDir = ".";
+
     api.registerTool(
       (ctx) => {
         const workspaceDir = ctx.workspaceDir ?? ctx.agentDir ?? ".";
+        resolvedWorkspaceDir = workspaceDir;
         return createMemoryTools(config, workspaceDir, ledger);
       },
       { names: ["memory_store", "memory_search", "memory_get", "memory_feedback"] },
@@ -265,9 +270,10 @@ const associativeMemoryPlugin = {
     });
 
     // Register context engine (claims contextEngine slot alongside the memory slot)
+    // Uses resolvedWorkspaceDir (set by tool factory) so assemble() hits the same DB as tools.
     api.registerContextEngine(CONTEXT_ENGINE_ID, () =>
       createAssociativeMemoryContextEngine({
-        getManager: () => getManager(config, "."),
+        getManager: () => getManager(config, resolvedWorkspaceDir),
         ledger,
       }),
     );
