@@ -1039,6 +1039,54 @@ describe("AssociativeMemoryContextEngine dedup (ledger)", () => {
     const r3 = await engine.assemble(params);
     expect(r3.systemPromptAddition).toBeUndefined();
   });
+
+  it("resets ledger on turn boundary (transcript change)", async () => {
+    const ledger = new TurnMemoryLedger();
+    const manager = stubManager([makeResultWithId(memId1)]);
+    const engine = createEngine(manager, { ledger });
+
+    // Turn 1: assemble with first message
+    await engine.assemble({
+      sessionId: "s1",
+      messages: [{ role: "user", content: "turn 1" }] as any,
+    });
+
+    // Simulate tool call — memId1 now in ledger
+    ledger.addSearchResults([{ id: memId1, score: 0.9, query: "test" }]);
+    expect(ledger.searchResults.size).toBe(1);
+
+    // Turn 2: new message arrives — transcript fingerprint changes
+    await engine.assemble({
+      sessionId: "s1",
+      messages: [
+        { role: "user", content: "turn 1" },
+        { role: "assistant", content: "reply" },
+        { role: "user", content: "turn 2" },
+      ] as any,
+    });
+
+    // Ledger should have been reset by turn boundary detection.
+    // memId1 should be re-injected (no longer in searchResults).
+    expect(ledger.searchResults.size).toBe(0);
+  });
+
+  it("does not reset ledger on first assemble call", async () => {
+    const ledger = new TurnMemoryLedger();
+    const manager = stubManager([makeResultWithId(memId1)]);
+    const engine = createEngine(manager, { ledger });
+
+    // Pre-populate ledger (e.g. from a prior tool call)
+    ledger.addSearchResults([{ id: memId1, score: 0.9, query: "q" }]);
+
+    // First assemble — no previous fingerprint, should not reset
+    await engine.assemble({
+      sessionId: "s1",
+      messages: [{ role: "user", content: "hello" }] as any,
+    });
+
+    // memId1 should still be filtered (ledger not reset on first call)
+    expect(ledger.searchResults.has(memId1)).toBe(true);
+  });
 });
 
 // -- Other lifecycle methods --

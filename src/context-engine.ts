@@ -253,6 +253,8 @@ export function createAssociativeMemoryContextEngine(
   let cachedEntry: AssembleCacheEntry | null = null;
   let prevFpN1: string | null = null;
   let prevFpConfigured: string | null = null;
+  // Track transcript fingerprint for turn-boundary detection
+  let prevTranscriptFp: string | null = null;
 
   return {
     info,
@@ -263,6 +265,15 @@ export function createAssociativeMemoryContextEngine(
       if (budgetClass === "none") {
         return { messages: params.messages, estimatedTokens: 0 };
       }
+
+      // Turn-boundary detection: reset ledger when transcript changes.
+      // The SDK does not expose an explicit turn lifecycle, so we use the
+      // transcript fingerprint as a proxy — a new message means a new turn.
+      const currentFp = transcriptFingerprint(params.messages, fpN);
+      if (options.ledger && prevTranscriptFp !== null && currentFp !== prevTranscriptFp) {
+        options.ledger.reset();
+      }
+      prevTranscriptFp = currentFp;
 
       const bm25Only = options.isBm25Only?.() ?? false;
       const ledgerVersion = options.ledger?.version ?? 0;
@@ -371,6 +382,7 @@ export function createAssociativeMemoryContextEngine(
       cachedEntry = null;
       prevFpN1 = null;
       prevFpConfigured = null;
+      prevTranscriptFp = null;
     },
   };
 }
