@@ -26,6 +26,8 @@ export type EmbeddingCircuitBreakerOptions = {
   timeoutMs?: number;
   /** Clock function for testability (default: Date.now). */
   now?: () => number;
+  /** Jitter factor for cooldown (0 = none, 0.2 = ±20%). Default: 0.2. Set to 0 in tests. */
+  jitterFactor?: number;
 };
 
 export class EmbeddingCircuitBreaker {
@@ -33,17 +35,20 @@ export class EmbeddingCircuitBreaker {
   private consecutiveFailures = 0;
   private lastFailureAt = 0;
   private halfOpenProbeInFlight = false;
+  private effectiveCooldown = 0;
 
   private readonly failureThreshold: number;
   private readonly cooldownMs: number;
   private readonly timeoutMs: number;
   private readonly now: () => number;
+  private readonly jitterFactor: number;
 
   constructor(options: EmbeddingCircuitBreakerOptions = {}) {
     this.failureThreshold = options.failureThreshold ?? 2;
     this.cooldownMs = options.cooldownMs ?? 30_000;
     this.timeoutMs = options.timeoutMs ?? 3000;
     this.now = options.now ?? Date.now;
+    this.jitterFactor = options.jitterFactor ?? 0.2;
 
     if (this.failureThreshold < 1) {
       throw new Error("failureThreshold must be >= 1");
@@ -59,7 +64,7 @@ export class EmbeddingCircuitBreaker {
   getState(): CircuitState {
     // Compute effective state without mutation.
     // Actual OPEN → HALF_OPEN transition happens inside call() when a probe starts.
-    if (this.state === "OPEN" && this.now() - this.lastFailureAt >= this.cooldownMs) {
+    if (this.state === "OPEN" && this.now() - this.lastFailureAt >= this.effectiveCooldown) {
       return "HALF_OPEN";
     }
     return this.state;
@@ -127,6 +132,9 @@ export class EmbeddingCircuitBreaker {
 
     if (this.consecutiveFailures >= this.failureThreshold) {
       this.state = "OPEN";
+      // Add jitter to cooldown to prevent synchronized probes across instances
+      const jitter = 1 + (Math.random() - 0.5) * 2 * this.jitterFactor;
+      this.effectiveCooldown = Math.round(this.cooldownMs * jitter);
     }
   }
 }

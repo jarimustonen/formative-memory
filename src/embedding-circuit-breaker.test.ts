@@ -106,6 +106,7 @@ describe("EmbeddingCircuitBreaker", () => {
         failureThreshold: 1,
         cooldownMs: 30_000,
         now: () => time,
+        jitterFactor: 0,
       });
 
       await expect(breaker.call(() => Promise.reject(new Error("x")))).rejects.toThrow();
@@ -122,6 +123,7 @@ describe("EmbeddingCircuitBreaker", () => {
         failureThreshold: 1,
         cooldownMs: 30_000,
         now: () => time,
+        jitterFactor: 0,
       });
 
       await expect(breaker.call(() => Promise.reject(new Error("x")))).rejects.toThrow();
@@ -138,6 +140,7 @@ describe("EmbeddingCircuitBreaker", () => {
         failureThreshold: 1,
         cooldownMs: 100,
         now: () => time,
+        jitterFactor: 0,
       });
 
       await expect(breaker.call(() => Promise.reject(new Error("x")))).rejects.toThrow();
@@ -155,6 +158,7 @@ describe("EmbeddingCircuitBreaker", () => {
         failureThreshold: 1,
         cooldownMs: 100,
         now: () => time,
+        jitterFactor: 0,
       });
 
       await expect(breaker.call(() => Promise.reject(new Error("x")))).rejects.toThrow();
@@ -171,6 +175,7 @@ describe("EmbeddingCircuitBreaker", () => {
         cooldownMs: 100,
         timeoutMs: 5000,
         now: () => time,
+        jitterFactor: 0,
       });
 
       await expect(breaker.call(() => Promise.reject(new Error("x")))).rejects.toThrow();
@@ -246,6 +251,7 @@ describe("EmbeddingCircuitBreaker", () => {
         failureThreshold: 2,
         cooldownMs: 1000,
         now: () => time,
+        jitterFactor: 0,
       });
 
       expect(breaker.getState()).toBe("CLOSED");
@@ -271,6 +277,7 @@ describe("EmbeddingCircuitBreaker", () => {
         failureThreshold: 1,
         cooldownMs: 500,
         now: () => time,
+        jitterFactor: 0,
       });
 
       // Failure → OPEN
