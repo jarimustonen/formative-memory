@@ -58,6 +58,14 @@ describe("TurnMemoryLedger", () => {
       ledger.addSearchResults([]);
       expect(ledger.version).toBe(0);
     });
+
+    it("does not increment version for duplicate IDs", () => {
+      const ledger = new TurnMemoryLedger();
+      ledger.addSearchResults([{ id: "mem1", score: 0.9, query: "q" }]);
+      expect(ledger.version).toBe(1);
+      ledger.addSearchResults([{ id: "mem1", score: 0.95, query: "q2" }]);
+      expect(ledger.version).toBe(1); // same ID, no version bump
+    });
   });
 
   describe("addExplicitlyOpened", () => {
@@ -67,8 +75,15 @@ describe("TurnMemoryLedger", () => {
       expect(ledger.explicitlyOpened.has("mem1")).toBe(true);
     });
 
-    it("increments version", () => {
+    it("increments version on first add", () => {
       const ledger = new TurnMemoryLedger();
+      ledger.addExplicitlyOpened("mem1");
+      expect(ledger.version).toBe(1);
+    });
+
+    it("does not increment version for duplicate ID", () => {
+      const ledger = new TurnMemoryLedger();
+      ledger.addExplicitlyOpened("mem1");
       ledger.addExplicitlyOpened("mem1");
       expect(ledger.version).toBe(1);
     });
@@ -81,8 +96,15 @@ describe("TurnMemoryLedger", () => {
       expect(ledger.storedThisTurn.has("mem1")).toBe(true);
     });
 
-    it("increments version", () => {
+    it("increments version on first add", () => {
       const ledger = new TurnMemoryLedger();
+      ledger.addStoredThisTurn("mem1");
+      expect(ledger.version).toBe(1);
+    });
+
+    it("does not increment version for duplicate ID", () => {
+      const ledger = new TurnMemoryLedger();
+      ledger.addStoredThisTurn("mem1");
       ledger.addStoredThisTurn("mem1");
       expect(ledger.version).toBe(1);
     });

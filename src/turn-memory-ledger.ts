@@ -28,20 +28,26 @@ export class TurnMemoryLedger {
   }
 
   addSearchResults(results: Array<{ id: string; score: number; query: string }>): void {
+    let changed = false;
     for (const r of results) {
+      if (!this.searchResults.has(r.id)) {
+        changed = true;
+      }
       this.searchResults.set(r.id, { score: r.score, query: r.query });
     }
-    if (results.length > 0) {
+    if (changed) {
       this.version++;
     }
   }
 
   addExplicitlyOpened(id: string): void {
+    if (this.explicitlyOpened.has(id)) return;
     this.explicitlyOpened.add(id);
     this.version++;
   }
 
   addStoredThisTurn(id: string): void {
+    if (this.storedThisTurn.has(id)) return;
     this.storedThisTurn.add(id);
     this.version++;
   }
