@@ -28,6 +28,8 @@ export type EmbeddingCircuitBreakerOptions = {
   now?: () => number;
   /** Jitter factor for cooldown (0 = none, 0.2 = ±20%). Default: 0.2. Set to 0 in tests. */
   jitterFactor?: number;
+  /** Called on state transitions for logging/metrics. */
+  onStateChange?: (from: CircuitState, to: CircuitState) => void;
 };
 
 export class EmbeddingCircuitBreaker {
@@ -42,6 +44,7 @@ export class EmbeddingCircuitBreaker {
   private readonly timeoutMs: number;
   private readonly now: () => number;
   private readonly jitterFactor: number;
+  private readonly onStateChange?: (from: CircuitState, to: CircuitState) => void;
 
   constructor(options: EmbeddingCircuitBreakerOptions = {}) {
     this.failureThreshold = options.failureThreshold ?? 2;
@@ -49,6 +52,7 @@ export class EmbeddingCircuitBreaker {
     this.timeoutMs = options.timeoutMs ?? 3000;
     this.now = options.now ?? Date.now;
     this.jitterFactor = options.jitterFactor ?? 0.2;
+    this.onStateChange = options.onStateChange;
 
     if (this.failureThreshold < 1) {
       throw new Error("failureThreshold must be >= 1");
@@ -121,9 +125,17 @@ export class EmbeddingCircuitBreaker {
     }
   }
 
+  private transition(to: CircuitState): void {
+    if (this.state !== to) {
+      const from = this.state;
+      this.state = to;
+      this.onStateChange?.(from, to);
+    }
+  }
+
   private onSuccess(): void {
     this.consecutiveFailures = 0;
-    this.state = "CLOSED";
+    this.transition("CLOSED");
   }
 
   private onFailure(): void {
@@ -131,7 +143,7 @@ export class EmbeddingCircuitBreaker {
     this.lastFailureAt = this.now();
 
     if (this.consecutiveFailures >= this.failureThreshold) {
-      this.state = "OPEN";
+      this.transition("OPEN");
       // Add jitter to cooldown to prevent synchronized probes across instances
       const jitter = 1 + (Math.random() - 0.5) * 2 * this.jitterFactor;
       this.effectiveCooldown = Math.round(this.cooldownMs * jitter);

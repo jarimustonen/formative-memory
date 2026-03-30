@@ -298,6 +298,49 @@ describe("EmbeddingCircuitBreaker", () => {
     });
   });
 
+  describe("observability", () => {
+    it("calls onStateChange on transitions", async () => {
+      let time = 0;
+      const transitions: Array<{ from: string; to: string }> = [];
+      const breaker = createBreaker({
+        failureThreshold: 1,
+        cooldownMs: 100,
+        now: () => time,
+        jitterFactor: 0,
+        onStateChange: (from, to) => transitions.push({ from, to }),
+      });
+
+      // CLOSED → OPEN
+      await expect(breaker.call(() => Promise.reject(new Error("x")))).rejects.toThrow();
+      expect(transitions).toEqual([{ from: "CLOSED", to: "OPEN" }]);
+
+      // OPEN → HALF_OPEN → CLOSED (via probe success)
+      time += 100;
+      await breaker.call(() => Promise.resolve("ok"));
+      expect(transitions).toEqual([
+        { from: "CLOSED", to: "OPEN" },
+        { from: "OPEN", to: "CLOSED" }, // HALF_OPEN is computed, not stored
+      ]);
+    });
+
+    it("does not call onStateChange for same-state", async () => {
+      const transitions: Array<{ from: string; to: string }> = [];
+      const breaker = createBreaker({
+        failureThreshold: 3,
+        onStateChange: (from, to) => transitions.push({ from, to }),
+      });
+
+      // Two failures, still CLOSED (threshold=3)
+      await expect(breaker.call(() => Promise.reject(new Error("x")))).rejects.toThrow();
+      await expect(breaker.call(() => Promise.reject(new Error("x")))).rejects.toThrow();
+      expect(transitions).toEqual([]);
+
+      // Success → stays CLOSED, no transition
+      await breaker.call(() => Promise.resolve("ok"));
+      expect(transitions).toEqual([]);
+    });
+  });
+
   describe("concurrency", () => {
     it("only one concurrent call executes in HALF_OPEN", async () => {
       let time = 0;
