@@ -64,8 +64,10 @@ function resolveMemoryDir(config: AssociativeMemoryConfig, workspaceDir: string)
   return join(workspaceDir, dbPath);
 }
 
-// Lazily initialized per workspace
+// Lazily initialized per workspace. Tracks the most recently created manager
+// for use by the context engine (which lacks workspace context at call time).
 const managers = new Map<string, MemoryManager>();
+let lastCreatedManager: MemoryManager | null = null;
 
 function getManager(
   config: AssociativeMemoryConfig,
@@ -82,7 +84,17 @@ function getManager(
     manager = new MemoryManager(memoryDir, embedder);
     managers.set(memoryDir, manager);
   }
+  lastCreatedManager = manager;
   return manager;
+}
+
+/** Return the most recently created/accessed manager (for context engine). */
+function getLastManager(
+  config: AssociativeMemoryConfig,
+  fallbackDir: string,
+  circuitBreaker?: EmbeddingCircuitBreaker,
+): MemoryManager {
+  return lastCreatedManager ?? getManager(config, fallbackDir, circuitBreaker);
 }
 
 function createMemoryTools(
@@ -238,14 +250,9 @@ const associativeMemoryPlugin = {
     const ledger = new TurnMemoryLedger();
     const circuitBreaker = new EmbeddingCircuitBreaker();
 
-    // Track resolved workspace so context engine uses the same DB as tools.
-    // Updated lazily when tool factory is invoked with runtime context.
-    let resolvedWorkspaceDir = ".";
-
     api.registerTool(
       (ctx) => {
         const workspaceDir = ctx.workspaceDir ?? ctx.agentDir ?? ".";
-        resolvedWorkspaceDir = workspaceDir;
         return createMemoryTools(config, workspaceDir, ledger, circuitBreaker);
       },
       { names: ["memory_store", "memory_search", "memory_get", "memory_feedback"] },
@@ -281,11 +288,13 @@ const associativeMemoryPlugin = {
       ];
     });
 
-    // Register context engine (claims contextEngine slot alongside the memory slot)
-    // Uses resolvedWorkspaceDir (set by tool factory) so assemble() hits the same DB as tools.
+    // Register context engine (claims contextEngine slot alongside the memory slot).
+    // Uses getLastManager() which returns the manager created by tools, avoiding
+    // a mutable resolvedWorkspaceDir variable that could be overwritten by
+    // concurrent workspaces.
     api.registerContextEngine(CONTEXT_ENGINE_ID, () =>
       createAssociativeMemoryContextEngine({
-        getManager: () => getManager(config, resolvedWorkspaceDir, circuitBreaker),
+        getManager: () => getLastManager(config, ".", circuitBreaker),
         isBm25Only: () => circuitBreaker.isBm25Only(),
         ledger,
       }),
