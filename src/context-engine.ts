@@ -253,8 +253,11 @@ export function createAssociativeMemoryContextEngine(
   let cachedEntry: AssembleCacheEntry | null = null;
   let prevFpN1: string | null = null;
   let prevFpConfigured: string | null = null;
-  // Track transcript fingerprint for turn-boundary detection
-  let prevTranscriptFp: string | null = null;
+  // Track last user message for turn-boundary detection.
+  // Uses the identity of the last user message (content + position) rather than
+  // the full transcript fingerprint, because assistant/tool messages appended
+  // mid-turn must NOT trigger a ledger reset.
+  let prevUserTurnKey: string | null = null;
 
   return {
     info,
@@ -266,14 +269,15 @@ export function createAssociativeMemoryContextEngine(
         return { messages: params.messages, estimatedTokens: 0 };
       }
 
-      // Turn-boundary detection: reset ledger when transcript changes.
-      // The SDK does not expose an explicit turn lifecycle, so we use the
-      // transcript fingerprint as a proxy — a new message means a new turn.
-      const currentFp = transcriptFingerprint(params.messages, fpN);
-      if (options.ledger && prevTranscriptFp !== null && currentFp !== prevTranscriptFp) {
+      // Turn-boundary detection: reset ledger when the last user message changes.
+      // We track user messages specifically (not the full transcript) because
+      // assistant/tool messages are appended mid-turn during multi-step tool use
+      // and must NOT trigger a ledger reset — that would destroy dedup state.
+      const currentTurnKey = userTurnKey(params.messages);
+      if (options.ledger && prevUserTurnKey !== null && currentTurnKey !== prevUserTurnKey) {
         options.ledger.reset();
       }
-      prevTranscriptFp = currentFp;
+      prevUserTurnKey = currentTurnKey;
 
       const bm25Only = options.isBm25Only?.() ?? false;
       const ledgerVersion = options.ledger?.version ?? 0;
@@ -382,12 +386,36 @@ export function createAssociativeMemoryContextEngine(
       cachedEntry = null;
       prevFpN1 = null;
       prevFpConfigured = null;
-      prevTranscriptFp = null;
+      prevUserTurnKey = null;
     },
   };
 }
 
 // -- Helpers --
+
+/**
+ * Compute a stable key from the last user message's content and position.
+ * Used for turn-boundary detection: a change in this key indicates a new user turn.
+ * Includes the message index so repeated identical user messages at different
+ * positions are distinguished.
+ */
+export function userTurnKey(messages: readonly unknown[]): string | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg == null || typeof msg !== "object") continue;
+    const role = (msg as Record<string, unknown>).role;
+    if (role !== "user") continue;
+    const content = (msg as Record<string, unknown>).content;
+    if (!content) continue;
+
+    const text =
+      typeof content === "string"
+        ? content
+        : stableStringify(content);
+    return sha256(`${i}:${text}`);
+  }
+  return null;
+}
 
 export function extractLastUserMessage(messages: { role?: string; content?: unknown }[]): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {

@@ -10,6 +10,7 @@ import {
   formatRecalledMemories,
   stableStringify,
   transcriptFingerprint,
+  userTurnKey,
 } from "./context-engine.ts";
 import type { MemoryManager, SearchResult } from "./memory-manager.ts";
 import { TurnMemoryLedger } from "./turn-memory-ledger.ts";
@@ -279,6 +280,58 @@ describe("extractLastUserMessage", () => {
   it("returns null for assistant-only messages", () => {
     const messages = [{ role: "assistant", content: "hi" }];
     expect(extractLastUserMessage(messages)).toBeNull();
+  });
+});
+
+// -- Unit tests: userTurnKey --
+
+describe("userTurnKey", () => {
+  it("returns null for empty messages", () => {
+    expect(userTurnKey([])).toBeNull();
+  });
+
+  it("returns null for assistant-only messages", () => {
+    expect(userTurnKey([{ role: "assistant", content: "hi" }])).toBeNull();
+  });
+
+  it("returns stable hash for same user message at same position", () => {
+    const msgs = [{ role: "user", content: "hello" }];
+    expect(userTurnKey(msgs)).toBe(userTurnKey(msgs));
+  });
+
+  it("changes when user message content changes", () => {
+    const msgs1 = [{ role: "user", content: "hello" }];
+    const msgs2 = [{ role: "user", content: "world" }];
+    expect(userTurnKey(msgs1)).not.toBe(userTurnKey(msgs2));
+  });
+
+  it("does NOT change when assistant/tool messages are appended after user message", () => {
+    const msgs1 = [{ role: "user", content: "hello" }];
+    const msgs2 = [
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "reply" },
+      { role: "tool", content: "result" },
+    ];
+    expect(userTurnKey(msgs1)).toBe(userTurnKey(msgs2));
+  });
+
+  it("changes when a new user message is appended", () => {
+    const msgs1 = [{ role: "user", content: "hello" }];
+    const msgs2 = [
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "reply" },
+      { role: "user", content: "new question" },
+    ];
+    expect(userTurnKey(msgs1)).not.toBe(userTurnKey(msgs2));
+  });
+
+  it("includes position so same content at different index differs", () => {
+    const msgs1 = [{ role: "user", content: "hello" }]; // index 0
+    const msgs2 = [
+      { role: "assistant", content: "intro" },
+      { role: "user", content: "hello" }, // index 1
+    ];
+    expect(userTurnKey(msgs1)).not.toBe(userTurnKey(msgs2));
   });
 });
 
@@ -1040,7 +1093,7 @@ describe("AssociativeMemoryContextEngine dedup (ledger)", () => {
     expect(r3.systemPromptAddition).toBeUndefined();
   });
 
-  it("resets ledger on turn boundary (transcript change)", async () => {
+  it("resets ledger when last user message changes (new turn)", async () => {
     const ledger = new TurnMemoryLedger();
     const manager = stubManager([makeResultWithId(memId1)]);
     const engine = createEngine(manager, { ledger });
@@ -1055,7 +1108,7 @@ describe("AssociativeMemoryContextEngine dedup (ledger)", () => {
     ledger.addSearchResults([{ id: memId1, score: 0.9, query: "test" }]);
     expect(ledger.searchResults.size).toBe(1);
 
-    // Turn 2: new message arrives — transcript fingerprint changes
+    // Turn 2: new user message arrives
     await engine.assemble({
       sessionId: "s1",
       messages: [
@@ -1066,8 +1119,37 @@ describe("AssociativeMemoryContextEngine dedup (ledger)", () => {
     });
 
     // Ledger should have been reset by turn boundary detection.
-    // memId1 should be re-injected (no longer in searchResults).
     expect(ledger.searchResults.size).toBe(0);
+  });
+
+  it("does NOT reset ledger when only assistant/tool messages are appended mid-turn", async () => {
+    const ledger = new TurnMemoryLedger();
+    const manager = stubManager([makeResultWithId(memId1)]);
+    const engine = createEngine(manager, { ledger });
+
+    // First assemble — user asks a question
+    await engine.assemble({
+      sessionId: "s1",
+      messages: [{ role: "user", content: "find memory" }] as any,
+    });
+
+    // Tool call happens — ledger records memId1 as exposed
+    ledger.addSearchResults([{ id: memId1, score: 0.9, query: "find memory" }]);
+
+    // Second assemble in SAME turn — assistant/tool messages appended but
+    // last user message is unchanged. Ledger must be preserved.
+    const result = await engine.assemble({
+      sessionId: "s1",
+      messages: [
+        { role: "user", content: "find memory" },
+        { role: "assistant", content: "Calling memory_search..." },
+        { role: "tool", content: JSON.stringify([{ id: memId1 }]) },
+      ] as any,
+    });
+
+    // Ledger preserved — memId1 still filtered out
+    expect(ledger.searchResults.has(memId1)).toBe(true);
+    expect(result.systemPromptAddition).toBeUndefined();
   });
 
   it("does not reset ledger on first assemble call", async () => {
@@ -1078,7 +1160,7 @@ describe("AssociativeMemoryContextEngine dedup (ledger)", () => {
     // Pre-populate ledger (e.g. from a prior tool call)
     ledger.addSearchResults([{ id: memId1, score: 0.9, query: "q" }]);
 
-    // First assemble — no previous fingerprint, should not reset
+    // First assemble — no previous turn key, should not reset
     await engine.assemble({
       sessionId: "s1",
       messages: [{ role: "user", content: "hello" }] as any,
