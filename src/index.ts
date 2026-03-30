@@ -15,6 +15,7 @@ import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk";
 import type { AssociativeMemoryConfig } from "./config.ts";
 import { memoryConfigSchema } from "./config.ts";
 import { CONTEXT_ENGINE_ID, createAssociativeMemoryContextEngine } from "./context-engine.ts";
+import { EmbeddingCircuitBreaker } from "./embedding-circuit-breaker.ts";
 import { MemoryManager } from "./memory-manager.ts";
 import { appendFeedbackEvent } from "./retrieval-log.ts";
 import { TurnMemoryLedger } from "./turn-memory-ledger.ts";
@@ -65,11 +66,19 @@ function resolveMemoryDir(config: AssociativeMemoryConfig, workspaceDir: string)
 // Lazily initialized per workspace
 const managers = new Map<string, MemoryManager>();
 
-function getManager(config: AssociativeMemoryConfig, workspaceDir: string): MemoryManager {
+function getManager(
+  config: AssociativeMemoryConfig,
+  workspaceDir: string,
+  circuitBreaker?: EmbeddingCircuitBreaker,
+): MemoryManager {
   const memoryDir = resolveMemoryDir(config, workspaceDir);
   let manager = managers.get(memoryDir);
   if (!manager) {
-    manager = new MemoryManager(memoryDir, createEmbedder(config));
+    const rawEmbedder = createEmbedder(config);
+    const embedder = circuitBreaker
+      ? { embed: (text: string) => circuitBreaker.call(() => rawEmbedder.embed(text)) }
+      : rawEmbedder;
+    manager = new MemoryManager(memoryDir, embedder);
     managers.set(memoryDir, manager);
   }
   return manager;
@@ -79,8 +88,9 @@ function createMemoryTools(
   config: AssociativeMemoryConfig,
   workspaceDir: string,
   ledger?: TurnMemoryLedger,
+  circuitBreaker?: EmbeddingCircuitBreaker,
 ): AnyAgentTool[] {
-  const manager = () => getManager(config, workspaceDir);
+  const manager = () => getManager(config, workspaceDir, circuitBreaker);
   const logPath = () => join(resolveMemoryDir(config, workspaceDir), "retrieval.log");
 
   const storeTool: AnyAgentTool = {
@@ -225,6 +235,7 @@ const associativeMemoryPlugin = {
   register(api: OpenClawPluginApi) {
     const config = memoryConfigSchema.parse(api.pluginConfig);
     const ledger = new TurnMemoryLedger();
+    const circuitBreaker = new EmbeddingCircuitBreaker();
 
     // Track resolved workspace so context engine uses the same DB as tools.
     // Updated lazily when tool factory is invoked with runtime context.
@@ -234,7 +245,7 @@ const associativeMemoryPlugin = {
       (ctx) => {
         const workspaceDir = ctx.workspaceDir ?? ctx.agentDir ?? ".";
         resolvedWorkspaceDir = workspaceDir;
-        return createMemoryTools(config, workspaceDir, ledger);
+        return createMemoryTools(config, workspaceDir, ledger, circuitBreaker);
       },
       { names: ["memory_store", "memory_search", "memory_get", "memory_feedback"] },
     );
@@ -273,7 +284,8 @@ const associativeMemoryPlugin = {
     // Uses resolvedWorkspaceDir (set by tool factory) so assemble() hits the same DB as tools.
     api.registerContextEngine(CONTEXT_ENGINE_ID, () =>
       createAssociativeMemoryContextEngine({
-        getManager: () => getManager(config, resolvedWorkspaceDir),
+        getManager: () => getManager(config, resolvedWorkspaceDir, circuitBreaker),
+        isBm25Only: () => circuitBreaker.isBm25Only(),
         ledger,
       }),
     );

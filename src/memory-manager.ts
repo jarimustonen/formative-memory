@@ -132,13 +132,21 @@ export class MemoryManager {
   // -- Search --
 
   async search(query: string, limit = 5): Promise<SearchResult[]> {
-    const queryEmbedding = await this.embedder.embed(query);
+    // Try embedding; fall back to BM25-only if embedding fails (circuit breaker, timeout, etc.)
+    let queryEmbedding: number[] | null = null;
+    try {
+      queryEmbedding = await this.embedder.embed(query);
+    } catch {
+      // Embedding unavailable — continue with BM25-only
+    }
 
     // Embedding search: cosine similarity against all embeddings
-    const allEmbeddings = this.db.getAllEmbeddings();
     const embeddingScores = new Map<string, number>();
-    for (const { id, embedding } of allEmbeddings) {
-      embeddingScores.set(id, cosineSimilarity(queryEmbedding, embedding));
+    if (queryEmbedding) {
+      const allEmbeddings = this.db.getAllEmbeddings();
+      for (const { id, embedding } of allEmbeddings) {
+        embeddingScores.set(id, cosineSimilarity(queryEmbedding, embedding));
+      }
     }
 
     // BM25 search via FTS5
@@ -155,7 +163,8 @@ export class MemoryManager {
     }
 
     // Combine: α * embedding + (1-α) * BM25, weighted by strength
-    const ALPHA = 0.6;
+    // When embedding unavailable, effectively BM25-only (embScore = 0 for all)
+    const ALPHA = queryEmbedding ? 0.6 : 0;
     const allIds = new Set([...embeddingScores.keys(), ...bm25Scores.keys()]);
     const scored: Array<{ id: string; score: number }> = [];
 
