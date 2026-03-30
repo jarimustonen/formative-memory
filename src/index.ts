@@ -278,45 +278,8 @@ const associativeMemoryPlugin = {
       }),
     );
 
-    // Auto-recall: inject relevant memories before each prompt
-    if (config.autoRecall) {
-      api.on("before_prompt_build", async (event, ctx) => {
-        const workspaceDir = ctx.workspaceDir ?? ".";
-        const manager = getManager(config, workspaceDir);
-
-        if (!event.prompt) return;
-
-        try {
-          const parts: string[] = [];
-
-          const results = await manager.recall(event.prompt, 3);
-          if (results.length > 0) {
-            parts.push("## Recalled Memories", "");
-            for (const r of results) {
-              parts.push(
-                `- **[${r.memory.id.slice(0, 8)}]** (${r.memory.type}, strength: ${r.memory.strength.toFixed(2)}) ${r.memory.content}`,
-              );
-            }
-          }
-
-          const transitions = manager.getTransitionMemories();
-          if (transitions.length > 0) {
-            parts.push("", "## Temporal Transitions", "");
-            for (const m of transitions) {
-              parts.push(
-                `- **[${m.id.slice(0, 8)}]** ${m.temporal_state} → needs update (anchor: ${m.temporal_anchor}): ${m.content}`,
-              );
-            }
-          }
-
-          if (parts.length > 0) {
-            return { prependContext: parts.join("\n") };
-          }
-        } catch {
-          // Don't block the prompt if recall fails
-        }
-      });
-    }
+    // Legacy before_prompt_build hook removed — context engine assemble()
+    // replaces it with ledger-aware dedup and token budget management.
   },
 };
 
