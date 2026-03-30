@@ -64,48 +64,41 @@ function resolveMemoryDir(config: AssociativeMemoryConfig, workspaceDir: string)
   return join(workspaceDir, dbPath);
 }
 
-// Lazily initialized per workspace. Tracks the most recently created manager
-// for use by the context engine (which lacks workspace context at call time).
-const managers = new Map<string, MemoryManager>();
-let lastCreatedManager: MemoryManager | null = null;
+// Per-workspace cache: manager + circuit breaker scoped together.
+// Tracks the most recently created entry for the context engine.
+type ManagedWorkspace = { manager: MemoryManager; circuitBreaker: EmbeddingCircuitBreaker };
+const workspaces = new Map<string, ManagedWorkspace>();
+let lastWorkspace: ManagedWorkspace | null = null;
 
-function getManager(
-  config: AssociativeMemoryConfig,
-  workspaceDir: string,
-  circuitBreaker?: EmbeddingCircuitBreaker,
-): MemoryManager {
+function getWorkspace(config: AssociativeMemoryConfig, workspaceDir: string): ManagedWorkspace {
   const memoryDir = resolveMemoryDir(config, workspaceDir);
   // Include embedding config in cache key so config changes invalidate the cache.
   const cacheKey = `${memoryDir}:${config.embedding.model}:${config.embedding.apiKey}`;
-  let manager = managers.get(cacheKey);
-  if (!manager) {
+  let ws = workspaces.get(cacheKey);
+  if (!ws) {
+    const circuitBreaker = new EmbeddingCircuitBreaker();
     const rawEmbedder = createEmbedder(config);
-    const embedder = circuitBreaker
-      ? { embed: (text: string) => circuitBreaker.call((signal) => rawEmbedder.embed(text, signal)) }
-      : rawEmbedder;
-    manager = new MemoryManager(memoryDir, embedder);
-    managers.set(cacheKey, manager);
+    const embedder = {
+      embed: (text: string) => circuitBreaker.call((signal) => rawEmbedder.embed(text, signal)),
+    };
+    ws = { manager: new MemoryManager(memoryDir, embedder), circuitBreaker };
+    workspaces.set(cacheKey, ws);
   }
-  lastCreatedManager = manager;
-  return manager;
+  lastWorkspace = ws;
+  return ws;
 }
 
-/** Return the most recently created/accessed manager (for context engine). */
-function getLastManager(
-  config: AssociativeMemoryConfig,
-  fallbackDir: string,
-  circuitBreaker?: EmbeddingCircuitBreaker,
-): MemoryManager {
-  return lastCreatedManager ?? getManager(config, fallbackDir, circuitBreaker);
+/** Return the most recently created/accessed workspace (for context engine). */
+function getLastWorkspace(config: AssociativeMemoryConfig, fallbackDir: string): ManagedWorkspace {
+  return lastWorkspace ?? getWorkspace(config, fallbackDir);
 }
 
 function createMemoryTools(
   config: AssociativeMemoryConfig,
   workspaceDir: string,
   ledger?: TurnMemoryLedger,
-  circuitBreaker?: EmbeddingCircuitBreaker,
 ): AnyAgentTool[] {
-  const manager = () => getManager(config, workspaceDir, circuitBreaker);
+  const manager = () => getWorkspace(config, workspaceDir).manager;
   const logPath = () => join(resolveMemoryDir(config, workspaceDir), "retrieval.log");
 
   const storeTool: AnyAgentTool = {
@@ -250,12 +243,11 @@ const associativeMemoryPlugin = {
   register(api: OpenClawPluginApi) {
     const config = memoryConfigSchema.parse(api.pluginConfig);
     const ledger = new TurnMemoryLedger();
-    const circuitBreaker = new EmbeddingCircuitBreaker();
 
     api.registerTool(
       (ctx) => {
         const workspaceDir = ctx.workspaceDir ?? ctx.agentDir ?? ".";
-        return createMemoryTools(config, workspaceDir, ledger, circuitBreaker);
+        return createMemoryTools(config, workspaceDir, ledger);
       },
       { names: ["memory_store", "memory_search", "memory_get", "memory_feedback"] },
     );
@@ -291,16 +283,16 @@ const associativeMemoryPlugin = {
     });
 
     // Register context engine (claims contextEngine slot alongside the memory slot).
-    // Uses getLastManager() which returns the manager created by tools, avoiding
-    // a mutable resolvedWorkspaceDir variable that could be overwritten by
-    // concurrent workspaces.
-    api.registerContextEngine(CONTEXT_ENGINE_ID, () =>
-      createAssociativeMemoryContextEngine({
-        getManager: () => getLastManager(config, ".", circuitBreaker),
-        isBm25Only: () => circuitBreaker.isBm25Only(),
+    // Uses getLastWorkspace() which returns the workspace-scoped manager and
+    // circuit breaker created by tools.
+    api.registerContextEngine(CONTEXT_ENGINE_ID, () => {
+      const ws = getLastWorkspace(config, ".");
+      return createAssociativeMemoryContextEngine({
+        getManager: () => ws.manager,
+        isBm25Only: () => ws.circuitBreaker.isBm25Only(),
         ledger,
-      }),
-    );
+      });
+    });
 
     // Legacy before_prompt_build hook removed — context engine assemble()
     // replaces it with ledger-aware dedup and token budget management.
