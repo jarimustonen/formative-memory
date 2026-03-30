@@ -187,6 +187,7 @@ export class MemoryManager {
     // When embedding unavailable, effectively BM25-only (embScore = 0 for all)
     const ALPHA = queryEmbedding ? 0.6 : 0;
     const allIds = new Set([...embeddingScores.keys(), ...bm25Scores.keys()]);
+    const strengthMap = this.db.getStrengthMap(); // Single bulk query
     const scored: Array<{ id: string; score: number }> = [];
 
     for (const id of allIds) {
@@ -194,10 +195,9 @@ export class MemoryManager {
       const bm25Score = bm25Scores.get(id) ?? 0;
       const hybridScore = ALPHA * embScore + (1 - ALPHA) * bm25Score;
 
-      // Weight by strength
-      const mem = this.db.getMemory(id);
-      if (!mem) continue;
-      const finalScore = hybridScore * mem.strength;
+      const strength = strengthMap.get(id);
+      if (strength == null) continue;
+      const finalScore = hybridScore * strength;
       scored.push({ id, score: finalScore });
     }
 

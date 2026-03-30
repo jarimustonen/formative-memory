@@ -246,6 +246,18 @@ export class MemoryDatabase {
     }));
   }
 
+  /** Bulk fetch id→strength map for scoring. Single query instead of per-id lookups. */
+  getStrengthMap(): Map<string, number> {
+    const rows = this.db
+      .prepare("SELECT id, strength FROM memories")
+      .all() as Array<{ id: string; strength: number }>;
+    const map = new Map<string, number>();
+    for (const row of rows) {
+      map.set(row.id, row.strength);
+    }
+    return map;
+  }
+
   // -- FTS --
 
   insertFts(id: string, content: string, type: string): void {
