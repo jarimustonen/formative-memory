@@ -944,6 +944,21 @@ describe("AssociativeMemoryContextEngine dedup (ledger)", () => {
     expect(ledger.autoInjected.get(memId1)?.score).toBe(0.85);
   });
 
+  it("does not invalidate cache when only autoInjected changes", async () => {
+    const ledger = new TurnMemoryLedger();
+    const manager = stubManager([makeResultWithId(memId1)]);
+    const engine = createEngine(manager, { ledger });
+    const params = {
+      sessionId: "s1",
+      messages: [{ role: "user", content: "test" }] as any,
+    };
+
+    await engine.assemble(params); // miss — recalls and auto-injects
+    await engine.assemble(params); // should be cache hit despite autoInjected
+
+    expect(manager.recall).toHaveBeenCalledTimes(1);
+  });
+
   it("invalidates cache when ledger version changes (tool call between assembles)", async () => {
     const ledger = new TurnMemoryLedger();
     const manager = stubManager([makeResultWithId(memId1)]);

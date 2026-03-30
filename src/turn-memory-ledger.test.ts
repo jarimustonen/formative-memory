@@ -18,10 +18,10 @@ describe("TurnMemoryLedger", () => {
       expect(ledger.autoInjected.get("mem1")).toEqual({ score: 0.85 });
     });
 
-    it("increments version", () => {
+    it("does not increment version (not tool-visible, should not invalidate cache)", () => {
       const ledger = new TurnMemoryLedger();
       ledger.addAutoInjected("mem1", 0.9);
-      expect(ledger.version).toBe(1);
+      expect(ledger.version).toBe(0);
     });
 
     it("overwrites previous score for same id", () => {
@@ -29,7 +29,7 @@ describe("TurnMemoryLedger", () => {
       ledger.addAutoInjected("mem1", 0.5);
       ledger.addAutoInjected("mem1", 0.9);
       expect(ledger.autoInjected.get("mem1")).toEqual({ score: 0.9 });
-      expect(ledger.version).toBe(2);
+      expect(ledger.version).toBe(0);
     });
   });
 
@@ -126,7 +126,7 @@ describe("TurnMemoryLedger", () => {
       ledger.addSearchResults([{ id: "b", score: 0.8, query: "q" }]);
       ledger.addExplicitlyOpened("c");
       ledger.addStoredThisTurn("d");
-      expect(ledger.version).toBe(4);
+      expect(ledger.version).toBe(3); // autoInjected does not bump version
 
       ledger.reset();
 
@@ -139,13 +139,13 @@ describe("TurnMemoryLedger", () => {
   });
 
   describe("version tracking across operations", () => {
-    it("accumulates version across different mutation types", () => {
+    it("accumulates version only for tool-visible mutations", () => {
       const ledger = new TurnMemoryLedger();
-      ledger.addAutoInjected("a", 0.9);     // v=1
-      ledger.addSearchResults([{ id: "b", score: 0.8, query: "q" }]); // v=2
-      ledger.addExplicitlyOpened("c");       // v=3
-      ledger.addStoredThisTurn("d");         // v=4
-      expect(ledger.version).toBe(4);
+      ledger.addAutoInjected("a", 0.9);     // v=0 (no bump)
+      ledger.addSearchResults([{ id: "b", score: 0.8, query: "q" }]); // v=1
+      ledger.addExplicitlyOpened("c");       // v=2
+      ledger.addStoredThisTurn("d");         // v=3
+      expect(ledger.version).toBe(3);
     });
   });
 });

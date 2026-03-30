@@ -23,7 +23,8 @@ export class TurnMemoryLedger {
 
   addAutoInjected(id: string, score: number): void {
     this.autoInjected.set(id, { score });
-    this.version++;
+    // No version increment: auto-injected memories are not tool-visible
+    // and should not invalidate the assemble cache.
   }
 
   addSearchResults(results: Array<{ id: string; score: number; query: string }>): void {
