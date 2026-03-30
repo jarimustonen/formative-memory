@@ -37,6 +37,7 @@ describe("EmbeddingCircuitBreaker", () => {
     it("starts in CLOSED state", () => {
       const breaker = createBreaker();
       expect(breaker.getState()).toBe("CLOSED");
+      expect(breaker.isDegraded()).toBe(false);
     });
 
     it("is not BM25-only initially", () => {

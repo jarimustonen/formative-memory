@@ -65,8 +65,14 @@ export class EmbeddingCircuitBreaker {
     return this.state;
   }
 
+  /** True when circuit is OPEN (no embedding calls, BM25-only). */
   isBm25Only(): boolean {
     return this.getState() === "OPEN";
+  }
+
+  /** True when circuit is not fully healthy (OPEN or HALF_OPEN). */
+  isDegraded(): boolean {
+    return this.getState() !== "CLOSED";
   }
 
   /**
