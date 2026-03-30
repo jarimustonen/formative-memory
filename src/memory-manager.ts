@@ -7,7 +7,7 @@ import { appendRecallEvent, appendSearchEvent, appendStoreEvent } from "./retrie
 import type { LayoutManifest, Memory, MemorySource, TemporalState } from "./types.ts";
 
 export type EmbeddingProvider = {
-  embed(text: string): Promise<number[]>;
+  embed(text: string, signal?: AbortSignal): Promise<number[]>;
 };
 
 export type SearchResult = {

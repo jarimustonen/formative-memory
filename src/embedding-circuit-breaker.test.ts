@@ -176,20 +176,28 @@ describe("EmbeddingCircuitBreaker", () => {
   });
 
   describe("timeout", () => {
+    /** Create a function that respects AbortSignal — simulates a cancellable network call. */
+    function abortableSlowFn(delayMs: number) {
+      return (signal: AbortSignal) =>
+        new Promise<number[]>((resolve, reject) => {
+          const timer = setTimeout(() => resolve([1]), delayMs);
+          signal.addEventListener("abort", () => {
+            clearTimeout(timer);
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          });
+        });
+    }
+
     it("rejects with EmbeddingTimeoutError when call exceeds timeout", async () => {
       const breaker = createBreaker({ timeoutMs: 50 });
-      const slowFn = () => new Promise<number[]>((resolve) => setTimeout(() => resolve([1]), 200));
-
-      await expect(breaker.call(slowFn)).rejects.toThrow(EmbeddingTimeoutError);
-      await expect(breaker.call(slowFn)).rejects.toThrow("50ms");
+      await expect(breaker.call(abortableSlowFn(200))).rejects.toThrow(EmbeddingTimeoutError);
+      await expect(breaker.call(abortableSlowFn(200))).rejects.toThrow("50ms");
     });
 
     it("timeout counts as a failure", async () => {
       const breaker = createBreaker({ timeoutMs: 10, failureThreshold: 2 });
-      const slowFn = () => new Promise<number[]>((resolve) => setTimeout(() => resolve([1]), 100));
-
-      await expect(breaker.call(slowFn)).rejects.toThrow(EmbeddingTimeoutError);
-      await expect(breaker.call(slowFn)).rejects.toThrow(EmbeddingTimeoutError);
+      await expect(breaker.call(abortableSlowFn(100))).rejects.toThrow(EmbeddingTimeoutError);
+      await expect(breaker.call(abortableSlowFn(100))).rejects.toThrow(EmbeddingTimeoutError);
       expect(breaker.getState()).toBe("OPEN");
     });
 

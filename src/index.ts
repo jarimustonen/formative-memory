@@ -29,7 +29,7 @@ function jsonResult(payload: unknown) {
 
 function createEmbedder(config: AssociativeMemoryConfig) {
   return {
-    async embed(text: string): Promise<number[]> {
+    async embed(text: string, signal?: AbortSignal): Promise<number[]> {
       const res = await fetch("https://api.openai.com/v1/embeddings", {
         method: "POST",
         headers: {
@@ -40,6 +40,7 @@ function createEmbedder(config: AssociativeMemoryConfig) {
           input: text,
           model: config.embedding.model,
         }),
+        signal,
       });
       if (!res.ok) {
         const body = await res.text();
@@ -76,7 +77,7 @@ function getManager(
   if (!manager) {
     const rawEmbedder = createEmbedder(config);
     const embedder = circuitBreaker
-      ? { embed: (text: string) => circuitBreaker.call(() => rawEmbedder.embed(text)) }
+      ? { embed: (text: string) => circuitBreaker.call((signal) => rawEmbedder.embed(text, signal)) }
       : rawEmbedder;
     manager = new MemoryManager(memoryDir, embedder);
     managers.set(memoryDir, manager);

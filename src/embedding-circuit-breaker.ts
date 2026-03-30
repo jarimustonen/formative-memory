@@ -61,9 +61,9 @@ export class EmbeddingCircuitBreaker {
   /**
    * Execute an embedding call through the circuit breaker.
    * Returns the embedding on success, or throws EmbeddingCircuitOpenError when OPEN.
-   * Handles timeout and failure tracking.
+   * Handles timeout (with AbortSignal) and failure tracking.
    */
-  async call<T>(fn: () => Promise<T>): Promise<T> {
+  async call<T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
     const currentState = this.getState();
 
     if (currentState === "OPEN") {
@@ -78,14 +78,21 @@ export class EmbeddingCircuitBreaker {
       this.halfOpenProbeInFlight = true;
     }
 
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
     try {
-      const result = await withTimeout(fn(), this.timeoutMs);
+      const result = await fn(controller.signal);
       this.onSuccess();
       return result;
     } catch (error) {
       this.onFailure();
+      if (error instanceof DOMException && error.name === "AbortError") {
+        throw new EmbeddingTimeoutError(this.timeoutMs);
+      }
       throw error;
     } finally {
+      clearTimeout(timer);
       if (currentState === "HALF_OPEN") {
         this.halfOpenProbeInFlight = false;
       }
@@ -112,19 +119,6 @@ export class EmbeddingCircuitOpenError extends Error {
     super("Embedding circuit breaker is OPEN — BM25-only mode");
     this.name = "EmbeddingCircuitOpenError";
   }
-}
-
-/**
- * Race a promise against a timeout. Rejects with EmbeddingTimeoutError if timeout expires.
- */
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new EmbeddingTimeoutError(ms)), ms);
-    promise.then(
-      (value) => { clearTimeout(timer); resolve(value); },
-      (error) => { clearTimeout(timer); reject(error); },
-    );
-  });
 }
 
 export class EmbeddingTimeoutError extends Error {
