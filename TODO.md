@@ -154,42 +154,76 @@ Tiivistelmä: content hash (SHA-256), SQLite backend, working.md + consolidated.
 ## Phase 4: Konsolidaatio (uni) ❌
 
 > V1: synkroninen ja blokkaava. Ei background-ajoa, ei samanaikaisuusongelmia.
-
 > **Trigger:** OpenClaw:n session reset (oletus 4am) + eksplisiittinen komento (`/memory sleep`).
+> Väritys (coloring) on implisiittinen mergen kautta (v2 §9) — ei erillistä vaihetta.
+> Review: `history/review-phase4-breakdown.md`
 
-- [ ] Konsolidaatiopalvelu: service-rekisteröinti tai erillinen entry point
-- [ ] `state.last_consolidation_at` — aikaleima `state`-tauluun, kirjoitetaan konsolidaation lopussa
-- [ ] Sleep debt -varoitus: `assemble()` tarkistaa `state.last_consolidation_at`. >72h → varoitus systemPromptAddition:iin
-- [ ] **Alias-taulu** (tarvitaan vasta mergessä, siksi Phase 4):
-  - `memory_aliases`: old_id → new_id, reason, created_at
-  - Kaikki retrieval-operaatiot resolvoivat aliakset transparentisti
-  - Testit: alias-resoluutio haussa, get:ssä ja feedback:ssä
-- [ ] 10-vaiheinen prosessi:
-  1. **Retrieval-vahvistus:** retrieval.log → strength. Kaava: `η × confidence × mode_weight` (v2 §8)
-  2. **Decay:** working ×0.906, consolidated ×0.977
-  3. **Assosiaatiopäivitys:** co-retrieval-parit → associations-taulu
-  4. **Kertautuva assosiaatio:** epäsuorat yhteydet
-  5. **Working → consolidated:** siirto + strength → 1.0
-  6. **Temporaaliset siirtymät:** future→present→past (anchor-päivämäärän mukaan)
-  7. **Duplikaattien yhdistäminen:** Jaccard + embedding → LLM-kutsu
-     - Merged = uusi muisto (uusi ID, `source: "consolidation"`, strength 1.0)
-     - Alkuperäiset heikennetään (strength × 0.1)
-     - Intermediates (source: "consolidation") poistetaan re-mergessä — ketju pysyy matalana
-     - Assosiaatioiden perintö: probabilistic OR: `f(a,b) = a + b - a×b` (v2 §9)
-  8. **Väritys:** muistojen päivitys assosioituvien uudempien perusteella (implisiittinen mergen kautta)
-  9. **Pruning:** strength ≤ 0.05 → poisto, weight < 0.01 → assosiaatio pois
-  10. **Lokin tyhjennys + provenance GC:**
-      - Retrieval.log nollaus
-      - Exposure >30d ja muisto elossa → poista
-      - Pruned muistojen exposure → poista (attribution säilyy)
-      - Poistettujen viestien attribution → poista
-- [ ] Alias-päivitys: merget kirjoittavat alias-tauluun (old_id → new_id)
-- [ ] Attribution rewrite: mergessä attribution.memory_id → uusi ID
-- [ ] Regeneroi `working.md` ja `consolidated.md` SQLite:stä konsolidaation jälkeen
-- [ ] Päivitä `.layout.json` / state-versio johdonmukaisesti regeneroinnin yhteydessä
-- [ ] Blocking UX: ilmoitus alussa ("Starting memory consolidation...") + yhteenveto lopussa
-- [ ] Testit jokaiselle vaiheelle erikseen + integraatiotesti koko prosessille
-- [ ] Testit: markdown-view vastaa DB:n tilaa merge/prune/transition-operaatioiden jälkeen
+### 4.0 Infrastruktuuri ❌
+
+- [ ] **Content DB:hen (blokkeri):** Lisää `content TEXT NOT NULL` memories-tauluun. `rowToMemory()` lukee DB:stä, ei markdown-tiedostoista. Schema v2→v3 migraatio. Markdown-tiedostot ovat pelkkiä generoituja näkymiä.
+- [ ] Konsolidaation entrypoint ja trigger (`/memory sleep`)
+- [ ] Blocking UX: aloitusilmoitus ("Starting memory consolidation...") entrypointissa
+- [ ] `state.last_consolidation_at` — aikaleima, kirjoitetaan vasta onnistuneen konsolidaation lopussa
+- [ ] Sleep debt -varoitus: `assemble()` tarkistaa `last_consolidation_at`, >72h → varoitus systemPromptAddition:iin
+- [ ] **Alias-taulu:** `memory_aliases` (old_id → new_id, reason, created_at). Kanoninen `resolveCanonicalMemoryId()` joka resolvoi ketjut, detectoi syklit, max traversal depth. Käytetään haussa, get:ssä, feedback:ssä.
+- [ ] **Retrieval.log crash-turvallinen kulutus:** Snapshot/rotate ennen prosessointia (rename `.processing.<ts>`, poista onnistumisen jälkeen). Ei "lue ja trunckaa myöhemmin" ilman crash-semantiikkaa.
+- [ ] Bulk DB-helperit konsolidaatiota varten (bulk strength update, memory iteration with content, association bulk ops)
+- [ ] Testit: alias-resoluutio (1-hop, multi-hop, cycle, pruned target), sleep debt, content DB round-trip
+
+### 4.1 Retrieval-vahvistus + decay ❌
+
+- [ ] Normalisoi retrieval.log-tapahtumat + join provenance-tauluihin (attribution confidence, exposure retrieval_mode)
+- [ ] Reinforcement: `η × confidence × mode_weight` (v2 §8). BM25-only events: mode_weight=0.5
+- [ ] Muistojen decay: working ×0.906, consolidated ×0.977
+- [ ] **Assosiaatioiden decay:** weight × decay_factor (ratkaistava: λ_assoc, ks. avoin kysymys 5). Ilman decayta assosiaatiot eivät koskaan saavuta pruning-thresholdia.
+- [ ] Testit: tarkat numeeriset lopputulokset, reinforcement eri confidence-arvoilla, decay round-trip
+
+### 4.2 Assosiaatiot + temporaaliset siirtymät ❌
+
+- [ ] Co-retrieval-parit → associations-taulu (retrieval.log-tapahtumista, sama turn = co-retrieval)
+- [ ] **Bounded transitive assosiaatio:** max 1 hop, tuotetun yhteyden weight ≥ threshold (esim. 0.1), cap päivitettyjen yhteyksien määrä per run
+- [ ] Temporaaliset siirtymät: future→present→past (temporal_anchor < now)
+- [ ] Testit: assosiaatiopäivitys, transitive bounds, temporaalinen siirtymä
+
+### 4.3 Pre-merge pruning ❌
+
+- [ ] Muistot: strength ≤ 0.05 → poisto (exposure poistetaan, attribution säilyy)
+- [ ] Assosiaatiot: weight < 0.01 → poisto
+- [ ] Pruning ennen mergea: halvat muistot eivät kuluta merge-kandidaattien arviointia
+- [ ] Testit: pruning-thresholdit, provenance-käyttäytyminen poiston jälkeen
+
+### 4.4 Merge-kandidaattien tunnistus ❌
+
+- [ ] Jaccard-samankaltaisuus (content-pohjainen)
+- [ ] Embedding cosine similarity (jos embeddingiä saatavilla, circuit breaker -tietoinen)
+- [ ] Deterministinen kandidaattien ranking ja threshold
+- [ ] Max pairs per run -cap, token-budjetti klustereille
+- [ ] Vain puhdas logiikka — ei LLM-kutsuja, ei DB-mutaatioita
+- [ ] Testit: mock-muistoilla, deterministiset ryhmittelyt, edge caset (ei embeddingiä, yksi muisto jne.)
+
+### 4.5 Merge-suoritus ❌
+
+- [ ] LLM-kutsu: tuota yhdistetty sisältö kandidaattiklusterille
+- [ ] DB-transaktio:
+  - Luo uusi muisto (`source: "consolidation"`, strength 1.0, uusi content hash)
+  - Heikennä alkuperäiset (strength × 0.1)
+  - Poista intermediates (`source: "consolidation"`) → kirjoita `memory_aliases`
+  - Assosiaatioiden perintö: probabilistic OR `f(a,b) = a + b - a×b` (v2 §9)
+  - Attribution rewrite: `replaceMemoryId()` + `mergeAttributionRow()` PK-collision handling
+  - Alias-ketjujen path compression
+- [ ] Chain handling: intermediates poistetaan, originals heikennetään — ketju pysyy matalana
+- [ ] Testit: ensin deterministisellä sisällöllä (stub LLM), sitten LLM-integraatio erikseen
+
+### 4.6 Viimeistely ❌
+
+- [ ] Working → consolidated: metadata-siirto, strength → 1.0 (vasta merge/prune jälkeen)
+- [ ] Retrieval.log: poista prosessoitu snapshot
+- [ ] Provenance GC: exposure >30d ja muisto elossa → poista. Pruned muistojen exposure → poista. Poistettujen viestien attribution → poista.
+- [ ] Regeneroi `working.md` ja `consolidated.md` SQLite:stä (atomic file replace)
+- [ ] Päivitä `.layout.json` / state-versio
+- [ ] Kirjoita `state.last_consolidation_at` (vasta kun kaikki onnistunut)
+- [ ] Blocking UX: yhteenveto lopussa (mergatut, pruned, siirretyt)
+- [ ] Testit: markdown vastaa DB:n tilaa, layout-manifest, integraatiotesti koko prosessille
 
 ---
 
