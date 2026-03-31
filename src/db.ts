@@ -133,31 +133,9 @@ export class MemoryDatabase {
   private init() {
     this.db.exec(SCHEMA_SQL);
     const version = Number(this.getState("schema_version") ?? 0);
-    if (version < 3) {
-      this.migrateToV3();
-    }
     if (version < SCHEMA_VERSION) {
       this.setState("schema_version", String(SCHEMA_VERSION));
     }
-  }
-
-  /** v2→v3: Add content column to memories, populate from FTS. */
-  private migrateToV3(): void {
-    // Add column if missing (idempotent — errors silently if already exists)
-    try {
-      this.db.exec("ALTER TABLE memories ADD COLUMN content TEXT NOT NULL DEFAULT ''");
-    } catch {
-      // Column already exists (e.g. fresh DB created with v3 schema)
-    }
-
-    // Backfill content from FTS for existing rows with empty content
-    this.db.exec(`
-      UPDATE memories SET content = (
-        SELECT content FROM memory_fts WHERE memory_fts.id = memories.id
-      ) WHERE memories.content = '' AND EXISTS (
-        SELECT 1 FROM memory_fts WHERE memory_fts.id = memories.id
-      )
-    `);
   }
 
   // -- State --
