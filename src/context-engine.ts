@@ -475,7 +475,7 @@ export function extractLastUserMessage(messages: { role?: string; content?: unkn
   return null;
 }
 
-const SLEEP_DEBT_HOURS = 72;
+const SLEEP_DEBT_HOURS = 48;
 
 /**
  * Check if memory consolidation is overdue (> 72h since last run).
