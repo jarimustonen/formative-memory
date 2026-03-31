@@ -264,3 +264,4 @@ Erillinen kuvaus: `history/openclaw-upstream-changes.md`
 - **Inkrementaalinen eteneminen:** 3.2 (assemble) rakennetaan ensin ilman dedupia/cachea, 3.3 (cache) ja 3.4 (ledger) täydentävät myöhemmin. Tämä on tarkoituksellista — ks. kunkin tehtävän huomautukset
 - **Testit edellä:** Kirjoita unit-testit ennen toteutusta. Käytä YAML-fixtuureja tietokannan tilan kuvaamiseen
 - Review-dokumentti: `history/review-todo-v2-architecture.md` — konteksti tehdyille päätöksille
+- **Indeksiauditointi:** Jokaisen uuden taulun tai kyselyn yhteydessä tarkista, että kaikki WHERE/ORDER BY -sarakkeet ovat indeksoitu tai PK:n prefix. Vältä full table scanit. Ks. `history/review-phase3.6-provenance-tables.md` taustaksi.
