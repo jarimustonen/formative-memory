@@ -489,32 +489,15 @@ export class MemoryDatabase {
     turnId: string;
     createdAt: string;
   }): void {
-    this.db
-      .prepare(
-        `INSERT INTO message_memory_attribution
-         (message_id, memory_id, evidence, confidence, turn_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT(message_id, memory_id) DO UPDATE SET
-           evidence = CASE
-             WHEN excluded.confidence > message_memory_attribution.confidence
-             THEN excluded.evidence ELSE message_memory_attribution.evidence END,
-           confidence = MAX(message_memory_attribution.confidence, excluded.confidence),
-           turn_id = CASE
-             WHEN excluded.confidence > message_memory_attribution.confidence
-             THEN excluded.turn_id ELSE message_memory_attribution.turn_id END,
-           updated_at = CASE
-             WHEN excluded.confidence > message_memory_attribution.confidence
-             THEN excluded.created_at
-             ELSE message_memory_attribution.updated_at END`,
-      )
-      .run(
-        params.messageId,
-        params.memoryId,
-        params.evidence,
-        params.confidence,
-        params.turnId,
-        params.createdAt,
-      );
+    this.mergeAttributionRow({
+      message_id: params.messageId,
+      memory_id: params.memoryId,
+      evidence: params.evidence,
+      confidence: params.confidence,
+      turn_id: params.turnId,
+      created_at: params.createdAt,
+      updated_at: null,
+    });
   }
 
   /**
