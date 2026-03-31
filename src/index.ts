@@ -283,16 +283,14 @@ const associativeMemoryPlugin = {
     });
 
     // Register context engine (claims contextEngine slot alongside the memory slot).
-    // Uses getLastWorkspace() which returns the workspace-scoped manager and
-    // circuit breaker created by tools.
-    api.registerContextEngine(CONTEXT_ENGINE_ID, () => {
-      const ws = getLastWorkspace(config, ".");
-      return createAssociativeMemoryContextEngine({
-        getManager: () => ws.manager,
-        isBm25Only: () => ws.circuitBreaker.isBm25Only(),
+    // Resolves workspace dynamically on each call — never captures a stale reference.
+    api.registerContextEngine(CONTEXT_ENGINE_ID, () =>
+      createAssociativeMemoryContextEngine({
+        getManager: () => getLastWorkspace(config, ".").manager,
+        isBm25Only: () => getLastWorkspace(config, ".").circuitBreaker.isBm25Only(),
         ledger,
-      });
-    });
+      }),
+    );
 
     // Legacy before_prompt_build hook removed — context engine assemble()
     // replaces it with ledger-aware dedup and token budget management.
