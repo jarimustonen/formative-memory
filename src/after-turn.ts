@@ -105,8 +105,12 @@ export function processAfterTurn(params: AfterTurnParams): void {
     }
 
     // 2. Write attribution records
-    //    Find the last assistant message index for message_id generation.
-    const lastAssistantIdx = findLastAssistantMessageIndex(params.messages);
+    //    Find the last assistant message in current-turn messages only.
+    //    Using prePromptMessageCount to avoid binding to historical messages.
+    const lastAssistantIdx = findLastAssistantMessageIndex(
+      params.messages,
+      params.prePromptMessageCount,
+    );
     const messageId = lastAssistantIdx !== -1
       ? `${turnId}:msg:${lastAssistantIdx}`
       : null;
@@ -189,11 +193,13 @@ export function processAfterTurn(params: AfterTurnParams): void {
 // -- Helpers --
 
 /**
- * Find the index of the last assistant message in the full message list.
- * Returns -1 if no assistant message exists.
+ * Find the index of the last assistant message, searching backwards from
+ * the end of the array. `startIndex` limits the search to messages at or
+ * after that position (used to restrict to current-turn messages only).
+ * Returns -1 if no assistant message exists in the search range.
  */
-export function findLastAssistantMessageIndex(messages: unknown[]): number {
-  for (let i = messages.length - 1; i >= 0; i--) {
+export function findLastAssistantMessageIndex(messages: unknown[], startIndex = 0): number {
+  for (let i = messages.length - 1; i >= startIndex; i--) {
     const msg = messages[i];
     if (msg != null && typeof msg === "object" && (msg as Record<string, unknown>).role === "assistant") {
       return i;

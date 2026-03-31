@@ -64,6 +64,23 @@ describe("findLastAssistantMessageIndex", () => {
   it("handles empty messages", () => {
     expect(findLastAssistantMessageIndex([])).toBe(-1);
   });
+
+  it("respects startIndex — skips messages before it", () => {
+    const msgs = [
+      { role: "assistant", content: "old" },   // index 0 — pre-prompt
+      { role: "user", content: "new" },         // index 1
+      { role: "assistant", content: "current" },// index 2
+    ];
+    expect(findLastAssistantMessageIndex(msgs, 1)).toBe(2);
+  });
+
+  it("returns -1 when no assistant message after startIndex", () => {
+    const msgs = [
+      { role: "assistant", content: "old" },   // index 0 — pre-prompt
+      { role: "user", content: "new" },         // index 1
+    ];
+    expect(findLastAssistantMessageIndex(msgs, 1)).toBe(-1);
+  });
 });
 
 // -- parseFeedbackCalls --
@@ -470,6 +487,29 @@ describe("processAfterTurn", () => {
     expect(exposures).toHaveLength(1);
 
     // But no attribution (no assistant message to attribute to)
+    const attributions = db.getAttributionsForTurn(TURN_ID);
+    expect(attributions).toHaveLength(0);
+  });
+
+  it("does not bind attribution to historical assistant message from pre-prompt", () => {
+    const ledger = makeLedger();
+    ledger.addAutoInjected(MEM_A, 0.9);
+
+    // Pre-prompt contains an old assistant message, but current turn has only user input
+    const messages = [
+      { role: "user", content: "old question" },       // pre-prompt
+      { role: "assistant", content: "old answer" },     // pre-prompt (index 1)
+      { role: "user", content: "new question" },        // current turn
+    ];
+
+    processAfterTurn(defaultParams({ ledger, messages, prePromptMessageCount: 2 }));
+
+    // Exposure is written (ledger-based, not message-dependent)
+    const exposures = db.getExposures(SESSION_ID, TURN_ID);
+    expect(exposures).toHaveLength(1);
+
+    // No attribution — current turn has no assistant message, and the
+    // historical one at index 1 must NOT be used
     const attributions = db.getAttributionsForTurn(TURN_ID);
     expect(attributions).toHaveLength(0);
   });
