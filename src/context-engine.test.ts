@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CONTEXT_ENGINE_ID,
   buildCacheKey,
+  checkSleepDebt,
   classifyBudget,
   createAssociativeMemoryContextEngine,
   escapeMemoryContent,
@@ -1386,5 +1387,67 @@ describe("afterTurn()", () => {
     // Different turnIds because userTurnKey uses absolute index + prePromptMessageCount differs
     const exposures = db.getExposuresByMemory("mem-a");
     expect(exposures).toHaveLength(2);
+  });
+});
+
+// -- checkSleepDebt --
+
+describe("checkSleepDebt", () => {
+  let sleepDb: MemoryDatabase;
+  let sleepTmpDir: string;
+
+  beforeEach(() => {
+    sleepTmpDir = mkdtempSync(join(tmpdir(), "sleep-debt-test-"));
+    sleepDb = new MemoryDatabase(join(sleepTmpDir, "test.db"));
+  });
+
+  afterEach(() => {
+    sleepDb.close();
+    rmSync(sleepTmpDir, { recursive: true, force: true });
+  });
+
+  it("returns empty when getDb is not provided", () => {
+    expect(checkSleepDebt(undefined)).toBe("");
+  });
+
+  it("returns empty when no memories and never consolidated", () => {
+    expect(checkSleepDebt(() => sleepDb)).toBe("");
+  });
+
+  it("warns when memories exist but never consolidated", () => {
+    sleepDb.insertMemory({
+      id: "mem1",
+      type: "fact",
+      content: "test",
+      temporal_state: "none",
+      temporal_anchor: null,
+      created_at: "2026-03-01T00:00:00Z",
+      strength: 1.0,
+      source: "agent_tool",
+      consolidated: false,
+      file_path: "working.md",
+    });
+    const result = checkSleepDebt(() => sleepDb);
+    expect(result).toContain("never been run");
+    expect(result).toContain("/memory sleep");
+  });
+
+  it("returns empty when consolidated recently", () => {
+    sleepDb.setState("last_consolidation_at", new Date().toISOString());
+    expect(checkSleepDebt(() => sleepDb)).toBe("");
+  });
+
+  it("warns when last consolidation was > 72h ago", () => {
+    const old = new Date(Date.now() - 73 * 60 * 60 * 1000).toISOString();
+    sleepDb.setState("last_consolidation_at", old);
+    const result = checkSleepDebt(() => sleepDb);
+    expect(result).toContain("overdue");
+    expect(result).toContain("/memory sleep");
+  });
+
+  it("returns empty when last consolidation was exactly 72h ago", () => {
+    const exact = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+    sleepDb.setState("last_consolidation_at", exact);
+    expect(checkSleepDebt(() => sleepDb)).toBe("");
   });
 });

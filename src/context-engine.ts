@@ -371,7 +371,8 @@ export function createAssociativeMemoryContextEngine(
         ? "\n\n(Note: Memory recall is operating in keyword-only mode — semantic search temporarily unavailable.)"
         : "";
 
-      const systemPromptAddition = memoryBlock + bm25Notice;
+      const sleepDebtNotice = checkSleepDebt(options.getDb);
+      const systemPromptAddition = memoryBlock + bm25Notice + sleepDebtNotice;
       cachedEntry = { key: cacheKey, systemPromptAddition };
 
       return {
@@ -472,4 +473,29 @@ export function extractLastUserMessage(messages: { role?: string; content?: unkn
     }
   }
   return null;
+}
+
+const SLEEP_DEBT_HOURS = 72;
+
+/**
+ * Check if memory consolidation is overdue (> 72h since last run).
+ * Returns a warning string for systemPromptAddition, or empty string.
+ */
+export function checkSleepDebt(getDb?: () => MemoryDatabase): string {
+  if (!getDb) return "";
+  try {
+    const db = getDb();
+    const lastAt = db.getState("last_consolidation_at");
+    if (!lastAt) {
+      // Never consolidated — warn only if memories exist
+      const stats = db.stats();
+      if (stats.total === 0) return "";
+      return "\n\n(Memory consolidation has never been run. Consider running `/memory sleep` to strengthen associations and clean up old memories.)";
+    }
+    const hoursSince = (Date.now() - new Date(lastAt).getTime()) / (1000 * 60 * 60);
+    if (hoursSince <= SLEEP_DEBT_HOURS) return "";
+    return "\n\n(Memory consolidation is overdue. Consider running `/memory sleep` to strengthen associations and clean up old memories.)";
+  } catch {
+    return ""; // Don't break assemble if state check fails
+  }
 }
