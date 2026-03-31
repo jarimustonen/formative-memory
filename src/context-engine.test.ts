@@ -1344,4 +1344,27 @@ describe("afterTurn()", () => {
     const exposures = db.getExposuresByMemory("mem-a");
     expect(exposures).toHaveLength(2);
   });
+
+  it("same user message in different turns produces different turnIds", async () => {
+    const { engine, ledger } = createEngineWithDb();
+    ledger.addAutoInjected("mem-a", 0.9);
+
+    // Turn 1: "hello" at index 0
+    await engine.afterTurn!(afterTurnParams([
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "hi" },
+    ]));
+
+    // Turn 2: same "hello" but now at index 2 (after turn 1's messages in history)
+    await engine.afterTurn!(afterTurnParams([
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "hi" },
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "hi again" },
+    ], 2));
+
+    // Different turnIds because userTurnKey uses absolute index + prePromptMessageCount differs
+    const exposures = db.getExposuresByMemory("mem-a");
+    expect(exposures).toHaveLength(2);
+  });
 });
