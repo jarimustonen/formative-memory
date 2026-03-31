@@ -34,6 +34,7 @@ describe("MemoryDatabase", () => {
     const sampleMemory = {
       id: "abc123",
       type: "fact",
+      content: "Team preferred PostgreSQL for operational reasons.",
       temporal_state: "none" as const,
       temporal_anchor: null,
       created_at: "2026-03-01T10:00:00Z",
@@ -43,12 +44,13 @@ describe("MemoryDatabase", () => {
       file_path: "working.md",
     };
 
-    it("inserts and retrieves memory", () => {
+    it("inserts and retrieves memory with content", () => {
       db.insertMemory(sampleMemory);
       const mem = db.getMemory("abc123");
       expect(mem).not.toBeNull();
       expect(mem!.id).toBe("abc123");
       expect(mem!.type).toBe("fact");
+      expect(mem!.content).toBe("Team preferred PostgreSQL for operational reasons.");
       expect(mem!.strength).toBe(1.0);
     });
 
@@ -179,8 +181,8 @@ describe("MemoryDatabase", () => {
   });
 
   describe("schema migration", () => {
-    it("sets schema_version to 2", () => {
-      expect(db.getState("schema_version")).toBe("2");
+    it("sets schema_version to 3", () => {
+      expect(db.getState("schema_version")).toBe("3");
     });
   });
 
@@ -394,6 +396,7 @@ describe("MemoryDatabase", () => {
     const oldMem = {
       id: "old_id",
       type: "fact",
+      content: "Some old memory content.",
       temporal_state: "none" as const,
       temporal_anchor: null,
       created_at: "2026-03-01",

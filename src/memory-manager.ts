@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { appendChunk, formatChunkFile, parseChunks } from "./chunks.ts";
-import { MemoryDatabase } from "./db.ts";
+import { appendChunk, formatChunkFile } from "./chunks.ts";
+import { MemoryDatabase, type MemoryRow } from "./db.ts";
 import {
   EmbeddingCircuitOpenError,
   EmbeddingTimeoutError,
@@ -114,6 +114,7 @@ export class MemoryManager {
       this.db.insertMemory({
         id,
         type: params.type,
+        content: params.content,
         temporal_state: params.temporal_state ?? "none",
         temporal_anchor: params.temporal_anchor ?? null,
         created_at: now,
@@ -291,20 +292,10 @@ export class MemoryManager {
 
   // -- Helpers --
 
-  private rowToMemory(row: {
-    id: string;
-    type: string;
-    temporal_state: string;
-    temporal_anchor: string | null;
-    created_at: string;
-    strength: number;
-    source: string;
-    consolidated: number;
-  }): Memory {
-    const content = this.getContentFromFile(row.id, row.consolidated === 1);
+  private rowToMemory(row: MemoryRow): Memory {
     return {
       id: row.id,
-      content: content ?? "(content not found)",
+      content: row.content || "(content not found)",
       type: row.type,
       temporal_state: row.temporal_state as TemporalState,
       temporal_anchor: row.temporal_anchor,
@@ -314,19 +305,6 @@ export class MemoryManager {
       consolidated: row.consolidated === 1,
       embedding: null, // Don't load embedding by default
     };
-  }
-
-  private getContentFromFile(id: string, consolidated: boolean): string | null {
-    const filePath = consolidated ? this.consolidatedPath : this.workingPath;
-    try {
-      const content = readFileSync(filePath, "utf8");
-      const chunks = parseChunks(content);
-      // Match by full id or short prefix (chunk files use 8-char prefix)
-      const chunk = chunks.find((c) => id.startsWith(c.id) || c.id.startsWith(id.slice(0, 8)));
-      return chunk?.content ?? null;
-    } catch {
-      return null;
-    }
   }
 
   getDatabase(): MemoryDatabase {

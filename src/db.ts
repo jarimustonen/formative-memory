@@ -11,12 +11,13 @@
 import Database from "better-sqlite3";
 import type { Association, LayoutManifest, MemorySource, TemporalState } from "./types.ts";
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS memories (
   id TEXT PRIMARY KEY,
   type TEXT NOT NULL,
+  content TEXT NOT NULL DEFAULT '',
   temporal_state TEXT NOT NULL DEFAULT 'past',
   temporal_anchor TEXT,
   created_at TEXT NOT NULL,
@@ -89,6 +90,7 @@ CREATE INDEX IF NOT EXISTS idx_attribution_turn_id ON message_memory_attribution
 export type MemoryRow = {
   id: string;
   type: string;
+  content: string;
   temporal_state: string;
   temporal_anchor: string | null;
   created_at: string;
@@ -131,11 +133,31 @@ export class MemoryDatabase {
   private init() {
     this.db.exec(SCHEMA_SQL);
     const version = Number(this.getState("schema_version") ?? 0);
+    if (version < 3) {
+      this.migrateToV3();
+    }
     if (version < SCHEMA_VERSION) {
-      // Migrations are idempotent via IF NOT EXISTS in SCHEMA_SQL.
-      // Just bump the version marker.
       this.setState("schema_version", String(SCHEMA_VERSION));
     }
+  }
+
+  /** v2→v3: Add content column to memories, populate from FTS. */
+  private migrateToV3(): void {
+    // Add column if missing (idempotent — errors silently if already exists)
+    try {
+      this.db.exec("ALTER TABLE memories ADD COLUMN content TEXT NOT NULL DEFAULT ''");
+    } catch {
+      // Column already exists (e.g. fresh DB created with v3 schema)
+    }
+
+    // Backfill content from FTS for existing rows with empty content
+    this.db.exec(`
+      UPDATE memories SET content = (
+        SELECT content FROM memory_fts WHERE memory_fts.id = memories.id
+      ) WHERE memories.content = '' AND EXISTS (
+        SELECT 1 FROM memory_fts WHERE memory_fts.id = memories.id
+      )
+    `);
   }
 
   // -- State --
@@ -156,6 +178,7 @@ export class MemoryDatabase {
   insertMemory(mem: {
     id: string;
     type: string;
+    content: string;
     temporal_state: TemporalState;
     temporal_anchor: string | null;
     created_at: string;
@@ -166,12 +189,13 @@ export class MemoryDatabase {
   }): void {
     this.db
       .prepare(
-        `INSERT INTO memories (id, type, temporal_state, temporal_anchor, created_at, strength, source, consolidated, file_path)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO memories (id, type, content, temporal_state, temporal_anchor, created_at, strength, source, consolidated, file_path)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         mem.id,
         mem.type,
+        mem.content,
         mem.temporal_state,
         mem.temporal_anchor,
         mem.created_at,
