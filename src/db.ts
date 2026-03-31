@@ -212,6 +212,9 @@ export class MemoryDatabase {
       this.db.prepare("DELETE FROM memory_embeddings WHERE id = ?").run(id);
       this.db.prepare("DELETE FROM memory_fts WHERE id = ?").run(id);
       this.db.prepare("DELETE FROM associations WHERE memory_a = ? OR memory_b = ?").run(id, id);
+      // Exposure is ephemeral — delete on memory removal.
+      // Attribution is durable — intentionally kept for historical reinforcement data.
+      this.db.prepare("DELETE FROM turn_memory_exposure WHERE memory_id = ?").run(id);
     });
     del();
   }
@@ -232,6 +235,36 @@ export class MemoryDatabase {
 
       // Update embedding
       this.db.prepare("UPDATE memory_embeddings SET id = ? WHERE id = ?").run(newId, oldId);
+
+      // Merge exposure provenance: INSERT OR IGNORE handles PK collisions
+      this.db
+        .prepare(
+          `INSERT OR IGNORE INTO turn_memory_exposure
+           (session_id, turn_id, memory_id, mode, score, retrieval_mode, created_at)
+           SELECT session_id, turn_id, ?, mode, score, retrieval_mode, created_at
+           FROM turn_memory_exposure WHERE memory_id = ?`,
+        )
+        .run(newId, oldId);
+      this.db.prepare("DELETE FROM turn_memory_exposure WHERE memory_id = ?").run(oldId);
+
+      // Merge attribution provenance: keep higher confidence on PK collision
+      this.db
+        .prepare(
+          `INSERT INTO message_memory_attribution
+           (message_id, memory_id, evidence, confidence, turn_id, created_at, updated_at)
+           SELECT message_id, ?, evidence, confidence, turn_id, created_at, updated_at
+           FROM message_memory_attribution WHERE memory_id = ?
+           ON CONFLICT(message_id, memory_id) DO UPDATE SET
+             evidence = CASE
+               WHEN excluded.confidence > message_memory_attribution.confidence
+               THEN excluded.evidence ELSE message_memory_attribution.evidence END,
+             confidence = MAX(message_memory_attribution.confidence, excluded.confidence),
+             turn_id = CASE
+               WHEN excluded.confidence > message_memory_attribution.confidence
+               THEN excluded.turn_id ELSE message_memory_attribution.turn_id END`,
+        )
+        .run(newId, oldId);
+      this.db.prepare("DELETE FROM message_memory_attribution WHERE memory_id = ?").run(oldId);
 
       // Update associations - need to handle the CHECK constraint (memory_a < memory_b)
       const assocs = this.db
