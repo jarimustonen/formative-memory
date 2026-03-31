@@ -8,6 +8,7 @@
  * Architecture: v2 §9, §13.
  */
 
+import { applyDecay, applyReinforcement } from "./consolidation-steps.ts";
 import type { MemoryDatabase } from "./db.ts";
 import type { MemoryManager } from "./memory-manager.ts";
 
@@ -48,7 +49,9 @@ export async function runConsolidation(
     transitioned: 0,
   };
 
-  // TODO: Phase 4.1 — Reinforcement + decay
+  // Phase 4.1 — Reinforcement + decay
+  summary.reinforced = applyReinforcement(params.db);
+  summary.decayed = applyDecay(params.db);
   // TODO: Phase 4.2 — Associations + temporal transitions
   // TODO: Phase 4.3 — Pre-merge pruning
   // TODO: Phase 4.4 — Merge candidate detection

@@ -417,6 +417,11 @@ export class MemoryDatabase {
       .run(sortedA, sortedB);
   }
 
+  /** Multiply all association weights by a decay factor. */
+  decayAllAssociationWeights(factor: number): void {
+    this.db.prepare("UPDATE associations SET weight = weight * ?").run(factor);
+  }
+
   // -- Stats --
 
   stats(): {
@@ -604,6 +609,12 @@ export class MemoryDatabase {
     return this.db
       .prepare("SELECT * FROM message_memory_attribution WHERE turn_id = ?")
       .all(turnId) as AttributionRow[];
+  }
+
+  getAllAttributions(): AttributionRow[] {
+    return this.db
+      .prepare("SELECT * FROM message_memory_attribution")
+      .all() as AttributionRow[];
   }
 
   deleteAttributionsForMessages(messageIds: string[]): void {
