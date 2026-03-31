@@ -10,6 +10,7 @@
 
 import {
   applyDecay,
+  applyPruning,
   applyReinforcement,
   applyTemporalTransitions,
   updateCoRetrievalAssociations,
@@ -62,7 +63,9 @@ export async function runConsolidation(
   updateCoRetrievalAssociations(params.db, params.logPath);
   updateTransitiveAssociations(params.db);
   summary.transitioned = applyTemporalTransitions(params.db);
-  // TODO: Phase 4.3 — Pre-merge pruning
+  // Phase 4.3 — Pre-merge pruning
+  const pruneResult = applyPruning(params.db);
+  summary.pruned = pruneResult.memoriesPruned;
   // TODO: Phase 4.4 — Merge candidate detection
   // TODO: Phase 4.5 — Merge execution
   // TODO: Phase 4.6 — Finalization (working→consolidated, GC, markdown regen)

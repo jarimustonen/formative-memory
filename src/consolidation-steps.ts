@@ -220,6 +220,38 @@ export function updateTransitiveAssociations(
   return count;
 }
 
+// -- Step pre-merge: Pruning --
+
+/** Strength threshold below which memories are pruned. */
+export const PRUNE_STRENGTH_THRESHOLD = 0.05;
+
+/** Association weight threshold below which associations are pruned. */
+export const PRUNE_ASSOCIATION_THRESHOLD = 0.01;
+
+/**
+ * Remove memories with strength ≤ threshold and weak associations.
+ *
+ * deleteMemory() handles cascade: embeddings, FTS, associations, exposure
+ * are deleted. Attribution is preserved (durable historical data).
+ *
+ * Returns count of memories pruned.
+ */
+export function applyPruning(db: MemoryDatabase): { memoriesPruned: number; associationsPruned: number } {
+  const allMemories = db.getAllMemories();
+  let memoriesPruned = 0;
+
+  for (const mem of allMemories) {
+    if (mem.strength <= PRUNE_STRENGTH_THRESHOLD) {
+      db.deleteMemory(mem.id);
+      memoriesPruned++;
+    }
+  }
+
+  const associationsPruned = db.pruneWeakAssociations(PRUNE_ASSOCIATION_THRESHOLD);
+
+  return { memoriesPruned, associationsPruned };
+}
+
 // -- Step 6: Temporal transitions --
 
 /**

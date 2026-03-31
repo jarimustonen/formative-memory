@@ -10,9 +10,12 @@ import {
   ETA,
   MODE_WEIGHT_BM25_ONLY,
   MODE_WEIGHT_HYBRID,
+  PRUNE_ASSOCIATION_THRESHOLD,
+  PRUNE_STRENGTH_THRESHOLD,
   TRANSITIVE_WEIGHT_THRESHOLD,
   applyAssociationDecay,
   applyDecay,
+  applyPruning,
   applyReinforcement,
   applyTemporalTransitions,
   updateCoRetrievalAssociations,
@@ -356,6 +359,67 @@ describe("updateTransitiveAssociations", () => {
 
     const count = updateTransitiveAssociations(db, 1);
     expect(count).toBe(1);
+  });
+});
+
+// -- applyPruning --
+
+describe("applyPruning", () => {
+  it("prunes memories with strength ≤ threshold", () => {
+    insertMemory("strong", 0.5);
+    insertMemory("weak", 0.04); // below 0.05
+
+    const result = applyPruning(db);
+    expect(result.memoriesPruned).toBe(1);
+    expect(db.getMemory("strong")).not.toBeNull();
+    expect(db.getMemory("weak")).toBeNull();
+  });
+
+  it("prunes memory at exactly the threshold", () => {
+    insertMemory("borderline", 0.05);
+
+    const result = applyPruning(db);
+    expect(result.memoriesPruned).toBe(1);
+    expect(db.getMemory("borderline")).toBeNull();
+  });
+
+  it("preserves attribution after memory pruning", () => {
+    insertMemory("mem-a", 0.03);
+    db.upsertAttribution({
+      messageId: "t1:msg:1",
+      memoryId: "mem-a",
+      evidence: "tool_get",
+      confidence: 0.6,
+      turnId: "t1",
+      createdAt: "2026-03-01T00:00:00Z",
+    });
+
+    applyPruning(db);
+
+    expect(db.getMemory("mem-a")).toBeNull();
+    // Attribution survives (durable)
+    const attrs = db.getAttributionsByMemory("mem-a");
+    expect(attrs).toHaveLength(1);
+  });
+
+  it("prunes weak associations", () => {
+    insertMemory("mem-a", 0.5);
+    insertMemory("mem-b", 0.5);
+    insertMemory("mem-c", 0.5);
+    db.upsertAssociation("mem-a", "mem-b", 0.005, "2026-03-01T00:00:00Z"); // below 0.01
+    db.upsertAssociation("mem-a", "mem-c", 0.5, "2026-03-01T00:00:00Z");
+
+    const result = applyPruning(db);
+    expect(result.associationsPruned).toBe(1);
+    expect(db.getAssociationWeight("mem-a", "mem-b")).toBe(0);
+    expect(db.getAssociationWeight("mem-a", "mem-c")).toBe(0.5);
+  });
+
+  it("returns zeros when nothing to prune", () => {
+    insertMemory("healthy", 0.8);
+    const result = applyPruning(db);
+    expect(result.memoriesPruned).toBe(0);
+    expect(result.associationsPruned).toBe(0);
   });
 });
 

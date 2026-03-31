@@ -430,6 +430,11 @@ export class MemoryDatabase {
     this.db.prepare("UPDATE associations SET weight = weight * ?").run(factor);
   }
 
+  /** Delete associations with weight below threshold. Returns count deleted. */
+  pruneWeakAssociations(threshold: number): number {
+    return this.db.prepare("DELETE FROM associations WHERE weight < ?").run(threshold).changes;
+  }
+
   // -- Stats --
 
   stats(): {
