@@ -145,6 +145,10 @@ export function processAfterTurn(params: AfterTurnParams): void {
   }
 
   // 4. Cross-turn feedback attribution promotion
+  //    When feedback references a memory that was attributed in a PRIOR turn,
+  //    we update that prior attribution row rather than creating a new one
+  //    for the current turn. This implements the cross-turn promotion described
+  //    in TODO 3.7: "feedback voi tulla myöhemmässä turnissa".
   const feedbackCalls = parseFeedbackCalls(
     params.messages,
     params.prePromptMessageCount,
@@ -152,8 +156,17 @@ export function processAfterTurn(params: AfterTurnParams): void {
 
   for (const { memoryId, rating } of feedbackCalls) {
     const { evidence, confidence } = feedbackEvidenceForRating(rating);
+
+    // Look up the most recent existing attribution for this memory.
+    // If found, upsert to that row (cross-turn promotion/demotion).
+    // If not found, attribute to the current turn's assistant message.
+    const existing = db.getAttributionsByMemory(memoryId);
+    const targetMessageId = existing.length > 0
+      ? existing[existing.length - 1].message_id
+      : messageId;
+
     db.upsertAttribution({
-      messageId,
+      messageId: targetMessageId,
       memoryId,
       evidence,
       confidence,

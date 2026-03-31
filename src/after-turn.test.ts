@@ -528,5 +528,80 @@ describe("processAfterTurn", () => {
       expect(attrs[0].evidence).toBe("agent_feedback_negative");
       expect(attrs[0].confidence).toBe(CONFIDENCE.agent_feedback_negative);
     });
+
+    it("cross-turn: feedback in later turn updates prior turn's attribution row", () => {
+      // Turn 1: search returns MEM_A → attribution with tool_search_returned
+      const ledger1 = makeLedger();
+      ledger1.addSearchResults([{ id: MEM_A, score: 0.8, query: "test" }]);
+      const turn1Id = "session-001:2026-03-31T12:00:00.000Z";
+      const turn1Messages = [
+        { role: "user", content: "find stuff" },
+        { role: "assistant", content: "found it" },
+      ];
+      processAfterTurn({
+        ...defaultParams({ ledger: ledger1, messages: turn1Messages }),
+        turnId: turn1Id,
+      });
+
+      // Verify turn 1 attribution exists
+      const attrsBefore = db.getAttributionsByMemory(MEM_A);
+      expect(attrsBefore).toHaveLength(1);
+      expect(attrsBefore[0].evidence).toBe("tool_search_returned");
+      expect(attrsBefore[0].confidence).toBe(CONFIDENCE.tool_search_returned);
+      const priorMessageId = attrsBefore[0].message_id;
+
+      // Turn 2: feedback on MEM_A with rating 5 (no ledger entries for MEM_A)
+      const ledger2 = makeLedger();
+      const turn2Id = "session-001:2026-03-31T12:05:00.000Z";
+      const turn2Messages = makeMessages(2, [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: "toolu_1",
+              name: "memory_feedback",
+              input: { memory_id: MEM_A, rating: 5 },
+            },
+          ],
+        },
+      ]);
+      processAfterTurn({
+        ...defaultParams({ ledger: ledger2, messages: turn2Messages, prePromptMessageCount: 2 }),
+        turnId: turn2Id,
+      });
+
+      // The prior turn's attribution row should be promoted (same message_id)
+      const attrsAfter = db.getAttributionsByMemory(MEM_A);
+      expect(attrsAfter).toHaveLength(1); // same row updated, not a new one
+      expect(attrsAfter[0].message_id).toBe(priorMessageId);
+      expect(attrsAfter[0].evidence).toBe("agent_feedback_positive");
+      expect(attrsAfter[0].confidence).toBe(CONFIDENCE.agent_feedback_positive);
+    });
+
+    it("cross-turn: feedback for unknown memory creates new attribution on current turn", () => {
+      const ledger = makeLedger();
+      const messages = makeMessages(1, [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: "toolu_1",
+              name: "memory_feedback",
+              input: { memory_id: MEM_A, rating: 4 },
+            },
+          ],
+        },
+      ]);
+
+      processAfterTurn(defaultParams({ ledger, messages, prePromptMessageCount: 1 }));
+
+      // No prior attribution exists — should create new row with current turn's messageId
+      const attrs = db.getAttributionsByMemory(MEM_A);
+      expect(attrs).toHaveLength(1);
+      expect(attrs[0].message_id).toBe(`${TURN_ID}:msg:1`); // assistant at index 1 (after 1 pre-prompt)
+      expect(attrs[0].evidence).toBe("agent_feedback_positive");
+    });
   });
 });
