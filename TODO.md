@@ -4,9 +4,9 @@
 
 ## Tilanne (2026-03-31)
 
-**Valmista:** Infrastruktuuri (DB, tyypit, hash, chunks, retrieval-log, config), MemoryManager (store, search, recall, get), työkalurekisteröinti (4 työkalua), `registerMemoryPromptSection()`, Context Engine Phase 3.0–3.6 (assemble, cache, fingerprinting, turn memory ledger + dedup, embedding circuit breaker, provenance-taulut). Legacy `before_prompt_build` hook poistettu. Phase 3.7 afterTurn() -logiikka valmis (processAfterTurn), context engine -integraatio kesken. 273 testiä läpi.
+**Valmista:** Infrastruktuuri (DB, tyypit, hash, chunks, retrieval-log, config), MemoryManager (store, search, recall, get), työkalurekisteröinti (4 työkalua), `registerMemoryPromptSection()`, Context Engine Phase 3.0–3.7 (assemble, cache, fingerprinting, turn memory ledger + dedup, embedding circuit breaker, provenance-taulut, afterTurn). Legacy `before_prompt_build` hook poistettu. 277 testiä läpi.
 
-**Seuraava:** Phase 3.7 — context engine afterTurn() -integraatio + index.ts -muutokset.
+**Seuraava:** Phase 3.8 — siivous ja migraatio.
 
 **V1-periaate:** Yksinkertainen ja laajennettava. Minimoi hot path -kirjoitukset, mutta salli append-only sidecar-kirjoitukset normaalikäytössä (retrieval.log, provenance). Kanoniset muistomutaatiot (strength, assosiaatiot, pruning, merget, temporaaliset siirtymät) vain konsolidaatiossa.
 
@@ -141,7 +141,7 @@ Tiivistelmä: content hash (SHA-256), SQLite backend, working.md + consolidated.
 - [x] **Assistant-rajaus:** attributio vain current-turn assistant-viesteihin (ei historiaan)
 - [x] Testit: 37 testiä (parsinta, exposure, attribution, cross-turn, idempotenssi, edge cases)
 - [x] Review: `history/review-phase3.7-after-turn.md`, `history/review-phase3.7-after-turn-fixes.md`
-- [ ] Context engine -integraatio: `afterTurn()` metodi engineen + `index.ts` -muutokset
+- [x] Context engine -integraatio: `afterTurn()` metodi engineen + `index.ts` getDb/getLogPath
 
 ### 3.8 Siivous ja migraatio 🔶
 
