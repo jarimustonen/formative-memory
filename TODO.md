@@ -6,7 +6,7 @@
 
 **Valmista:** Infrastruktuuri (DB, tyypit, hash, chunks, retrieval-log, config), MemoryManager (store, search, recall, get), työkalurekisteröinti (4 työkalua), `registerMemoryPromptSection()`, Context Engine Phase 3.0–3.7 (assemble, cache, fingerprinting, turn memory ledger + dedup, embedding circuit breaker, provenance-taulut, afterTurn). Legacy `before_prompt_build` hook poistettu. 277 testiä läpi.
 
-**Seuraava:** Phase 3.8 — siivous ja migraatio.
+**Seuraava:** Phase 4 — konsolidaatio (uni).
 
 **V1-periaate:** Yksinkertainen ja laajennettava. Minimoi hot path -kirjoitukset, mutta salli append-only sidecar-kirjoitukset normaalikäytössä (retrieval.log, provenance). Kanoniset muistomutaatiot (strength, assosiaatiot, pruning, merget, temporaaliset siirtymät) vain konsolidaatiossa.
 
@@ -47,7 +47,7 @@ Tiivistelmä: content hash (SHA-256), SQLite backend, working.md + consolidated.
 
 ---
 
-## Phase 3: Context Engine -integraatio 🔶 (3.0–3.4 valmis)
+## Phase 3: Context Engine -integraatio ✅
 
 > Arkkitehtuuri: v2 §2–§8. Tämä on iso vaihe — pilkottu inkrementteihin.
 
@@ -143,11 +143,11 @@ Tiivistelmä: content hash (SHA-256), SQLite backend, working.md + consolidated.
 - [x] Review: `history/review-phase3.7-after-turn.md`, `history/review-phase3.7-after-turn-fixes.md`
 - [x] Context engine -integraatio: `afterTurn()` metodi engineen + `index.ts` getDb/getLogPath
 
-### 3.8 Siivous ja migraatio 🔶
+### 3.8 Siivous ja migraatio ✅
 
 - [x] Poista vanha `before_prompt_build` hook (tehty Phase 3.4 review-korjauksissa)
-- [ ] Päivitä olemassaolevat testit uuteen arkkitehtuuriin
-- [ ] Integraatiotesti: koko turn-sykli (assemble → LLM → afterTurn)
+- [x] Päivitä olemassaolevat testit: afterTurn engine assertion lisätty index.test.ts:ään
+- [x] Integraatiotesti: koko turn-sykli (store → search → afterTurn provenance-kirjoitus)
 
 ---
 
