@@ -252,17 +252,14 @@ export class MemoryDatabase {
 
       // Merge attribution provenance: keep higher confidence on PK collision.
       // SQLite doesn't support CTE+UPSERT, so we read rows in JS and upsert individually.
+      // Uses mergeAttributionRow() to preserve updated_at from source rows.
       const oldAttrs = this.db
         .prepare("SELECT * FROM message_memory_attribution WHERE memory_id = ?")
         .all(oldId) as AttributionRow[];
       for (const attr of oldAttrs) {
-        this.upsertAttribution({
-          messageId: attr.message_id,
-          memoryId: newId,
-          evidence: attr.evidence,
-          confidence: attr.confidence,
-          turnId: attr.turn_id,
-          createdAt: attr.created_at,
+        this.mergeAttributionRow({
+          ...attr,
+          memory_id: newId,
         });
       }
       this.db.prepare("DELETE FROM message_memory_attribution WHERE memory_id = ?").run(oldId);
@@ -511,6 +508,41 @@ export class MemoryDatabase {
         params.confidence,
         params.turnId,
         params.createdAt,
+      );
+  }
+
+  /**
+   * Merge a full attribution row preserving timestamps. Used by replaceMemoryId()
+   * where source rows may have existing updated_at that should be preserved.
+   */
+  private mergeAttributionRow(row: AttributionRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO message_memory_attribution
+         (message_id, memory_id, evidence, confidence, turn_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(message_id, memory_id) DO UPDATE SET
+           evidence = CASE
+             WHEN excluded.confidence > message_memory_attribution.confidence
+             THEN excluded.evidence ELSE message_memory_attribution.evidence END,
+           confidence = MAX(message_memory_attribution.confidence, excluded.confidence),
+           turn_id = CASE
+             WHEN excluded.confidence > message_memory_attribution.confidence
+             THEN excluded.turn_id ELSE message_memory_attribution.turn_id END,
+           created_at = MIN(message_memory_attribution.created_at, excluded.created_at),
+           updated_at = CASE
+             WHEN excluded.confidence > message_memory_attribution.confidence
+             THEN COALESCE(excluded.updated_at, excluded.created_at)
+             ELSE message_memory_attribution.updated_at END`,
+      )
+      .run(
+        row.message_id,
+        row.memory_id,
+        row.evidence,
+        row.confidence,
+        row.turn_id,
+        row.created_at,
+        row.updated_at,
       );
   }
 
