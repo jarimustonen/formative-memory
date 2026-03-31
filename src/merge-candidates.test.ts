@@ -1,0 +1,183 @@
+import { describe, expect, it } from "vitest";
+import {
+  MERGE_THRESHOLD,
+  cosineSimilarity,
+  findMergeCandidates,
+  jaccardSimilarity,
+  trigrams,
+  type MemoryCandidate,
+} from "./merge-candidates.ts";
+
+// -- trigrams --
+
+describe("trigrams", () => {
+  it("extracts word trigrams and individual words", () => {
+    const result = trigrams("the quick brown fox");
+    expect(result.has("the quick brown")).toBe(true);
+    expect(result.has("quick brown fox")).toBe(true);
+    expect(result.has("the")).toBe(true);
+    expect(result.has("fox")).toBe(true);
+  });
+
+  it("lowercases text", () => {
+    const result = trigrams("Hello World Test");
+    expect(result.has("hello")).toBe(true);
+    expect(result.has("hello world test")).toBe(true);
+  });
+
+  it("returns individual words for short text", () => {
+    const result = trigrams("hello world");
+    expect(result.has("hello")).toBe(true);
+    expect(result.has("world")).toBe(true);
+    expect(result.size).toBe(2); // no trigrams possible with 2 words
+  });
+
+  it("returns empty set for empty text", () => {
+    expect(trigrams("").size).toBe(0);
+    expect(trigrams("   ").size).toBe(0);
+  });
+});
+
+// -- jaccardSimilarity --
+
+describe("jaccardSimilarity", () => {
+  it("returns 1 for identical texts", () => {
+    expect(jaccardSimilarity("hello world test", "hello world test")).toBe(1);
+  });
+
+  it("returns 0 for completely different texts", () => {
+    expect(jaccardSimilarity("alpha beta gamma", "delta epsilon zeta")).toBe(0);
+  });
+
+  it("returns value between 0 and 1 for partial overlap", () => {
+    const score = jaccardSimilarity(
+      "the team chose PostgreSQL for the database",
+      "the team selected PostgreSQL as the primary database",
+    );
+    expect(score).toBeGreaterThan(0);
+    expect(score).toBeLessThan(1);
+  });
+
+  it("returns 1 for two empty strings", () => {
+    expect(jaccardSimilarity("", "")).toBe(1);
+  });
+
+  it("returns 0 when one string is empty", () => {
+    expect(jaccardSimilarity("hello", "")).toBe(0);
+  });
+});
+
+// -- cosineSimilarity --
+
+describe("cosineSimilarity", () => {
+  it("returns 1 for identical vectors", () => {
+    expect(cosineSimilarity([1, 2, 3], [1, 2, 3])).toBeCloseTo(1, 5);
+  });
+
+  it("returns -1 for opposite vectors", () => {
+    expect(cosineSimilarity([1, 0], [-1, 0])).toBeCloseTo(-1, 5);
+  });
+
+  it("returns 0 for orthogonal vectors", () => {
+    expect(cosineSimilarity([1, 0], [0, 1])).toBeCloseTo(0, 5);
+  });
+
+  it("returns 0 for empty vectors", () => {
+    expect(cosineSimilarity([], [])).toBe(0);
+  });
+
+  it("returns 0 for mismatched lengths", () => {
+    expect(cosineSimilarity([1, 2], [1, 2, 3])).toBe(0);
+  });
+});
+
+// -- findMergeCandidates --
+
+describe("findMergeCandidates", () => {
+  it("finds near-duplicate memories by content", () => {
+    const memories: MemoryCandidate[] = [
+      { id: "a", content: "Team chose PostgreSQL for the database layer", embedding: null },
+      { id: "b", content: "Team chose PostgreSQL for the database backend", embedding: null },
+      { id: "c", content: "The weather is nice today in Helsinki", embedding: null },
+    ];
+
+    const pairs = findMergeCandidates(memories);
+    // a and b should be similar, c should not match
+    const abPair = pairs.find((p) => (p.a === "a" && p.b === "b") || (p.a === "b" && p.b === "a"));
+    expect(abPair).toBeDefined();
+    expect(abPair!.combinedScore).toBeGreaterThanOrEqual(MERGE_THRESHOLD);
+
+    // c should not pair with a or b
+    const cPairs = pairs.filter((p) => p.a === "c" || p.b === "c");
+    expect(cPairs).toHaveLength(0);
+  });
+
+  it("uses embedding similarity when available", () => {
+    // Same embedding = perfect cosine similarity
+    const emb = [0.1, 0.2, 0.3, 0.4, 0.5];
+    const memories: MemoryCandidate[] = [
+      { id: "a", content: "alpha beta gamma", embedding: emb },
+      { id: "b", content: "delta epsilon zeta", embedding: emb }, // same embedding, different content
+    ];
+
+    const pairs = findMergeCandidates(memories);
+    // Jaccard = 0 (no word overlap), but embedding = 1.0
+    // Combined = 0.4*0 + 0.6*1.0 = 0.6 → meets threshold
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0].jaccardScore).toBe(0);
+    expect(pairs[0].embeddingScore).toBeCloseTo(1, 5);
+    expect(pairs[0].combinedScore).toBeCloseTo(0.6, 5);
+  });
+
+  it("respects maxPairs cap", () => {
+    // Create many similar memories
+    const memories: MemoryCandidate[] = Array.from({ length: 10 }, (_, i) => ({
+      id: `mem-${i}`,
+      content: "the team chose PostgreSQL for the database",
+      embedding: null,
+    }));
+
+    const pairs = findMergeCandidates(memories, 3);
+    expect(pairs).toHaveLength(3);
+  });
+
+  it("returns empty for single memory", () => {
+    expect(findMergeCandidates([{ id: "a", content: "test", embedding: null }])).toEqual([]);
+  });
+
+  it("returns empty for empty list", () => {
+    expect(findMergeCandidates([])).toEqual([]);
+  });
+
+  it("ranks pairs by combined score descending", () => {
+    const emb1 = [1, 0, 0];
+    const emb2 = [0.9, 0.1, 0]; // very similar to emb1
+    const emb3 = [0.5, 0.5, 0]; // somewhat similar
+
+    const memories: MemoryCandidate[] = [
+      { id: "a", content: "the team chose PostgreSQL for the database", embedding: emb1 },
+      { id: "b", content: "the team chose PostgreSQL for the database", embedding: emb2 },
+      { id: "c", content: "the team chose PostgreSQL for the database", embedding: emb3 },
+    ];
+
+    const pairs = findMergeCandidates(memories);
+    expect(pairs.length).toBeGreaterThanOrEqual(2);
+    // Should be sorted by combinedScore descending
+    for (let i = 1; i < pairs.length; i++) {
+      expect(pairs[i - 1].combinedScore).toBeGreaterThanOrEqual(pairs[i].combinedScore);
+    }
+  });
+
+  it("handles mixed embedding availability", () => {
+    const memories: MemoryCandidate[] = [
+      { id: "a", content: "the team chose PostgreSQL for the database layer", embedding: [1, 0] },
+      { id: "b", content: "the team chose PostgreSQL for the database layer", embedding: null },
+    ];
+
+    const pairs = findMergeCandidates(memories);
+    // Falls back to Jaccard-only since one embedding is missing
+    if (pairs.length > 0) {
+      expect(pairs[0].embeddingScore).toBeNull();
+    }
+  });
+});
