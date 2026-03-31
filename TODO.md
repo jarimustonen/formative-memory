@@ -4,9 +4,9 @@
 
 ## Tilanne (2026-03-31)
 
-**Valmista:** Infrastruktuuri (DB, tyypit, hash, chunks, retrieval-log, config), MemoryManager (store, search, recall, get), työkalurekisteröinti (4 työkalua), `registerMemoryPromptSection()`, Context Engine Phase 3.0–3.6 (assemble, cache, fingerprinting, turn memory ledger + dedup, embedding circuit breaker, provenance-taulut). Legacy `before_prompt_build` hook poistettu. 227 testiä läpi.
+**Valmista:** Infrastruktuuri (DB, tyypit, hash, chunks, retrieval-log, config), MemoryManager (store, search, recall, get), työkalurekisteröinti (4 työkalua), `registerMemoryPromptSection()`, Context Engine Phase 3.0–3.6 (assemble, cache, fingerprinting, turn memory ledger + dedup, embedding circuit breaker, provenance-taulut). Legacy `before_prompt_build` hook poistettu. Phase 3.7 afterTurn() -logiikka valmis (processAfterTurn), context engine -integraatio kesken. 273 testiä läpi.
 
-**Seuraava:** Phase 3.7 — afterTurn().
+**Seuraava:** Phase 3.7 — context engine afterTurn() -integraatio + index.ts -muutokset.
 
 **V1-periaate:** Yksinkertainen ja laajennettava. Minimoi hot path -kirjoitukset, mutta salli append-only sidecar-kirjoitukset normaalikäytössä (retrieval.log, provenance). Kanoniset muistomutaatiot (strength, assosiaatiot, pruning, merget, temporaaliset siirtymät) vain konsolidaatiossa.
 
@@ -127,14 +127,21 @@ Tiivistelmä: content hash (SHA-256), SQLite backend, working.md + consolidated.
 
 ### 3.7 afterTurn()
 
-- [ ] Parsii uudet viestit: `messages.slice(prePromptMessageCount)`
-- [ ] Tunnistaa memory tool -kutsut uusista viesteistä
-- [ ] Päivittää retrieval log ledgerin perusteella
-- [ ] Kirjoittaa provenance: exposure (auto-injected + tool-surfaced) + attribution (tool_get + tool_search)
-- [ ] Idempotenssi: upsert/no-op PK-konfliktissa (runtime voi kutsua uudelleen)
-- [ ] **Cross-turn feedback:** Kun `memory_feedback` viittaa muistoon jota haettiin edellisellä turnilla, toteutuksen on kyettävä yhdistämään feedback aiempaan exposure-riviin provenance-taulusta memory_id:n perusteella (ledger on per-turn, mutta feedback voi tulla myöhemmässä turnissa)
-- [ ] **Attribution-promootio:** `tool_search_returned` (0.3) → `agent_feedback_positive` (0.95) kun feedback-rating ≥ 4 samalle memory_id:lle
-- [ ] Testit: tool-kutsujen tunnistus, log-päivitys, exposure/attribution-kirjoitus, cross-turn feedback -yhdistäminen
+- [x] `processAfterTurn()` — puhdas logiikka erillisessä moduulissa (`src/after-turn.ts`)
+- [x] Parsii uudet viestit: `messages.slice(prePromptMessageCount)`
+- [x] Tunnistaa memory_feedback tool -kutsut uusista viesteistä
+- [x] Päivittää retrieval log ledgerin perusteella (recall-event auto-injected muistoille)
+- [x] Kirjoittaa provenance: exposure (auto-injected + tool-surfaced) + attribution (tool_get + tool_search + auto_injected)
+- [x] Idempotenssi: upsert/no-op PK-konfliktissa, DB-transaktio, log DB:n jälkeen
+- [x] **Cross-turn feedback:** `getLatestAttributionByMemory()` → upsert aiemman turnin riviin. Fallback nykyiseen turniin jos aiempaa ei löydy
+- [x] **Attribution-promootio:** `tool_search_returned` (0.3) → `agent_feedback_positive` (0.95) kun feedback-rating ≥ 4
+- [x] **Attribution merge:** eksplisiittinen feedback ohittaa implisiittisen riippumatta numeerisesta arvosta (negatiivinen demootio toimii)
+- [x] **turn_id säilyy:** cross-turn feedback ei ylikirjoita alkuperäistä turn_id:tä
+- [x] **Rating-validointi:** vain kokonaisluvut 1–5, duplikaatti-dedup (viimeinen voittaa)
+- [x] **Assistant-rajaus:** attributio vain current-turn assistant-viesteihin (ei historiaan)
+- [x] Testit: 37 testiä (parsinta, exposure, attribution, cross-turn, idempotenssi, edge cases)
+- [x] Review: `history/review-phase3.7-after-turn.md`, `history/review-phase3.7-after-turn-fixes.md`
+- [ ] Context engine -integraatio: `afterTurn()` metodi engineen + `index.ts` -muutokset
 
 ### 3.8 Siivous ja migraatio 🔶
 
