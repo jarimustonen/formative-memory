@@ -2,6 +2,8 @@ import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryDatabase } from "./db.ts";
+import { MemoryManager } from "./memory-manager.ts";
 import plugin from "./index.ts";
 
 // Capture registered tools
@@ -75,6 +77,7 @@ describe("plugin registration", () => {
     expect(engine.info.id).toBe("associative-memory");
     expect(engine.info.ownsCompaction).toBe(false);
     expect(engine.assemble).toBeTypeOf("function");
+    expect(engine.afterTurn).toBeTypeOf("function");
     expect(engine.ingest).toBeTypeOf("function");
     expect(engine.compact).toBeTypeOf("function");
     expect(engine.dispose).toBeTypeOf("function");
@@ -219,6 +222,74 @@ describe("plugin registration", () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.ok).toBe(true);
     expect(parsed.rating).toBe(4);
+
+    vi.unstubAllGlobals();
+  });
+});
+
+describe("turn cycle integration: assemble → tool calls → afterTurn", () => {
+  const mockEmbedding = () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({ data: [{ embedding: Array.from({ length: 1536 }, () => Math.random()) }] }),
+      }),
+    );
+  };
+
+  it("full turn: store → search → afterTurn writes provenance", async () => {
+    mockEmbedding();
+    const api = fakeApi();
+    plugin.register(api as any);
+
+    // Get tools and engine
+    const toolFactory = api.registerTool.mock.calls[0][0] as Function;
+    const tools = toolFactory({ workspaceDir: tmpDir }) as any[];
+    const storeTool = tools.find((t) => t.name === "memory_store")!;
+    const searchTool = tools.find((t) => t.name === "memory_search")!;
+
+    const engineFactory = api.registerContextEngine.mock.calls[0][1] as Function;
+    const engine = engineFactory();
+
+    // 1. Store a memory (creates workspace, DB, etc.)
+    const storeResult = await storeTool.execute("call-1", {
+      content: "PostgreSQL is our primary database",
+      type: "fact",
+    });
+    const stored = JSON.parse(storeResult.content[0].text);
+
+    // 2. Search — updates ledger with search results
+    await searchTool.execute("call-2", { query: "PostgreSQL" });
+
+    // 3. afterTurn — writes provenance from ledger state
+    const messages = [
+      { role: "user", content: "What database do we use?" },
+      { role: "assistant", content: "We use PostgreSQL." },
+    ];
+    await engine.afterTurn({
+      sessionId: "sess-1",
+      sessionFile: "/tmp/session.md",
+      messages,
+      prePromptMessageCount: 0,
+    });
+
+    // 4. Verify provenance was written
+    const memoryDir = join(tmpDir, "memory");
+    const db = new MemoryDatabase(join(memoryDir, "associations.db"));
+
+    try {
+      // Stored memory should have exposure (tool_store from ledger)
+      const exposures = db.getExposuresByMemory(stored.id);
+      expect(exposures.length).toBeGreaterThanOrEqual(1);
+
+      // Search results should have attribution
+      const attrs = db.getAttributionsByMemory(stored.id);
+      expect(attrs.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      db.close();
+    }
 
     vi.unstubAllGlobals();
   });
