@@ -507,7 +507,7 @@ export class MemoryDatabase {
       );
   }
 
-  getAttributions(memoryId: string): AttributionRow[] {
+  getAttributionsByMemory(memoryId: string): AttributionRow[] {
     return this.db
       .prepare("SELECT * FROM message_memory_attribution WHERE memory_id = ?")
       .all(memoryId) as AttributionRow[];
@@ -521,10 +521,12 @@ export class MemoryDatabase {
 
   deleteAttributionsForMessages(messageIds: string[]): void {
     if (messageIds.length === 0) return;
-    const placeholders = messageIds.map(() => "?").join(",");
-    this.db
-      .prepare(`DELETE FROM message_memory_attribution WHERE message_id IN (${placeholders})`)
-      .run(...messageIds);
+    const stmt = this.db.prepare("DELETE FROM message_memory_attribution WHERE message_id = ?");
+    this.db.transaction(() => {
+      for (const id of messageIds) {
+        stmt.run(id);
+      }
+    })();
   }
 
   // -- Layout --

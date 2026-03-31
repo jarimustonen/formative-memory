@@ -89,7 +89,7 @@ describe("MemoryDatabase", () => {
       // Exposure ephemeral — deleted
       expect(db.getExposuresByMemory("abc123")).toHaveLength(0);
       // Attribution durable — preserved
-      expect(db.getAttributions("abc123")).toHaveLength(1);
+      expect(db.getAttributionsByMemory("abc123")).toHaveLength(1);
     });
 
     it("lists working vs consolidated memories", () => {
@@ -251,7 +251,7 @@ describe("MemoryDatabase", () => {
 
     it("inserts and retrieves attribution", () => {
       db.upsertAttribution(attribution);
-      const rows = db.getAttributions("mem1");
+      const rows = db.getAttributionsByMemory("mem1");
       expect(rows).toHaveLength(1);
       expect(rows[0].evidence).toBe("tool_search_returned");
       expect(rows[0].confidence).toBe(0.3);
@@ -260,7 +260,7 @@ describe("MemoryDatabase", () => {
     it("promotes to higher confidence on upsert", () => {
       db.upsertAttribution(attribution); // 0.3
       db.upsertAttribution({ ...attribution, evidence: "agent_feedback_positive", confidence: 0.95 });
-      const rows = db.getAttributions("mem1");
+      const rows = db.getAttributionsByMemory("mem1");
       expect(rows).toHaveLength(1);
       expect(rows[0].evidence).toBe("agent_feedback_positive");
       expect(rows[0].confidence).toBe(0.95);
@@ -270,7 +270,7 @@ describe("MemoryDatabase", () => {
     it("does not demote to lower confidence on upsert", () => {
       db.upsertAttribution({ ...attribution, evidence: "agent_feedback_positive", confidence: 0.95 });
       db.upsertAttribution({ ...attribution, evidence: "tool_search_returned", confidence: 0.3 });
-      const rows = db.getAttributions("mem1");
+      const rows = db.getAttributionsByMemory("mem1");
       expect(rows).toHaveLength(1);
       expect(rows[0].evidence).toBe("agent_feedback_positive");
       expect(rows[0].confidence).toBe(0.95);
@@ -278,7 +278,7 @@ describe("MemoryDatabase", () => {
 
     it("only sets updated_at on actual promotion, not rejected upsert", () => {
       db.upsertAttribution({ ...attribution, evidence: "agent_feedback_positive", confidence: 0.95 });
-      const before = db.getAttributions("mem1")[0].updated_at;
+      const before = db.getAttributionsByMemory("mem1")[0].updated_at;
 
       db.upsertAttribution({
         ...attribution,
@@ -286,7 +286,7 @@ describe("MemoryDatabase", () => {
         confidence: 0.3,
         createdAt: "2026-04-01T00:00:00Z",
       });
-      const after = db.getAttributions("mem1")[0].updated_at;
+      const after = db.getAttributionsByMemory("mem1")[0].updated_at;
       expect(after).toBe(before); // not mutated
     });
 
@@ -300,7 +300,7 @@ describe("MemoryDatabase", () => {
       db.upsertAttribution(attribution);
       db.upsertAttribution({ ...attribution, messageId: "msg2" });
       db.deleteAttributionsForMessages(["msg1"]);
-      const rows = db.getAttributions("mem1");
+      const rows = db.getAttributionsByMemory("mem1");
       expect(rows).toHaveLength(1);
       expect(rows[0].message_id).toBe("msg2");
     });
@@ -308,7 +308,7 @@ describe("MemoryDatabase", () => {
     it("handles empty message list in delete", () => {
       db.upsertAttribution(attribution);
       db.deleteAttributionsForMessages([]);
-      expect(db.getAttributions("mem1")).toHaveLength(1);
+      expect(db.getAttributionsByMemory("mem1")).toHaveLength(1);
     });
   });
 
@@ -394,8 +394,8 @@ describe("MemoryDatabase", () => {
 
       db.replaceMemoryId("old_id", "new_id", "new content");
 
-      expect(db.getAttributions("old_id")).toHaveLength(0);
-      const attrs = db.getAttributions("new_id");
+      expect(db.getAttributionsByMemory("old_id")).toHaveLength(0);
+      const attrs = db.getAttributionsByMemory("new_id");
       expect(attrs).toHaveLength(1);
       expect(attrs[0].confidence).toBe(0.95); // kept higher
       expect(attrs[0].evidence).toBe("agent_feedback_positive");
