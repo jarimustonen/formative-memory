@@ -1,3 +1,13 @@
+/**
+ * SQLite database layer for associative memory.
+ *
+ * **Timestamp convention:** All TEXT timestamp columns (created_at, updated_at,
+ * last_updated_at, temporal_anchor) MUST be UTC ISO-8601 strings in the format
+ * "YYYY-MM-DDTHH:mm:ss.sssZ" or "YYYY-MM-DDTHH:mm:ssZ". This is required
+ * because SQL MIN()/MAX() and range queries (WHERE created_at < ?) rely on
+ * lexicographic ordering matching chronological ordering.
+ */
+
 import Database from "better-sqlite3";
 import type { Association, LayoutManifest, MemorySource, TemporalState } from "./types.ts";
 
