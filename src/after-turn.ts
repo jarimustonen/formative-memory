@@ -21,7 +21,8 @@ export type AfterTurnParams = {
   prePromptMessageCount: number;
   ledger: TurnMemoryLedger;
   db: MemoryDatabase;
-  logPath: string;
+  /** Path to retrieval log. Empty string or omitted disables logging. */
+  logPath?: string;
   isBm25Only: boolean;
 };
 
