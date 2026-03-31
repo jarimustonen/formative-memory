@@ -8,6 +8,8 @@
 import { createHash } from "node:crypto";
 import type { ContextEngine, ContextEngineInfo } from "openclaw/plugin-sdk";
 import { delegateCompactionToRuntime } from "openclaw/plugin-sdk";
+import { processAfterTurn } from "./after-turn.ts";
+import type { MemoryDatabase } from "./db.ts";
 import type { MemoryManager, SearchResult } from "./memory-manager.ts";
 import type { TurnMemoryLedger } from "./turn-memory-ledger.ts";
 
@@ -235,6 +237,10 @@ export type AssociativeMemoryContextEngineOptions = {
   fingerprintN?: number;
   /** Turn memory ledger for dedup between assemble() and tool calls. */
   ledger?: TurnMemoryLedger;
+  /** Lazy accessor for provenance writes in afterTurn(). */
+  getDb?: () => MemoryDatabase;
+  /** Retrieval log path for afterTurn(). Empty/omitted disables logging. */
+  getLogPath?: () => string;
 };
 
 export function createAssociativeMemoryContextEngine(
@@ -370,6 +376,27 @@ export function createAssociativeMemoryContextEngine(
         estimatedTokens: 0,
         systemPromptAddition,
       };
+    },
+
+    async afterTurn(params) {
+      if (!options.getDb || !options.ledger) return;
+
+      const turnId = `${params.sessionId}:${new Date().toISOString()}`;
+
+      try {
+        processAfterTurn({
+          sessionId: params.sessionId,
+          turnId,
+          messages: params.messages as unknown[],
+          prePromptMessageCount: params.prePromptMessageCount,
+          ledger: options.ledger,
+          db: options.getDb(),
+          logPath: options.getLogPath?.(),
+          isBm25Only: options.isBm25Only?.() ?? false,
+        });
+      } catch (error) {
+        options.logger?.warn("afterTurn() provenance write failed", error);
+      }
     },
 
     async ingest(_params) {

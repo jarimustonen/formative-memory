@@ -289,6 +289,8 @@ const associativeMemoryPlugin = {
         getManager: () => getLastWorkspace(config, ".").manager,
         isBm25Only: () => getLastWorkspace(config, ".").circuitBreaker.isBm25Only(),
         ledger,
+        getDb: () => getLastWorkspace(config, ".").manager.getDatabase(),
+        getLogPath: () => join(resolveMemoryDir(config, "."), "retrieval.log"),
       }),
     );
 

@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CONTEXT_ENGINE_ID,
   buildCacheKey,
@@ -12,6 +15,7 @@ import {
   transcriptFingerprint,
   userTurnKey,
 } from "./context-engine.ts";
+import { MemoryDatabase } from "./db.ts";
 import type { MemoryManager, SearchResult } from "./memory-manager.ts";
 import { TurnMemoryLedger } from "./turn-memory-ledger.ts";
 import type { Memory } from "./types.ts";
@@ -1186,5 +1190,121 @@ describe("AssociativeMemoryContextEngine lifecycle", () => {
   it("dispose is callable", async () => {
     const engine = createEngine();
     await expect(engine.dispose!()).resolves.toBeUndefined();
+  });
+});
+
+// -- afterTurn() integration --
+
+describe("afterTurn()", () => {
+  let tmpDir: string;
+  let db: MemoryDatabase;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "ce-afterturn-test-"));
+    db = new MemoryDatabase(join(tmpDir, "test.db"));
+  });
+
+  afterEach(() => {
+    db.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function createEngineWithDb(
+    opts?: { ledger?: TurnMemoryLedger; isBm25Only?: () => boolean },
+  ) {
+    const ledger = opts?.ledger ?? new TurnMemoryLedger();
+    return {
+      engine: createAssociativeMemoryContextEngine({
+        getManager: () => stubManager(),
+        getDb: () => db,
+        getLogPath: () => join(tmpDir, "retrieval.log"),
+        ledger,
+        isBm25Only: opts?.isBm25Only,
+      }),
+      ledger,
+    };
+  }
+
+  const afterTurnParams = (messages: unknown[], prePromptMessageCount = 0) => ({
+    sessionId: "sess-1",
+    sessionKey: "key-1",
+    sessionFile: "/tmp/session.md",
+    messages,
+    prePromptMessageCount,
+  });
+
+  it("writes exposure and attribution from ledger", async () => {
+    const { engine, ledger } = createEngineWithDb();
+    ledger.addAutoInjected("mem-a", 0.9);
+
+    await engine.afterTurn!(afterTurnParams([
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello" },
+    ]));
+
+    // Verify DB has attribution (turnId is generated internally, query by memory)
+    const attrs = db.getAttributionsByMemory("mem-a");
+    expect(attrs).toHaveLength(1);
+    expect(attrs[0].evidence).toBe("auto_injected");
+    expect(attrs[0].confidence).toBe(0.15);
+
+    // Verify exposure was also written
+    const exposures = db.getExposuresByMemory("mem-a");
+    expect(exposures).toHaveLength(1);
+    expect(exposures[0].mode).toBe("auto_injected");
+  });
+
+  it("is a no-op when getDb is not provided", async () => {
+    const engine = createAssociativeMemoryContextEngine({
+      getManager: () => stubManager(),
+      ledger: new TurnMemoryLedger(),
+      // no getDb
+    });
+
+    // Should not throw
+    await engine.afterTurn!(afterTurnParams([
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello" },
+    ]));
+  });
+
+  it("is a no-op when ledger is not provided", async () => {
+    const engine = createAssociativeMemoryContextEngine({
+      getManager: () => stubManager(),
+      getDb: () => db,
+      // no ledger
+    });
+
+    await engine.afterTurn!(afterTurnParams([
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello" },
+    ]));
+
+    // No crash, no data written
+    expect(db.getAttributionsByMemory("anything")).toHaveLength(0);
+  });
+
+  it("catches and logs errors without throwing", async () => {
+    const warnFn = vi.fn();
+    const brokenDb = { insertExposure: () => { throw new Error("DB error"); } } as unknown as MemoryDatabase;
+
+    const ledger = new TurnMemoryLedger();
+    ledger.addAutoInjected("mem-a", 0.9);
+
+    const engine = createAssociativeMemoryContextEngine({
+      getManager: () => stubManager(),
+      getDb: () => brokenDb,
+      ledger,
+      logger: { warn: warnFn },
+    });
+
+    // Should not throw
+    await engine.afterTurn!(afterTurnParams([
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello" },
+    ]));
+
+    expect(warnFn).toHaveBeenCalledOnce();
+    expect(warnFn.mock.calls[0][0]).toContain("afterTurn");
   });
 });
