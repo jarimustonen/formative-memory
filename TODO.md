@@ -2,11 +2,11 @@
 
 > Plugin OpenClaw:lle. Arkkitehtuuri: `history/plan-context-engine-architecture-v2.md`
 
-## Tilanne (2026-03-30)
+## Tilanne (2026-03-31)
 
-**Valmista:** Infrastruktuuri (DB, tyypit, hash, chunks, retrieval-log, config), MemoryManager (store, search, recall, get), työkalurekisteröinti (4 työkalua), `registerMemoryPromptSection()`, Context Engine Phase 3.0–3.4 (assemble, cache, fingerprinting, turn memory ledger + dedup). Legacy `before_prompt_build` hook poistettu. 180 testiä läpi.
+**Valmista:** Infrastruktuuri (DB, tyypit, hash, chunks, retrieval-log, config), MemoryManager (store, search, recall, get), työkalurekisteröinti (4 työkalua), `registerMemoryPromptSection()`, Context Engine Phase 3.0–3.5 (assemble, cache, fingerprinting, turn memory ledger + dedup, embedding circuit breaker). Legacy `before_prompt_build` hook poistettu. Circuit breaker per workspace, AbortController timeout, store() graceful degradation. 207 testiä läpi.
 
-**Seuraava:** Phase 3.5 — Embedding circuit breaker.
+**Seuraava:** Phase 3.6 — Provenance-taulut.
 
 **V1-periaate:** Yksinkertainen ja laajennettava. Minimoi hot path -kirjoitukset, mutta salli append-only sidecar-kirjoitukset normaalikäytössä (retrieval.log, provenance). Kanoniset muistomutaatiot (strength, assosiaatiot, pruning, merget, temporaaliset siirtymät) vain konsolidaatiossa.
 
@@ -92,17 +92,22 @@ Tiivistelmä: content hash (SHA-256), SQLite backend, working.md + consolidated.
 - [x] Testit: dedup, cache-invalidaatio, turn-boundary, backward compat
 - [x] Review: `history/review-phase3.4-turn-memory-ledger.md`
 
-### 3.5 Embedding circuit breaker
+### 3.5 Embedding circuit breaker ✅
 
-- [ ] Kolme tilaa: CLOSED → OPEN → HALF-OPEN (v2 §6)
-  - CLOSED: embedding+BM25 hybridi, 500ms timeout
-  - OPEN: BM25-only, ei verkkokutsuja
-  - HALF-OPEN: yksi koekutsu
-- [ ] Siirtymät: 2 peräkkäistä virhettä → OPEN, 30s → HALF-OPEN, onnistuminen → CLOSED
-- [ ] BM25-only -tila: lisää huomautus systemPromptAddition:iin
-- [ ] Retrieval log: kirjaa `mode: "bm25_only"` kun circuit auki
-- [ ] In-memory tila, resetoituu CLOSED:iin prosessin käynnistyessä
-- [ ] Testit: tilakone, timeout, fallback
+- [x] Kolme tilaa: CLOSED → OPEN → HALF_OPEN, konfiguroitavat parametrit
+- [x] Siirtymät: N peräkkäistä virhettä → OPEN, cooldown+jitter → HALF_OPEN, onnistuminen → CLOSED
+- [x] HALF_OPEN single-probe: vain yksi koekutsu kerrallaan, muut rejected
+- [x] AbortController timeout: peruuttaa fetch:n, cooperative contract dokumentoitu
+- [x] BM25-only fallback: MemoryManager.search() ja store() jatkavat ilman embeddingiä
+- [x] BM25-only -huomautus systemPromptAddition:issa (context engine `isBm25Only()`)
+- [x] Circuit breaker per workspace (ei globaali singleton)
+- [x] Constructor validation, `isDegraded()`, `onStateChange()` callback
+- [x] Error classification: auth/config-virheet eivät hiljene (search + store)
+- [x] N+1 DB reads korjattu: bulk `getStrengthMap()` query
+- [x] Ambiguous memory ID prefix → throw (ei hiljainen first-match)
+- [x] In-memory tila, resetoituu CLOSED:iin prosessin käynnistyessä
+- [x] Testit: tilakone, timeout, concurrency, lifecycle (207 testiä)
+- [x] Review: `history/review-phase3.5-circuit-breaker.md`, `history/review-phase3.5-abort-and-workspace.md`
 
 ### 3.6 Provenance-taulut (schema ennen afterTurn-logiikkaa)
 
