@@ -226,18 +226,23 @@ export function parseFeedbackCalls(
       const b = block as Record<string, unknown>;
       if (b.type !== "tool_use" || b.name !== "memory_feedback") continue;
 
-      const input = b.input as Record<string, unknown> | undefined;
-      if (!input) continue;
+      if (b.input == null || typeof b.input !== "object") continue;
+      const input = b.input as Record<string, unknown>;
 
       const memoryId = input.memory_id;
       const rating = input.rating;
-      if (typeof memoryId === "string" && typeof rating === "number") {
+      if (typeof memoryId === "string" && isValidRating(rating)) {
         calls.push({ memoryId, rating });
       }
     }
   }
 
   return calls;
+}
+
+/** Validate that a rating is an integer 1–5. */
+export function isValidRating(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 5;
 }
 
 /**

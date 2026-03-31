@@ -6,6 +6,7 @@ import {
   CONFIDENCE,
   feedbackEvidenceForRating,
   findLastAssistantMessageIndex,
+  isValidRating,
   parseFeedbackCalls,
   processAfterTurn,
 } from "./after-turn.ts";
@@ -156,6 +157,53 @@ describe("parseFeedbackCalls", () => {
       { role: "assistant", content: "just text, no tool calls" },
     ]);
     expect(parseFeedbackCalls(msgs, 0)).toEqual([]);
+  });
+
+  it("rejects invalid ratings (0, 6, NaN, Infinity, non-integer)", () => {
+    const makeMsg = (rating: unknown) =>
+      makeMessages(0, [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: "toolu_1",
+              name: "memory_feedback",
+              input: { memory_id: "abc", rating },
+            },
+          ],
+        },
+      ]);
+
+    expect(parseFeedbackCalls(makeMsg(0), 0)).toEqual([]);
+    expect(parseFeedbackCalls(makeMsg(6), 0)).toEqual([]);
+    expect(parseFeedbackCalls(makeMsg(NaN), 0)).toEqual([]);
+    expect(parseFeedbackCalls(makeMsg(Infinity), 0)).toEqual([]);
+    expect(parseFeedbackCalls(makeMsg(3.5), 0)).toEqual([]);
+    expect(parseFeedbackCalls(makeMsg("3"), 0)).toEqual([]);
+    expect(parseFeedbackCalls(makeMsg(null), 0)).toEqual([]);
+  });
+});
+
+// -- isValidRating --
+
+describe("isValidRating", () => {
+  it("accepts integers 1–5", () => {
+    for (let i = 1; i <= 5; i++) {
+      expect(isValidRating(i)).toBe(true);
+    }
+  });
+
+  it("rejects out-of-range, non-integer, and non-number values", () => {
+    expect(isValidRating(0)).toBe(false);
+    expect(isValidRating(6)).toBe(false);
+    expect(isValidRating(-1)).toBe(false);
+    expect(isValidRating(3.5)).toBe(false);
+    expect(isValidRating(NaN)).toBe(false);
+    expect(isValidRating(Infinity)).toBe(false);
+    expect(isValidRating("3")).toBe(false);
+    expect(isValidRating(null)).toBe(false);
+    expect(isValidRating(undefined)).toBe(false);
   });
 });
 
