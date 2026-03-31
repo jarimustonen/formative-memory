@@ -285,18 +285,25 @@ export class MemoryDatabase {
 
         const [sortedA, sortedB] = a < b ? [a, b] : [b, a];
 
-        // Merge: keep max weight if association already exists
+        // Merge: keep max weight and earliest created_at if association already exists
         const existing = this.db
-          .prepare("SELECT weight FROM associations WHERE memory_a = ? AND memory_b = ?")
-          .get(sortedA, sortedB) as { weight: number } | undefined;
+          .prepare("SELECT weight, created_at, last_updated_at FROM associations WHERE memory_a = ? AND memory_b = ?")
+          .get(sortedA, sortedB) as { weight: number; created_at: string; last_updated_at: string | null } | undefined;
+
         const mergedWeight = Math.max(assoc.weight, existing?.weight ?? 0);
+        const mergedCreatedAt = existing && existing.created_at < assoc.created_at
+          ? existing.created_at : assoc.created_at;
+        const mergedLastUpdated = [existing?.last_updated_at, assoc.last_updated_at]
+          .filter((v): v is string => v != null)
+          .sort()
+          .at(-1) ?? null;
 
         this.db
           .prepare(
             `INSERT OR REPLACE INTO associations (memory_a, memory_b, weight, created_at, last_updated_at)
              VALUES (?, ?, ?, ?, ?)`,
           )
-          .run(sortedA, sortedB, mergedWeight, assoc.created_at, assoc.last_updated_at);
+          .run(sortedA, sortedB, mergedWeight, mergedCreatedAt, mergedLastUpdated);
       }
     });
     replace();
