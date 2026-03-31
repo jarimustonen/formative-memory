@@ -133,6 +133,32 @@ describe("parseFeedbackCalls", () => {
     expect(calls[1]).toEqual({ memoryId: "bbb", rating: 1 });
   });
 
+  it("deduplicates: last feedback for same memory wins", () => {
+    const msgs = makeMessages(0, [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "toolu_1",
+            name: "memory_feedback",
+            input: { memory_id: "aaa", rating: 5 },
+          },
+          {
+            type: "tool_use",
+            id: "toolu_2",
+            name: "memory_feedback",
+            input: { memory_id: "aaa", rating: 1 }, // correction
+          },
+        ],
+      },
+    ]);
+
+    const calls = parseFeedbackCalls(msgs, 0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual({ memoryId: "aaa", rating: 1 });
+  });
+
   it("skips pre-prompt messages", () => {
     const msgs = makeMessages(2, [
       {

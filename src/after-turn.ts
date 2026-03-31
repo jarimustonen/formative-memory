@@ -215,7 +215,9 @@ export function parseFeedbackCalls(
   prePromptMessageCount: number,
 ): FeedbackCall[] {
   const newMessages = messages.slice(prePromptMessageCount);
-  const calls: FeedbackCall[] = [];
+  // Last-write-wins: if the LLM sends multiple feedback calls for the same
+  // memory in one turn (e.g. correcting itself), only the last one counts.
+  const byMemory = new Map<string, number>();
 
   for (const msg of newMessages) {
     if (msg == null || typeof msg !== "object") continue;
@@ -233,12 +235,12 @@ export function parseFeedbackCalls(
       const memoryId = input.memory_id;
       const rating = input.rating;
       if (typeof memoryId === "string" && isValidRating(rating)) {
-        calls.push({ memoryId, rating });
+        byMemory.set(memoryId, rating);
       }
     }
   }
 
-  return calls;
+  return [...byMemory.entries()].map(([memoryId, rating]) => ({ memoryId, rating }));
 }
 
 /** Validate that a rating is an integer 1–5. */
