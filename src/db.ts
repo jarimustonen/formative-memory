@@ -55,6 +55,9 @@ CREATE TABLE IF NOT EXISTS turn_memory_exposure (
 );
 
 -- Provenance: what influenced the response (Phase 3.6)
+-- INTENTIONALLY NO FOREIGN KEY on memory_id: attributions are durable and
+-- outlive memories. deleteMemory() preserves attribution rows as historical
+-- reinforcement data. Do NOT add FK constraints here.
 CREATE TABLE IF NOT EXISTS message_memory_attribution (
   message_id TEXT NOT NULL,
   memory_id TEXT NOT NULL,
@@ -247,23 +250,21 @@ export class MemoryDatabase {
         .run(newId, oldId);
       this.db.prepare("DELETE FROM turn_memory_exposure WHERE memory_id = ?").run(oldId);
 
-      // Merge attribution provenance: keep higher confidence on PK collision
-      this.db
-        .prepare(
-          `INSERT INTO message_memory_attribution
-           (message_id, memory_id, evidence, confidence, turn_id, created_at, updated_at)
-           SELECT message_id, ?, evidence, confidence, turn_id, created_at, updated_at
-           FROM message_memory_attribution WHERE memory_id = ?
-           ON CONFLICT(message_id, memory_id) DO UPDATE SET
-             evidence = CASE
-               WHEN excluded.confidence > message_memory_attribution.confidence
-               THEN excluded.evidence ELSE message_memory_attribution.evidence END,
-             confidence = MAX(message_memory_attribution.confidence, excluded.confidence),
-             turn_id = CASE
-               WHEN excluded.confidence > message_memory_attribution.confidence
-               THEN excluded.turn_id ELSE message_memory_attribution.turn_id END`,
-        )
-        .run(newId, oldId);
+      // Merge attribution provenance: keep higher confidence on PK collision.
+      // SQLite doesn't support CTE+UPSERT, so we read rows in JS and upsert individually.
+      const oldAttrs = this.db
+        .prepare("SELECT * FROM message_memory_attribution WHERE memory_id = ?")
+        .all(oldId) as AttributionRow[];
+      for (const attr of oldAttrs) {
+        this.upsertAttribution({
+          messageId: attr.message_id,
+          memoryId: newId,
+          evidence: attr.evidence,
+          confidence: attr.confidence,
+          turnId: attr.turn_id,
+          createdAt: attr.created_at,
+        });
+      }
       this.db.prepare("DELETE FROM message_memory_attribution WHERE memory_id = ?").run(oldId);
 
       // Update associations - need to handle the CHECK constraint (memory_a < memory_b)
@@ -278,14 +279,24 @@ export class MemoryDatabase {
 
         const a = assoc.memory_a === oldId ? newId : assoc.memory_a;
         const b = assoc.memory_b === oldId ? newId : assoc.memory_b;
+
+        // Skip self-edges (old_id linked to new_id → both become new_id)
+        if (a === b) continue;
+
         const [sortedA, sortedB] = a < b ? [a, b] : [b, a];
+
+        // Merge: keep max weight if association already exists
+        const existing = this.db
+          .prepare("SELECT weight FROM associations WHERE memory_a = ? AND memory_b = ?")
+          .get(sortedA, sortedB) as { weight: number } | undefined;
+        const mergedWeight = Math.max(assoc.weight, existing?.weight ?? 0);
 
         this.db
           .prepare(
             `INSERT OR REPLACE INTO associations (memory_a, memory_b, weight, created_at, last_updated_at)
              VALUES (?, ?, ?, ?, ?)`,
           )
-          .run(sortedA, sortedB, assoc.weight, assoc.created_at, assoc.last_updated_at);
+          .run(sortedA, sortedB, mergedWeight, assoc.created_at, assoc.last_updated_at);
       }
     });
     replace();
@@ -481,7 +492,10 @@ export class MemoryDatabase {
            turn_id = CASE
              WHEN excluded.confidence > message_memory_attribution.confidence
              THEN excluded.turn_id ELSE message_memory_attribution.turn_id END,
-           updated_at = excluded.created_at`,
+           updated_at = CASE
+             WHEN excluded.confidence > message_memory_attribution.confidence
+             THEN excluded.created_at
+             ELSE message_memory_attribution.updated_at END`,
       )
       .run(
         params.messageId,

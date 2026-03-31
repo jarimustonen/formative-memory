@@ -205,7 +205,7 @@ describe("MemoryDatabase", () => {
       expect(rows[0].retrieval_mode).toBe("hybrid");
     });
 
-    it("is idempotent (INSERT OR IGNORE on PK conflict)", () => {
+    it("is idempotent (ON CONFLICT DO NOTHING on PK conflict)", () => {
       db.insertExposure(exposure);
       db.insertExposure(exposure); // same PK
       expect(db.getExposures("s1", "t1")).toHaveLength(1);
@@ -276,6 +276,20 @@ describe("MemoryDatabase", () => {
       expect(rows[0].confidence).toBe(0.95);
     });
 
+    it("only sets updated_at on actual promotion, not rejected upsert", () => {
+      db.upsertAttribution({ ...attribution, evidence: "agent_feedback_positive", confidence: 0.95 });
+      const before = db.getAttributions("mem1")[0].updated_at;
+
+      db.upsertAttribution({
+        ...attribution,
+        evidence: "tool_search_returned",
+        confidence: 0.3,
+        createdAt: "2026-04-01T00:00:00Z",
+      });
+      const after = db.getAttributions("mem1")[0].updated_at;
+      expect(after).toBe(before); // not mutated
+    });
+
     it("queries by turn_id", () => {
       db.upsertAttribution(attribution);
       db.upsertAttribution({ ...attribution, messageId: "msg2", memoryId: "mem2" });
@@ -338,6 +352,28 @@ describe("MemoryDatabase", () => {
 
       expect(db.getExposuresByMemory("old_id")).toHaveLength(0);
       expect(db.getExposuresByMemory("new_id")).toHaveLength(1);
+    });
+
+    it("drops self-association when old_id was linked to new_id", () => {
+      db.insertMemory(oldMem);
+      db.upsertAssociation("old_id", "new_id", 0.5, "2026-03-01");
+
+      expect(() => db.replaceMemoryId("old_id", "new_id", "new content")).not.toThrow();
+      expect(db.getAssociations("new_id")).toHaveLength(0);
+    });
+
+    it("merges associations keeping max weight on collision", () => {
+      db.insertMemory(oldMem);
+      // old_id → other with weight 0.2
+      db.upsertAssociation("old_id", "other_id", 0.2, "2026-03-01");
+      // new_id → other with weight 0.9
+      db.upsertAssociation("new_id", "other_id", 0.9, "2026-03-01");
+
+      db.replaceMemoryId("old_id", "new_id", "new content");
+
+      const assocs = db.getAssociations("new_id");
+      expect(assocs).toHaveLength(1);
+      expect(assocs[0].weight).toBe(0.9); // kept stronger
     });
 
     it("merges attribution provenance, keeping higher confidence", () => {
