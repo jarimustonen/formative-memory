@@ -306,7 +306,7 @@ describe("processAfterTurn", () => {
     processAfterTurn(defaultParams({ ledger, messages }));
 
     const attributions = db.getAttributionsForTurn(TURN_ID);
-    expect(attributions[0].message_id).toBe(`${SESSION_ID}:msg:3`);
+    expect(attributions[0].message_id).toBe(`${TURN_ID}:msg:3`);
   });
 
   it("writes recall event to retrieval log for auto-injected memories", () => {
@@ -335,6 +335,33 @@ describe("processAfterTurn", () => {
     } catch {
       // Expected: file does not exist
     }
+  });
+
+  it("different turns in same session do not collide on message_id", () => {
+    const messages = [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello" }, // index 1 in both turns
+    ];
+
+    const ledger1 = makeLedger();
+    ledger1.addAutoInjected(MEM_A, 0.9);
+    const turn1Id = "session-001:2026-03-31T12:00:00.000Z";
+
+    const ledger2 = makeLedger();
+    ledger2.addAutoInjected(MEM_B, 0.8);
+    const turn2Id = "session-001:2026-03-31T12:01:00.000Z";
+
+    processAfterTurn({ ...defaultParams({ ledger: ledger1, messages }), turnId: turn1Id });
+    processAfterTurn({ ...defaultParams({ ledger: ledger2, messages }), turnId: turn2Id });
+
+    // Both turns have assistant at index 1, but message_ids differ due to turnId
+    const attrs1 = db.getAttributionsForTurn(turn1Id);
+    const attrs2 = db.getAttributionsForTurn(turn2Id);
+    expect(attrs1).toHaveLength(1);
+    expect(attrs2).toHaveLength(1);
+    expect(attrs1[0].message_id).toBe(`${turn1Id}:msg:1`);
+    expect(attrs2[0].message_id).toBe(`${turn2Id}:msg:1`);
+    expect(attrs1[0].message_id).not.toBe(attrs2[0].message_id);
   });
 
   it("is idempotent — running twice produces no duplicates", () => {

@@ -109,7 +109,7 @@ export function processAfterTurn(params: AfterTurnParams): void {
   const lastAssistantIdx = findLastAssistantMessageIndex(params.messages);
   if (lastAssistantIdx === -1) return; // No assistant message → no attribution
 
-  const messageId = `${sessionId}:msg:${lastAssistantIdx}`;
+  const messageId = `${turnId}:msg:${lastAssistantIdx}`;
 
   for (const memoryId of ledger.autoInjected.keys()) {
     db.upsertAttribution({
