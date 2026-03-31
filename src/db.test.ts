@@ -345,6 +345,29 @@ describe("MemoryDatabase", () => {
       expect(after).toBe(before); // not mutated
     });
 
+    it("getAttributionsByMemory returns rows ordered by created_at ASC", () => {
+      db.upsertAttribution({ ...attribution, messageId: "msg1", createdAt: "2026-03-31T14:00:00Z" });
+      db.upsertAttribution({ ...attribution, messageId: "msg2", createdAt: "2026-03-31T12:00:00Z" });
+      db.upsertAttribution({ ...attribution, messageId: "msg3", createdAt: "2026-03-31T16:00:00Z" });
+      const rows = db.getAttributionsByMemory("mem1");
+      expect(rows).toHaveLength(3);
+      expect(rows[0].message_id).toBe("msg2"); // earliest
+      expect(rows[2].message_id).toBe("msg3"); // latest
+    });
+
+    it("getLatestAttributionByMemory returns most recent row", () => {
+      db.upsertAttribution({ ...attribution, messageId: "msg1", createdAt: "2026-03-31T14:00:00Z" });
+      db.upsertAttribution({ ...attribution, messageId: "msg2", createdAt: "2026-03-31T12:00:00Z" });
+      db.upsertAttribution({ ...attribution, messageId: "msg3", createdAt: "2026-03-31T16:00:00Z" });
+      const latest = db.getLatestAttributionByMemory("mem1");
+      expect(latest).not.toBeNull();
+      expect(latest!.message_id).toBe("msg3");
+    });
+
+    it("getLatestAttributionByMemory returns null for unknown memory", () => {
+      expect(db.getLatestAttributionByMemory("nonexistent")).toBeNull();
+    });
+
     it("queries by turn_id", () => {
       db.upsertAttribution(attribution);
       db.upsertAttribution({ ...attribution, messageId: "msg2", memoryId: "mem2" });

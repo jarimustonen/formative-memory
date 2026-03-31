@@ -164,10 +164,8 @@ export function processAfterTurn(params: AfterTurnParams): void {
       // Look up the most recent existing attribution for this memory.
       // If found, upsert to that row (cross-turn promotion/demotion).
       // If not found, attribute to the current turn's assistant message (if any).
-      const existing = db.getAttributionsByMemory(memoryId);
-      const targetMessageId = existing.length > 0
-        ? existing[existing.length - 1].message_id
-        : messageId;
+      const latest = db.getLatestAttributionByMemory(memoryId);
+      const targetMessageId = latest?.message_id ?? messageId;
 
       if (targetMessageId) {
         db.upsertAttribution({

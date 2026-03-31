@@ -581,8 +581,21 @@ export class MemoryDatabase {
 
   getAttributionsByMemory(memoryId: string): AttributionRow[] {
     return this.db
-      .prepare("SELECT * FROM message_memory_attribution WHERE memory_id = ?")
+      .prepare(
+        "SELECT * FROM message_memory_attribution WHERE memory_id = ? ORDER BY created_at ASC",
+      )
       .all(memoryId) as AttributionRow[];
+  }
+
+  /** Return the most recent attribution row for a memory, or null. */
+  getLatestAttributionByMemory(memoryId: string): AttributionRow | null {
+    return (
+      this.db
+        .prepare(
+          "SELECT * FROM message_memory_attribution WHERE memory_id = ? ORDER BY created_at DESC LIMIT 1",
+        )
+        .get(memoryId) as AttributionRow | undefined
+    ) ?? null;
   }
 
   getAttributionsForTurn(turnId: string): AttributionRow[] {
