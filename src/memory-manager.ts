@@ -10,6 +10,14 @@ import { contentHash } from "./hash.ts";
 import { appendRecallEvent, appendSearchEvent, appendStoreEvent } from "./retrieval-log.ts";
 import type { LayoutManifest, Memory, MemorySource, TemporalState } from "./types.ts";
 
+/**
+ * Embedding provider interface.
+ *
+ * Implementations MUST honor the `signal` parameter by passing it to
+ * the underlying network call (e.g. `fetch({ signal })`). The circuit
+ * breaker relies on cooperative cancellation — ignoring the signal
+ * defeats timeout enforcement.
+ */
 export type EmbeddingProvider = {
   embed(text: string, signal?: AbortSignal): Promise<number[]>;
 };

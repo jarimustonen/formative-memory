@@ -88,6 +88,12 @@ export class EmbeddingCircuitBreaker {
    * Execute an embedding call through the circuit breaker.
    * Returns the embedding on success, or throws EmbeddingCircuitOpenError when OPEN.
    * Handles timeout (with AbortSignal) and failure tracking.
+   *
+   * **Cooperative timeout contract:** `fn` MUST pass the provided `signal` to
+   * the underlying network call (e.g. `fetch({ signal })`). If `fn` ignores
+   * the signal, the timeout cannot cancel the operation and `call()` will
+   * block until `fn` resolves or rejects on its own. The breaker does not
+   * race against an independent timer — cancellation is cooperative only.
    */
   async call<T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
     const currentState = this.getState();
