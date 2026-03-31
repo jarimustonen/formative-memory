@@ -59,11 +59,18 @@ CREATE TABLE IF NOT EXISTS message_memory_attribution (
   message_id TEXT NOT NULL,
   memory_id TEXT NOT NULL,
   evidence TEXT NOT NULL,
-  confidence REAL NOT NULL,
+  confidence REAL NOT NULL CHECK (confidence >= -1.0 AND confidence <= 1.0),
   turn_id TEXT NOT NULL,
   created_at TEXT NOT NULL,
+  updated_at TEXT,
   PRIMARY KEY (message_id, memory_id)
 );
+
+-- Provenance indexes for non-PK query paths
+CREATE INDEX IF NOT EXISTS idx_exposure_memory_id ON turn_memory_exposure(memory_id);
+CREATE INDEX IF NOT EXISTS idx_exposure_created_at ON turn_memory_exposure(created_at);
+CREATE INDEX IF NOT EXISTS idx_attribution_memory_id ON message_memory_attribution(memory_id);
+CREATE INDEX IF NOT EXISTS idx_attribution_turn_id ON message_memory_attribution(turn_id);
 `;
 
 export type MemoryRow = {
@@ -95,6 +102,7 @@ export type AttributionRow = {
   confidence: number;
   turn_id: string;
   created_at: string;
+  updated_at: string | null;
 };
 
 export class MemoryDatabase {
