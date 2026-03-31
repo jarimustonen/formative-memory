@@ -157,6 +157,116 @@ describe("MemoryDatabase", () => {
     });
   });
 
+  describe("schema migration", () => {
+    it("sets schema_version to 2", () => {
+      expect(db.getState("schema_version")).toBe("2");
+    });
+  });
+
+  describe("exposure (provenance)", () => {
+    const exposure = {
+      sessionId: "s1",
+      turnId: "t1",
+      memoryId: "mem1",
+      mode: "auto_injected",
+      score: 0.85,
+      retrievalMode: "hybrid",
+      createdAt: "2026-03-31T10:00:00Z",
+    };
+
+    it("inserts and retrieves exposure", () => {
+      db.insertExposure(exposure);
+      const rows = db.getExposures("s1", "t1");
+      expect(rows).toHaveLength(1);
+      expect(rows[0].memory_id).toBe("mem1");
+      expect(rows[0].mode).toBe("auto_injected");
+      expect(rows[0].score).toBe(0.85);
+      expect(rows[0].retrieval_mode).toBe("hybrid");
+    });
+
+    it("is idempotent (INSERT OR IGNORE on PK conflict)", () => {
+      db.insertExposure(exposure);
+      db.insertExposure(exposure); // same PK
+      expect(db.getExposures("s1", "t1")).toHaveLength(1);
+    });
+
+    it("allows multiple modes for same memory in same turn", () => {
+      db.insertExposure(exposure);
+      db.insertExposure({ ...exposure, mode: "tool_search" });
+      expect(db.getExposures("s1", "t1")).toHaveLength(2);
+    });
+
+    it("queries by memory_id", () => {
+      db.insertExposure(exposure);
+      db.insertExposure({ ...exposure, sessionId: "s2", turnId: "t2" });
+      expect(db.getExposuresByMemory("mem1")).toHaveLength(2);
+    });
+
+    it("deletes exposures for session", () => {
+      db.insertExposure(exposure);
+      db.insertExposure({ ...exposure, sessionId: "s2", turnId: "t2" });
+      db.deleteExposuresForSession("s1");
+      expect(db.getExposuresByMemory("mem1")).toHaveLength(1);
+    });
+
+    it("deletes exposures older than cutoff", () => {
+      db.insertExposure(exposure);
+      db.insertExposure({ ...exposure, turnId: "t2", createdAt: "2026-04-30T10:00:00Z" });
+      db.deleteExposuresOlderThan("2026-04-01T00:00:00Z");
+      const remaining = db.getExposures("s1", "t2");
+      expect(remaining).toHaveLength(1);
+    });
+  });
+
+  describe("attribution (provenance)", () => {
+    const attribution = {
+      messageId: "msg1",
+      memoryId: "mem1",
+      evidence: "tool_search_returned",
+      confidence: 0.3,
+      turnId: "t1",
+      createdAt: "2026-03-31T10:00:00Z",
+    };
+
+    it("inserts and retrieves attribution", () => {
+      db.upsertAttribution(attribution);
+      const rows = db.getAttributions("mem1");
+      expect(rows).toHaveLength(1);
+      expect(rows[0].evidence).toBe("tool_search_returned");
+      expect(rows[0].confidence).toBe(0.3);
+    });
+
+    it("upserts on PK conflict (updates evidence and confidence)", () => {
+      db.upsertAttribution(attribution);
+      db.upsertAttribution({ ...attribution, evidence: "agent_feedback_positive", confidence: 0.95 });
+      const rows = db.getAttributions("mem1");
+      expect(rows).toHaveLength(1);
+      expect(rows[0].evidence).toBe("agent_feedback_positive");
+      expect(rows[0].confidence).toBe(0.95);
+    });
+
+    it("queries by turn_id", () => {
+      db.upsertAttribution(attribution);
+      db.upsertAttribution({ ...attribution, messageId: "msg2", memoryId: "mem2" });
+      expect(db.getAttributionsForTurn("t1")).toHaveLength(2);
+    });
+
+    it("deletes attributions for specific messages", () => {
+      db.upsertAttribution(attribution);
+      db.upsertAttribution({ ...attribution, messageId: "msg2" });
+      db.deleteAttributionsForMessages(["msg1"]);
+      const rows = db.getAttributions("mem1");
+      expect(rows).toHaveLength(1);
+      expect(rows[0].message_id).toBe("msg2");
+    });
+
+    it("handles empty message list in delete", () => {
+      db.upsertAttribution(attribution);
+      db.deleteAttributionsForMessages([]);
+      expect(db.getAttributions("mem1")).toHaveLength(1);
+    });
+  });
+
   describe("replaceMemoryId", () => {
     it("replaces id in memories, FTS, embeddings and associations", () => {
       db.insertMemory({

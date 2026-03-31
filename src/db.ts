@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import type { Association, LayoutManifest, MemorySource, TemporalState } from "./types.ts";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS memories (
@@ -41,6 +41,29 @@ CREATE TABLE IF NOT EXISTS state (
   key TEXT PRIMARY KEY,
   value TEXT
 );
+
+-- Provenance: what was offered to the model (Phase 3.6)
+CREATE TABLE IF NOT EXISTS turn_memory_exposure (
+  session_id TEXT NOT NULL,
+  turn_id TEXT NOT NULL,
+  memory_id TEXT NOT NULL,
+  mode TEXT NOT NULL,
+  score REAL,
+  retrieval_mode TEXT,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (session_id, turn_id, memory_id, mode)
+);
+
+-- Provenance: what influenced the response (Phase 3.6)
+CREATE TABLE IF NOT EXISTS message_memory_attribution (
+  message_id TEXT NOT NULL,
+  memory_id TEXT NOT NULL,
+  evidence TEXT NOT NULL,
+  confidence REAL NOT NULL,
+  turn_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (message_id, memory_id)
+);
 `;
 
 export type MemoryRow = {
@@ -55,6 +78,25 @@ export type MemoryRow = {
   file_path: string;
 };
 
+export type ExposureRow = {
+  session_id: string;
+  turn_id: string;
+  memory_id: string;
+  mode: string;
+  score: number | null;
+  retrieval_mode: string | null;
+  created_at: string;
+};
+
+export type AttributionRow = {
+  message_id: string;
+  memory_id: string;
+  evidence: string;
+  confidence: number;
+  turn_id: string;
+  created_at: string;
+};
+
 export class MemoryDatabase {
   private db: Database.Database;
 
@@ -67,8 +109,10 @@ export class MemoryDatabase {
 
   private init() {
     this.db.exec(SCHEMA_SQL);
-    const version = this.getState("schema_version");
-    if (!version) {
+    const version = Number(this.getState("schema_version") ?? 0);
+    if (version < SCHEMA_VERSION) {
+      // Migrations are idempotent via IF NOT EXISTS in SCHEMA_SQL.
+      // Just bump the version marker.
       this.setState("schema_version", String(SCHEMA_VERSION));
     }
   }
@@ -322,6 +366,105 @@ export class MemoryDatabase {
       this.db.prepare("SELECT COUNT(*) as c FROM associations").get() as { c: number }
     ).c;
     return { total, working, consolidated, associations };
+  }
+
+  // -- Provenance: Exposure --
+
+  insertExposure(params: {
+    sessionId: string;
+    turnId: string;
+    memoryId: string;
+    mode: string;
+    score: number | null;
+    retrievalMode: string | null;
+    createdAt: string;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO turn_memory_exposure
+         (session_id, turn_id, memory_id, mode, score, retrieval_mode, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        params.sessionId,
+        params.turnId,
+        params.memoryId,
+        params.mode,
+        params.score,
+        params.retrievalMode,
+        params.createdAt,
+      );
+  }
+
+  getExposures(sessionId: string, turnId: string): ExposureRow[] {
+    return this.db
+      .prepare("SELECT * FROM turn_memory_exposure WHERE session_id = ? AND turn_id = ?")
+      .all(sessionId, turnId) as ExposureRow[];
+  }
+
+  getExposuresByMemory(memoryId: string): ExposureRow[] {
+    return this.db
+      .prepare("SELECT * FROM turn_memory_exposure WHERE memory_id = ?")
+      .all(memoryId) as ExposureRow[];
+  }
+
+  deleteExposuresForSession(sessionId: string): void {
+    this.db.prepare("DELETE FROM turn_memory_exposure WHERE session_id = ?").run(sessionId);
+  }
+
+  deleteExposuresOlderThan(cutoffDate: string): void {
+    this.db.prepare("DELETE FROM turn_memory_exposure WHERE created_at < ?").run(cutoffDate);
+  }
+
+  // -- Provenance: Attribution --
+
+  upsertAttribution(params: {
+    messageId: string;
+    memoryId: string;
+    evidence: string;
+    confidence: number;
+    turnId: string;
+    createdAt: string;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO message_memory_attribution
+         (message_id, memory_id, evidence, confidence, turn_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(message_id, memory_id)
+         DO UPDATE SET evidence = ?, confidence = ?, turn_id = ?`,
+      )
+      .run(
+        params.messageId,
+        params.memoryId,
+        params.evidence,
+        params.confidence,
+        params.turnId,
+        params.createdAt,
+        params.evidence,
+        params.confidence,
+        params.turnId,
+      );
+  }
+
+  getAttributions(memoryId: string): AttributionRow[] {
+    return this.db
+      .prepare("SELECT * FROM message_memory_attribution WHERE memory_id = ?")
+      .all(memoryId) as AttributionRow[];
+  }
+
+  getAttributionsForTurn(turnId: string): AttributionRow[] {
+    return this.db
+      .prepare("SELECT * FROM message_memory_attribution WHERE turn_id = ?")
+      .all(turnId) as AttributionRow[];
+  }
+
+  deleteAttributionsForMessages(messageIds: string[]): void {
+    if (messageIds.length === 0) return;
+    const placeholders = messageIds.map(() => "?").join(",");
+    this.db
+      .prepare(`DELETE FROM message_memory_attribution WHERE message_id IN (${placeholders})`)
+      .run(...messageIds);
   }
 
   // -- Layout --
