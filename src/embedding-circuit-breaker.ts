@@ -105,7 +105,11 @@ export class EmbeddingCircuitBreaker {
     }
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, this.timeoutMs);
 
     try {
       const result = await fn(controller.signal);
@@ -113,7 +117,7 @@ export class EmbeddingCircuitBreaker {
       return result;
     } catch (error) {
       this.onFailure();
-      if (isAbortError(error)) {
+      if (timedOut && isAbortError(error)) {
         throw new EmbeddingTimeoutError(this.timeoutMs);
       }
       throw error;
