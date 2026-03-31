@@ -379,7 +379,10 @@ export function createAssociativeMemoryContextEngine(
     },
 
     async afterTurn(params) {
-      if (!options.getDb || !options.ledger) return;
+      if (!options.getDb || !options.ledger) {
+        options.logger?.warn("afterTurn() disabled: missing getDb or ledger");
+        return;
+      }
 
       // Deterministic turnId: same logical turn always produces the same key,
       // enabling idempotent retries via PK/upsert semantics.
