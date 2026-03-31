@@ -276,6 +276,47 @@ describe("MemoryDatabase", () => {
       expect(rows[0].confidence).toBe(0.95);
     });
 
+    it("explicit negative feedback overrides implicit positive attribution", () => {
+      db.upsertAttribution({ ...attribution, evidence: "tool_get", confidence: 0.6 });
+      db.upsertAttribution({ ...attribution, evidence: "agent_feedback_negative", confidence: -0.5 });
+      const rows = db.getAttributionsByMemory("mem1");
+      expect(rows).toHaveLength(1);
+      expect(rows[0].evidence).toBe("agent_feedback_negative");
+      expect(rows[0].confidence).toBe(-0.5);
+    });
+
+    it("explicit negative feedback overrides auto_injected", () => {
+      db.upsertAttribution({ ...attribution, evidence: "auto_injected", confidence: 0.15 });
+      db.upsertAttribution({ ...attribution, evidence: "agent_feedback_negative", confidence: -0.5 });
+      const rows = db.getAttributionsByMemory("mem1");
+      expect(rows[0].evidence).toBe("agent_feedback_negative");
+      expect(rows[0].confidence).toBe(-0.5);
+    });
+
+    it("implicit attribution does not override explicit feedback", () => {
+      db.upsertAttribution({ ...attribution, evidence: "agent_feedback_negative", confidence: -0.5 });
+      db.upsertAttribution({ ...attribution, evidence: "tool_get", confidence: 0.6 });
+      const rows = db.getAttributionsByMemory("mem1");
+      expect(rows[0].evidence).toBe("agent_feedback_negative");
+      expect(rows[0].confidence).toBe(-0.5);
+    });
+
+    it("higher explicit feedback overrides lower explicit feedback", () => {
+      db.upsertAttribution({ ...attribution, evidence: "agent_feedback_negative", confidence: -0.5 });
+      db.upsertAttribution({ ...attribution, evidence: "agent_feedback_positive", confidence: 0.95 });
+      const rows = db.getAttributionsByMemory("mem1");
+      expect(rows[0].evidence).toBe("agent_feedback_positive");
+      expect(rows[0].confidence).toBe(0.95);
+    });
+
+    it("lower explicit feedback does not override higher explicit feedback", () => {
+      db.upsertAttribution({ ...attribution, evidence: "agent_feedback_positive", confidence: 0.95 });
+      db.upsertAttribution({ ...attribution, evidence: "agent_feedback_negative", confidence: -0.5 });
+      const rows = db.getAttributionsByMemory("mem1");
+      expect(rows[0].evidence).toBe("agent_feedback_positive");
+      expect(rows[0].confidence).toBe(0.95);
+    });
+
     it("only sets updated_at on actual promotion, not rejected upsert", () => {
       db.upsertAttribution({ ...attribution, evidence: "agent_feedback_positive", confidence: 0.95 });
       const before = db.getAttributionsByMemory("mem1")[0].updated_at;

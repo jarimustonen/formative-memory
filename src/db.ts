@@ -513,6 +513,14 @@ export class MemoryDatabase {
   /**
    * Merge a full attribution row preserving timestamps. Used by replaceMemoryId()
    * where source rows may have existing updated_at that should be preserved.
+   *
+   * Merge policy:
+   * - Explicit feedback (agent_feedback_*) ALWAYS overwrites implicit attribution
+   *   (auto_injected, tool_search_returned, tool_get), regardless of numeric
+   *   confidence. This ensures negative feedback (-0.5) can demote a prior
+   *   positive implicit attribution (0.6).
+   * - Between two implicit attributions: higher confidence wins (promotion only).
+   * - Between two explicit feedbacks: higher confidence wins.
    */
   private mergeAttributionRow(row: AttributionRow): void {
     this.db
@@ -522,14 +530,44 @@ export class MemoryDatabase {
          VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(message_id, memory_id) DO UPDATE SET
            evidence = CASE
+             -- New is explicit feedback, existing is implicit → new wins
+             WHEN excluded.evidence LIKE 'agent_feedback_%'
+                  AND message_memory_attribution.evidence NOT LIKE 'agent_feedback_%'
+             THEN excluded.evidence
+             -- Existing is explicit feedback, new is implicit → existing wins
+             WHEN message_memory_attribution.evidence LIKE 'agent_feedback_%'
+                  AND excluded.evidence NOT LIKE 'agent_feedback_%'
+             THEN message_memory_attribution.evidence
+             -- Same category: higher confidence wins
              WHEN excluded.confidence > message_memory_attribution.confidence
-             THEN excluded.evidence ELSE message_memory_attribution.evidence END,
-           confidence = MAX(message_memory_attribution.confidence, excluded.confidence),
+             THEN excluded.evidence
+             ELSE message_memory_attribution.evidence END,
+           confidence = CASE
+             WHEN excluded.evidence LIKE 'agent_feedback_%'
+                  AND message_memory_attribution.evidence NOT LIKE 'agent_feedback_%'
+             THEN excluded.confidence
+             WHEN message_memory_attribution.evidence LIKE 'agent_feedback_%'
+                  AND excluded.evidence NOT LIKE 'agent_feedback_%'
+             THEN message_memory_attribution.confidence
+             ELSE MAX(message_memory_attribution.confidence, excluded.confidence) END,
            turn_id = CASE
+             WHEN excluded.evidence LIKE 'agent_feedback_%'
+                  AND message_memory_attribution.evidence NOT LIKE 'agent_feedback_%'
+             THEN excluded.turn_id
+             WHEN message_memory_attribution.evidence LIKE 'agent_feedback_%'
+                  AND excluded.evidence NOT LIKE 'agent_feedback_%'
+             THEN message_memory_attribution.turn_id
              WHEN excluded.confidence > message_memory_attribution.confidence
-             THEN excluded.turn_id ELSE message_memory_attribution.turn_id END,
+             THEN excluded.turn_id
+             ELSE message_memory_attribution.turn_id END,
            created_at = MIN(message_memory_attribution.created_at, excluded.created_at),
            updated_at = CASE
+             WHEN excluded.evidence LIKE 'agent_feedback_%'
+                  AND message_memory_attribution.evidence NOT LIKE 'agent_feedback_%'
+             THEN COALESCE(excluded.updated_at, excluded.created_at)
+             WHEN message_memory_attribution.evidence LIKE 'agent_feedback_%'
+                  AND excluded.evidence NOT LIKE 'agent_feedback_%'
+             THEN message_memory_attribution.updated_at
              WHEN excluded.confidence > message_memory_attribution.confidence
              THEN COALESCE(excluded.updated_at, excluded.created_at)
              ELSE message_memory_attribution.updated_at END`,

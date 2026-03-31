@@ -501,5 +501,32 @@ describe("processAfterTurn", () => {
       expect(attrs[0].evidence).toBe("agent_feedback_positive");
       expect(attrs[0].confidence).toBe(CONFIDENCE.agent_feedback_positive);
     });
+
+    it("negative feedback demotes existing search attribution", () => {
+      const ledger = makeLedger();
+      ledger.addSearchResults([{ id: MEM_A, score: 0.8, query: "test" }]);
+
+      const messages = makeMessages(1, [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: "toolu_1",
+              name: "memory_feedback",
+              input: { memory_id: MEM_A, rating: 1 },
+            },
+          ],
+        },
+      ]);
+
+      processAfterTurn(defaultParams({ ledger, messages, prePromptMessageCount: 1 }));
+
+      const attrs = db.getAttributionsForTurn(TURN_ID).filter((a) => a.memory_id === MEM_A);
+      expect(attrs).toHaveLength(1);
+      // Negative feedback (-0.5) should override search (0.3) because explicit > implicit
+      expect(attrs[0].evidence).toBe("agent_feedback_negative");
+      expect(attrs[0].confidence).toBe(CONFIDENCE.agent_feedback_negative);
+    });
   });
 });
