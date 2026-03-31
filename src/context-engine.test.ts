@@ -1307,4 +1307,41 @@ describe("afterTurn()", () => {
     expect(warnFn).toHaveBeenCalledOnce();
     expect(warnFn.mock.calls[0][0]).toContain("afterTurn");
   });
+
+  it("produces deterministic turnId — retry is idempotent", async () => {
+    const { engine, ledger } = createEngineWithDb();
+    ledger.addAutoInjected("mem-a", 0.9);
+
+    const params = afterTurnParams([
+      { role: "user", content: "hello world" },
+      { role: "assistant", content: "hi" },
+    ]);
+
+    // Call twice with same params (simulating retry)
+    await engine.afterTurn!(params);
+    await engine.afterTurn!(params);
+
+    // Should have exactly 1 exposure (ON CONFLICT DO NOTHING with same turnId)
+    const exposures = db.getExposuresByMemory("mem-a");
+    expect(exposures).toHaveLength(1);
+  });
+
+  it("different user messages produce different turnIds", async () => {
+    const { engine, ledger } = createEngineWithDb();
+    ledger.addAutoInjected("mem-a", 0.9);
+
+    await engine.afterTurn!(afterTurnParams([
+      { role: "user", content: "question one" },
+      { role: "assistant", content: "answer one" },
+    ]));
+
+    await engine.afterTurn!(afterTurnParams([
+      { role: "user", content: "question two" },
+      { role: "assistant", content: "answer two" },
+    ]));
+
+    // Two different turns → two exposure rows
+    const exposures = db.getExposuresByMemory("mem-a");
+    expect(exposures).toHaveLength(2);
+  });
 });

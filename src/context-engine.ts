@@ -381,7 +381,11 @@ export function createAssociativeMemoryContextEngine(
     async afterTurn(params) {
       if (!options.getDb || !options.ledger) return;
 
-      const turnId = `${params.sessionId}:${new Date().toISOString()}`;
+      // Deterministic turnId: same logical turn always produces the same key,
+      // enabling idempotent retries via PK/upsert semantics.
+      // Derived from sessionId + last user message content + prePromptMessageCount.
+      const turnFingerprint = userTurnKey(params.messages) ?? "empty";
+      const turnId = `${params.sessionId}:${params.prePromptMessageCount}:${turnFingerprint}`;
 
       try {
         processAfterTurn({
