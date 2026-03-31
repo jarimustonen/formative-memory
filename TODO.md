@@ -258,6 +258,14 @@ Erillinen kuvaus: `history/openclaw-upstream-changes.md`
 
 ---
 
+## Arkkitehtuurikatselmukset
+
+Erillisiä tutkimuksia ja katselmuksia jotka eivät blokkaa kehitystä.
+
+- [ ] **Research: Runtime-skeemavalidointi DB-kerrokseen.** Projektissa on `@sinclair/typebox` tool-parametreissa ja käsin kirjoitetut TypeScript-tyypit + `as`-castit DB-riveille. Revieweissä toistuva löydös: evidence/mode -stringeille ei ole CHECK-rajoitteita eikä runtime-validointia, `unknown[]`-tyypitys transkriptiparsinnassa. Tutkittava: sopiiko Zod (tai olemassa oleva typebox) DB-rivien, AfterTurnParams-sisääntulon ja transcript-parsintarajapintojen runtime-validointiin? Huomioitava: kahden skeemakirjaston ylläpitokustannus vs. hyöty, SQLiten TEXT-kenttien luonne, validointikerroksen sijainti (DB-luku vs. rajapinta).
+
+---
+
 ## Go-to-Market
 
 - [ ] GTM-strategian toteutus: `history/plan-gtm-formativememory.md`
