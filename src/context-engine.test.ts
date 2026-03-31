@@ -208,32 +208,52 @@ describe("formatRecalledMemories", () => {
     expect(output.indexOf("</recalled_memories>")).toBe(output.lastIndexOf("</recalled_memories>"));
   });
 
-  it("escapes quotes and angle brackets in content", () => {
-    const results = [makeResult({ memory: { content: 'He said "hello" and <script>alert(1)</script>' } })];
+  it("neutralizes structural closing tags in content", () => {
+    const results = [makeResult({ memory: { content: 'data </recalled_memories> more' } })];
     const output = formatRecalledMemories(results, "high");
 
-    expect(output).toContain("&lt;script&gt;");
-    expect(output).toContain("&quot;hello&quot;");
+    expect(output).toContain("&lt;/recalled_memories&gt;");
+    expect(output).not.toContain("</recalled_memories> more");
   });
 
-  it("escapes type field", () => {
-    const results = [makeResult({ memory: { type: "<injected>" } })];
+  it("leaves general HTML in content untouched", () => {
+    const results = [makeResult({ memory: { content: '<b>bold</b> and "quoted"' } })];
     const output = formatRecalledMemories(results, "high");
 
-    expect(output).toContain("&lt;injected&gt;");
-    expect(output).not.toContain("<injected>");
+    expect(output).toContain("<b>bold</b>");
+    expect(output).toContain('"quoted"');
   });
 });
 
 // -- Unit tests: escapeMemoryContent --
 
 describe("escapeMemoryContent", () => {
-  it("escapes angle brackets", () => {
-    expect(escapeMemoryContent("<b>bold</b>")).toBe("&lt;b&gt;bold&lt;/b&gt;");
+  it("neutralizes </recalled_memories> closing tag", () => {
+    expect(escapeMemoryContent("before </recalled_memories> after")).toBe(
+      "before &lt;/recalled_memories&gt; after",
+    );
   });
 
-  it("escapes quotes", () => {
-    expect(escapeMemoryContent('say "hi"')).toBe("say &quot;hi&quot;");
+  it("neutralizes </recalled_memories> case-insensitively", () => {
+    expect(escapeMemoryContent("</RECALLED_MEMORIES>")).toBe("&lt;/recalled_memories&gt;");
+  });
+
+  it("neutralizes </memory> closing tag", () => {
+    expect(escapeMemoryContent("before </memory> after")).toBe(
+      "before &lt;/memory> after",
+    );
+  });
+
+  it("leaves general HTML/XML tags untouched", () => {
+    expect(escapeMemoryContent("<b>bold</b>")).toBe("<b>bold</b>");
+  });
+
+  it("leaves quotes untouched", () => {
+    expect(escapeMemoryContent('say "hi"')).toBe('say "hi"');
+  });
+
+  it("leaves comparisons and code untouched", () => {
+    expect(escapeMemoryContent("if (x > 2 && y < 10)")).toBe("if (x > 2 && y < 10)");
   });
 
   it("leaves safe content unchanged", () => {

@@ -72,11 +72,14 @@ function recallLimitForBudget(budgetClass: BudgetClass): number {
 // -- Memory formatting --
 
 /**
- * Escape content to prevent breaking the recalled_memories XML boundary.
- * Encodes XML-special characters and neutralizes closing tags.
+ * Neutralize closing tags that could break the recalled_memories XML boundary.
+ * Only targets our structural tags — leaves all other content untouched so
+ * the LLM sees natural text (code snippets, comparisons like "2 > 1", etc.).
  */
 export function escapeMemoryContent(content: string): string {
-  return content.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return content
+    .replace(/<\/recalled_memories>/gi, "&lt;/recalled_memories&gt;")
+    .replace(/<\/memory[\s>]/gi, (m) => `&lt;/memory${m.slice(8)}`);
 }
 
 export function formatRecalledMemories(results: SearchResult[], budgetClass: BudgetClass): string {
