@@ -90,8 +90,15 @@ export class MemoryManager {
     let embedding: number[] | null = null;
     try {
       embedding = await this.embedder.embed(params.content);
-    } catch {
-      // Embedding unavailable — store without it
+    } catch (error) {
+      // Expected breaker/timeout errors → store without embedding.
+      // Unexpected errors (auth, config, bugs) → rethrow.
+      if (
+        !(error instanceof EmbeddingCircuitOpenError) &&
+        !(error instanceof EmbeddingTimeoutError)
+      ) {
+        throw error;
+      }
     }
 
     // Write to DB
