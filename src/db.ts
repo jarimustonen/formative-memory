@@ -422,9 +422,10 @@ export class MemoryDatabase {
   }): void {
     this.db
       .prepare(
-        `INSERT OR IGNORE INTO turn_memory_exposure
+        `INSERT INTO turn_memory_exposure
          (session_id, turn_id, memory_id, mode, score, retrieval_mode, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(session_id, turn_id, memory_id, mode) DO NOTHING`,
       )
       .run(
         params.sessionId,
@@ -472,8 +473,15 @@ export class MemoryDatabase {
         `INSERT INTO message_memory_attribution
          (message_id, memory_id, evidence, confidence, turn_id, created_at)
          VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT(message_id, memory_id)
-         DO UPDATE SET evidence = ?, confidence = ?, turn_id = ?`,
+         ON CONFLICT(message_id, memory_id) DO UPDATE SET
+           evidence = CASE
+             WHEN excluded.confidence > message_memory_attribution.confidence
+             THEN excluded.evidence ELSE message_memory_attribution.evidence END,
+           confidence = MAX(message_memory_attribution.confidence, excluded.confidence),
+           turn_id = CASE
+             WHEN excluded.confidence > message_memory_attribution.confidence
+             THEN excluded.turn_id ELSE message_memory_attribution.turn_id END,
+           updated_at = excluded.created_at`,
       )
       .run(
         params.messageId,
@@ -482,9 +490,6 @@ export class MemoryDatabase {
         params.confidence,
         params.turnId,
         params.createdAt,
-        params.evidence,
-        params.confidence,
-        params.turnId,
       );
   }
 
