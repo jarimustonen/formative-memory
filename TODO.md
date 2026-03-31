@@ -4,9 +4,9 @@
 
 ## Tilanne (2026-03-31)
 
-**Valmista:** Infrastruktuuri (DB, tyypit, hash, chunks, retrieval-log, config), MemoryManager (store, search, recall, get), työkalurekisteröinti (4 työkalua), `registerMemoryPromptSection()`, Context Engine Phase 3.0–3.5 (assemble, cache, fingerprinting, turn memory ledger + dedup, embedding circuit breaker). Legacy `before_prompt_build` hook poistettu. Circuit breaker per workspace, AbortController timeout, store() graceful degradation. 207 testiä läpi.
+**Valmista:** Infrastruktuuri (DB, tyypit, hash, chunks, retrieval-log, config), MemoryManager (store, search, recall, get), työkalurekisteröinti (4 työkalua), `registerMemoryPromptSection()`, Context Engine Phase 3.0–3.6 (assemble, cache, fingerprinting, turn memory ledger + dedup, embedding circuit breaker, provenance-taulut). Legacy `before_prompt_build` hook poistettu. 227 testiä läpi.
 
-**Seuraava:** Phase 3.6 — Provenance-taulut.
+**Seuraava:** Phase 3.7 — afterTurn().
 
 **V1-periaate:** Yksinkertainen ja laajennettava. Minimoi hot path -kirjoitukset, mutta salli append-only sidecar-kirjoitukset normaalikäytössä (retrieval.log, provenance). Kanoniset muistomutaatiot (strength, assosiaatiot, pruning, merget, temporaaliset siirtymät) vain konsolidaatiossa.
 
@@ -109,15 +109,21 @@ Tiivistelmä: content hash (SHA-256), SQLite backend, working.md + consolidated.
 - [x] Testit: tilakone, timeout, concurrency, lifecycle (207 testiä)
 - [x] Review: `history/review-phase3.5-circuit-breaker.md`, `history/review-phase3.5-abort-and-workspace.md`
 
-### 3.6 Provenance-taulut (schema ennen afterTurn-logiikkaa)
+### 3.6 Provenance-taulut ✅
 
-- [ ] `turn_memory_exposure` -taulu (v2 §8):
-  - session_id, turn_id, memory_id, mode, score, retrieval_mode, created_at
-- [ ] `message_memory_attribution` -taulu (v2 §8):
-  - message_id, memory_id, evidence, confidence, turn_id, created_at
-- [ ] Confidence-asteikko (v2 §8): agent_feedback_positive (0.95) → rejected (-1.0)
-- [ ] Schema-migraatio: version bump, yhteensopivuus olemassaolevien DB:iden kanssa
-- [ ] Testit: taulujen luonti, migraatio vanhasta skeemasta
+- [x] `turn_memory_exposure` -taulu: PK `(session_id, turn_id, memory_id, mode)`, ON CONFLICT DO NOTHING
+- [x] `message_memory_attribution` -taulu: PK `(message_id, memory_id)`, promotio-upsert (max confidence)
+- [x] Schema v1→v2 migraatio, `updated_at`-sarake, confidence CHECK (-1.0–1.0)
+- [x] Indeksit: exposure(memory_id, created_at), attribution(memory_id, turn_id)
+- [x] `deleteMemory()` poistaa exposure, säilyttää attribution (durable, dokumentoitu)
+- [x] `replaceMemoryId()` mergee provenance: exposure INSERT OR IGNORE, attribution max-confidence
+- [x] Association merge: self-loop skip, max weight, timestamp-metadata säilytys
+- [x] `replaceMemoryId()` fail fast jos newId jo olemassa
+- [x] `mergeAttributionRow()` — timestamp-preserving merge, `upsertAttribution()` delegoi sille (DRY)
+- [x] UTC ISO-8601 timestamp-konventio dokumentoitu
+- [x] `getAttributionsByMemory()` naming, `deleteAttributionsForMessages()` per-row loop
+- [x] Testit: CRUD, idempotenssi, promotio, demotion-esto, delete/replace lifecycle
+- [x] Review: `history/review-phase3.6-provenance-tables.md`, `history/review-phase3.6-provenance-fixes.md`, `history/review-phase3.6-final-fixes.md`, `history/review-phase3.6-mergeAttributionRow.md`
 
 ### 3.7 afterTurn()
 
