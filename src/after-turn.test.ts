@@ -651,6 +651,8 @@ describe("processAfterTurn", () => {
       expect(attrsAfter[0].message_id).toBe(priorMessageId);
       expect(attrsAfter[0].evidence).toBe("agent_feedback_positive");
       expect(attrsAfter[0].confidence).toBe(CONFIDENCE.agent_feedback_positive);
+      // turn_id stays as original turn, not the feedback turn
+      expect(attrsAfter[0].turn_id).toBe(turn1Id);
     });
 
     it("cross-turn: feedback for unknown memory creates new attribution on current turn", () => {

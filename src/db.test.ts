@@ -317,6 +317,20 @@ describe("MemoryDatabase", () => {
       expect(rows[0].confidence).toBe(0.95);
     });
 
+    it("preserves original turn_id on cross-turn feedback promotion", () => {
+      db.upsertAttribution({ ...attribution, turnId: "turn1" });
+      db.upsertAttribution({
+        ...attribution,
+        evidence: "agent_feedback_positive",
+        confidence: 0.95,
+        turnId: "turn2",
+      });
+      const rows = db.getAttributionsByMemory("mem1");
+      expect(rows[0].evidence).toBe("agent_feedback_positive");
+      expect(rows[0].confidence).toBe(0.95);
+      expect(rows[0].turn_id).toBe("turn1"); // original turn preserved
+    });
+
     it("only sets updated_at on actual promotion, not rejected upsert", () => {
       db.upsertAttribution({ ...attribution, evidence: "agent_feedback_positive", confidence: 0.95 });
       const before = db.getAttributionsByMemory("mem1")[0].updated_at;

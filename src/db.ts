@@ -521,6 +521,8 @@ export class MemoryDatabase {
    *   positive implicit attribution (0.6).
    * - Between two implicit attributions: higher confidence wins (promotion only).
    * - Between two explicit feedbacks: higher confidence wins.
+   * - turn_id is NEVER updated: it represents the original message's turn,
+   *   not the most recent update event. updated_at tracks mutation time.
    */
   private mergeAttributionRow(row: AttributionRow): void {
     this.db
@@ -550,16 +552,10 @@ export class MemoryDatabase {
                   AND excluded.evidence NOT LIKE 'agent_feedback_%'
              THEN message_memory_attribution.confidence
              ELSE MAX(message_memory_attribution.confidence, excluded.confidence) END,
-           turn_id = CASE
-             WHEN excluded.evidence LIKE 'agent_feedback_%'
-                  AND message_memory_attribution.evidence NOT LIKE 'agent_feedback_%'
-             THEN excluded.turn_id
-             WHEN message_memory_attribution.evidence LIKE 'agent_feedback_%'
-                  AND excluded.evidence NOT LIKE 'agent_feedback_%'
-             THEN message_memory_attribution.turn_id
-             WHEN excluded.confidence > message_memory_attribution.confidence
-             THEN excluded.turn_id
-             ELSE message_memory_attribution.turn_id END,
+           -- turn_id always preserved: it represents when the original
+           -- message occurred, not when the attribution was last updated.
+           -- updated_at tracks when evidence/confidence last changed.
+           turn_id = message_memory_attribution.turn_id,
            created_at = MIN(message_memory_attribution.created_at, excluded.created_at),
            updated_at = CASE
              WHEN excluded.evidence LIKE 'agent_feedback_%'
