@@ -224,6 +224,12 @@ export class MemoryDatabase {
 
   replaceMemoryId(oldId: string, newId: string, newContent: string): void {
     const replace = this.db.transaction(() => {
+      // Fail fast if target already exists — this is a rename, not a merge.
+      // Full memory merge (consolidation) requires different semantics.
+      if (this.getMemory(newId)) {
+        throw new Error(`replaceMemoryId: target memory already exists: ${newId}`);
+      }
+
       // Update memory row
       this.db.prepare("UPDATE memories SET id = ? WHERE id = ?").run(newId, oldId);
 

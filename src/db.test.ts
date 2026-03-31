@@ -354,6 +354,14 @@ describe("MemoryDatabase", () => {
       expect(db.getExposuresByMemory("new_id")).toHaveLength(1);
     });
 
+    it("throws if target memory already exists", () => {
+      db.insertMemory(oldMem);
+      db.insertMemory({ ...oldMem, id: "new_id" });
+
+      expect(() => db.replaceMemoryId("old_id", "new_id", "new content"))
+        .toThrow("target memory already exists");
+    });
+
     it("drops self-association when old_id was linked to new_id", () => {
       db.insertMemory(oldMem);
       db.upsertAssociation("old_id", "new_id", 0.5, "2026-03-01");
