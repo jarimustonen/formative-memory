@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { writeFileSync } from "node:fs";
 import {
   DECAY_ASSOCIATION,
   DECAY_CONSOLIDATED,
@@ -9,9 +10,13 @@ import {
   ETA,
   MODE_WEIGHT_BM25_ONLY,
   MODE_WEIGHT_HYBRID,
+  TRANSITIVE_WEIGHT_THRESHOLD,
   applyAssociationDecay,
   applyDecay,
   applyReinforcement,
+  applyTemporalTransitions,
+  updateCoRetrievalAssociations,
+  updateTransitiveAssociations,
 } from "./consolidation-steps.ts";
 import { MemoryDatabase } from "./db.ts";
 
@@ -254,5 +259,187 @@ describe("applyAssociationDecay", () => {
     const assocs = db.getAssociations("mem-a");
     expect(assocs[0].weight).toBeCloseTo(0.8 * DECAY_ASSOCIATION, 5);
     expect(assocs[1].weight).toBeCloseTo(0.4 * DECAY_ASSOCIATION, 5);
+  });
+});
+
+// -- updateCoRetrievalAssociations --
+
+describe("updateCoRetrievalAssociations", () => {
+  it("creates associations from co-retrieved memories in search events", () => {
+    insertMemory("mem-a", 0.5);
+    insertMemory("mem-b", 0.5);
+    insertMemory("mem-c", 0.5);
+
+    const logPath = join(tmpDir, "retrieval.log");
+    writeFileSync(logPath, "2026-03-01T00:00:00Z search   mem-a mem-b mem-c\n");
+
+    const count = updateCoRetrievalAssociations(db, logPath);
+    // 3 pairs: a-b, a-c, b-c
+    expect(count).toBe(3);
+
+    expect(db.getAssociationWeight("mem-a", "mem-b")).toBeGreaterThan(0);
+    expect(db.getAssociationWeight("mem-a", "mem-c")).toBeGreaterThan(0);
+    expect(db.getAssociationWeight("mem-b", "mem-c")).toBeGreaterThan(0);
+  });
+
+  it("accumulates weight with probabilistic OR on repeated co-retrieval", () => {
+    insertMemory("mem-a", 0.5);
+    insertMemory("mem-b", 0.5);
+
+    const logPath = join(tmpDir, "retrieval.log");
+    writeFileSync(logPath, [
+      "2026-03-01T00:00:00Z search   mem-a mem-b",
+      "2026-03-01T01:00:00Z search   mem-a mem-b",
+    ].join("\n") + "\n");
+
+    updateCoRetrievalAssociations(db, logPath);
+
+    // First: 0 + 0.1 - 0*0.1 = 0.1
+    // Second: 0.1 + 0.1 - 0.1*0.1 = 0.19
+    expect(db.getAssociationWeight("mem-a", "mem-b")).toBeCloseTo(0.19, 5);
+  });
+
+  it("ignores single-memory events", () => {
+    insertMemory("mem-a", 0.5);
+    const logPath = join(tmpDir, "retrieval.log");
+    writeFileSync(logPath, "2026-03-01T00:00:00Z search   mem-a\n");
+
+    expect(updateCoRetrievalAssociations(db, logPath)).toBe(0);
+  });
+
+  it("returns 0 for empty log", () => {
+    expect(updateCoRetrievalAssociations(db, join(tmpDir, "nonexistent.log"))).toBe(0);
+  });
+});
+
+// -- updateTransitiveAssociations --
+
+describe("updateTransitiveAssociations", () => {
+  it("creates indirect association from 1-hop path", () => {
+    insertMemory("mem-a", 0.5);
+    insertMemory("mem-b", 0.5);
+    insertMemory("mem-c", 0.5);
+
+    // A→B (0.5) and B→C (0.5) → A→C should be created
+    db.upsertAssociation("mem-a", "mem-b", 0.5, "2026-03-01T00:00:00Z");
+    db.upsertAssociation("mem-b", "mem-c", 0.5, "2026-03-01T00:00:00Z");
+
+    const count = updateTransitiveAssociations(db);
+    expect(count).toBeGreaterThanOrEqual(1);
+
+    // Transitive weight: 0.5 × 0.5 = 0.25 (above threshold 0.1)
+    expect(db.getAssociationWeight("mem-a", "mem-c")).toBeCloseTo(0.25, 5);
+  });
+
+  it("skips transitive if weight below threshold", () => {
+    insertMemory("mem-a", 0.5);
+    insertMemory("mem-b", 0.5);
+    insertMemory("mem-c", 0.5);
+
+    // A→B (0.2) and B→C (0.3) → 0.06 < 0.1 threshold
+    db.upsertAssociation("mem-a", "mem-b", 0.2, "2026-03-01T00:00:00Z");
+    db.upsertAssociation("mem-b", "mem-c", 0.3, "2026-03-01T00:00:00Z");
+
+    updateTransitiveAssociations(db);
+    expect(db.getAssociationWeight("mem-a", "mem-c")).toBe(0);
+  });
+
+  it("respects maxUpdates cap", () => {
+    insertMemory("mem-a", 0.5);
+    insertMemory("mem-b", 0.5);
+    insertMemory("mem-c", 0.5);
+    insertMemory("mem-d", 0.5);
+
+    db.upsertAssociation("mem-a", "mem-b", 0.5, "2026-03-01T00:00:00Z");
+    db.upsertAssociation("mem-a", "mem-c", 0.5, "2026-03-01T00:00:00Z");
+    db.upsertAssociation("mem-a", "mem-d", 0.5, "2026-03-01T00:00:00Z");
+
+    const count = updateTransitiveAssociations(db, 1);
+    expect(count).toBe(1);
+  });
+});
+
+// -- applyTemporalTransitions --
+
+describe("applyTemporalTransitions", () => {
+  it("transitions future → present when anchor date has passed", () => {
+    const pastDate = new Date(Date.now() - 1000 * 60 * 60).toISOString(); // 1h ago
+    db.insertMemory({
+      id: "mem-a",
+      type: "plan",
+      content: "meeting tomorrow",
+      temporal_state: "future",
+      temporal_anchor: pastDate,
+      created_at: "2026-03-01T00:00:00Z",
+      strength: 1.0,
+      source: "agent_tool",
+      consolidated: false,
+      file_path: "working.md",
+    });
+
+    const count = applyTemporalTransitions(db);
+    expect(count).toBe(1);
+    expect(db.getMemory("mem-a")!.temporal_state).toBe("present");
+  });
+
+  it("transitions present → past when anchor is > 24h old", () => {
+    const oldDate = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(); // 25h ago
+    db.insertMemory({
+      id: "mem-a",
+      type: "event",
+      content: "meeting happened",
+      temporal_state: "present",
+      temporal_anchor: oldDate,
+      created_at: "2026-03-01T00:00:00Z",
+      strength: 1.0,
+      source: "agent_tool",
+      consolidated: false,
+      file_path: "working.md",
+    });
+
+    const count = applyTemporalTransitions(db);
+    expect(count).toBe(1);
+    expect(db.getMemory("mem-a")!.temporal_state).toBe("past");
+  });
+
+  it("does not transition present → past if anchor < 24h old", () => {
+    const recentDate = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString(); // 12h ago
+    db.insertMemory({
+      id: "mem-a",
+      type: "event",
+      content: "meeting just happened",
+      temporal_state: "present",
+      temporal_anchor: recentDate,
+      created_at: "2026-03-01T00:00:00Z",
+      strength: 1.0,
+      source: "agent_tool",
+      consolidated: false,
+      file_path: "working.md",
+    });
+
+    expect(applyTemporalTransitions(db)).toBe(0);
+    expect(db.getMemory("mem-a")!.temporal_state).toBe("present");
+  });
+
+  it("ignores memories without temporal_anchor", () => {
+    insertMemory("mem-a", 0.5); // temporal_anchor is null
+    expect(applyTemporalTransitions(db)).toBe(0);
+  });
+
+  it("does not transition 'none' state", () => {
+    db.insertMemory({
+      id: "mem-a",
+      type: "fact",
+      content: "atemporal fact",
+      temporal_state: "none",
+      temporal_anchor: new Date(Date.now() - 100 * 60 * 60 * 1000).toISOString(),
+      created_at: "2026-03-01T00:00:00Z",
+      strength: 1.0,
+      source: "agent_tool",
+      consolidated: false,
+      file_path: "working.md",
+    });
+
+    expect(applyTemporalTransitions(db)).toBe(0);
   });
 });

@@ -8,7 +8,13 @@
  * Architecture: v2 §9, §13.
  */
 
-import { applyDecay, applyReinforcement } from "./consolidation-steps.ts";
+import {
+  applyDecay,
+  applyReinforcement,
+  applyTemporalTransitions,
+  updateCoRetrievalAssociations,
+  updateTransitiveAssociations,
+} from "./consolidation-steps.ts";
 import type { MemoryDatabase } from "./db.ts";
 import type { MemoryManager } from "./memory-manager.ts";
 
@@ -52,7 +58,10 @@ export async function runConsolidation(
   // Phase 4.1 — Reinforcement + decay
   summary.reinforced = applyReinforcement(params.db);
   summary.decayed = applyDecay(params.db);
-  // TODO: Phase 4.2 — Associations + temporal transitions
+  // Phase 4.2 — Associations + temporal transitions
+  updateCoRetrievalAssociations(params.db, params.logPath);
+  updateTransitiveAssociations(params.db);
+  summary.transitioned = applyTemporalTransitions(params.db);
   // TODO: Phase 4.3 — Pre-merge pruning
   // TODO: Phase 4.4 — Merge candidate detection
   // TODO: Phase 4.5 — Merge execution

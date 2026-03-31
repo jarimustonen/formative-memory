@@ -410,6 +410,14 @@ export class MemoryDatabase {
       .run(sortedA, sortedB, weight, now, now, weight, now);
   }
 
+  getAssociationWeight(a: string, b: string): number {
+    const [sortedA, sortedB] = a < b ? [a, b] : [b, a];
+    const row = this.db
+      .prepare("SELECT weight FROM associations WHERE memory_a = ? AND memory_b = ?")
+      .get(sortedA, sortedB) as { weight: number } | undefined;
+    return row?.weight ?? 0;
+  }
+
   deleteAssociation(a: string, b: string): void {
     const [sortedA, sortedB] = a < b ? [a, b] : [b, a];
     this.db
