@@ -154,8 +154,7 @@ export class MemoryManager {
       // Unexpected errors (auth, config, bugs) → rethrow so callers notice.
       if (
         !(error instanceof EmbeddingCircuitOpenError) &&
-        !(error instanceof EmbeddingTimeoutError) &&
-        !(error instanceof DOMException && error.name === "AbortError")
+        !(error instanceof EmbeddingTimeoutError)
       ) {
         throw error;
       }

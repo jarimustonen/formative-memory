@@ -113,7 +113,7 @@ export class EmbeddingCircuitBreaker {
       return result;
     } catch (error) {
       this.onFailure();
-      if (error instanceof DOMException && error.name === "AbortError") {
+      if (isAbortError(error)) {
         throw new EmbeddingTimeoutError(this.timeoutMs);
       }
       throw error;
@@ -163,4 +163,14 @@ export class EmbeddingTimeoutError extends Error {
     super(`Embedding call timed out after ${ms}ms`);
     this.name = "EmbeddingTimeoutError";
   }
+}
+
+/** Runtime-agnostic AbortError check — works with DOMException, plain Error, or polyfills. */
+function isAbortError(error: unknown): boolean {
+  return (
+    !!error &&
+    typeof error === "object" &&
+    "name" in error &&
+    (error as { name: unknown }).name === "AbortError"
+  );
 }
