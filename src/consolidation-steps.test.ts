@@ -221,6 +221,29 @@ describe("applyReinforcement", () => {
 
     expect(applyReinforcement(db)).toBe(0);
   });
+
+  it("is idempotent — second run does not re-apply", () => {
+    insertMemory("mem-a", 0.5);
+
+    db.upsertAttribution({
+      messageId: "t1:msg:1",
+      memoryId: "mem-a",
+      evidence: "tool_search_returned",
+      confidence: 0.3,
+      turnId: "t1",
+      createdAt: "2026-03-01T00:00:00Z",
+    });
+
+    // First run applies reinforcement
+    expect(applyReinforcement(db)).toBe(1);
+    const afterFirst = db.getMemory("mem-a")!.strength;
+    expect(afterFirst).toBeCloseTo(0.71, 5);
+
+    // Second run — nothing to process
+    expect(applyReinforcement(db)).toBe(0);
+    const afterSecond = db.getMemory("mem-a")!.strength;
+    expect(afterSecond).toBe(afterFirst); // unchanged
+  });
 });
 
 // -- applyDecay --

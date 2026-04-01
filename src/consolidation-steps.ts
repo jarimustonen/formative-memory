@@ -36,29 +36,27 @@ export const MODE_WEIGHT_BM25_ONLY = 0.5;
 /**
  * Apply retrieval-based reinforcement to memory strengths.
  *
- * For each attribution row, computes:
- *   reinforcement = η × confidence × mode_weight
- * and adds it to the memory's strength.
+ * Processes only attribution rows not yet reinforced (reinforcement_applied=0).
+ * For each, computes: reinforcement = η × confidence × mode_weight
+ * and adds it to the memory's strength. Marks rows as reinforced atomically.
  *
- * mode_weight is determined by looking up the corresponding exposure
- * row's retrieval_mode (hybrid=1.0, bm25_only=0.5).
+ * mode_weight is determined by looking up the same-turn exposure's
+ * retrieval_mode. If no exposure found, defaults to hybrid (1.0).
  *
  * Returns count of memories reinforced.
  */
 export function applyReinforcement(db: MemoryDatabase): number {
-  // Get all attribution rows — each represents a memory that influenced a response
-  const allAttrs = db.getAllAttributions();
+  const pendingAttrs = db.getUnreinforcedAttributions();
+  if (pendingAttrs.length === 0) return 0;
 
   // Group by memory_id and compute total reinforcement per memory
   const reinforcements = new Map<string, number>();
 
-  for (const attr of allAttrs) {
-    // Look up exposure for this memory to get retrieval_mode
-    const exposures = db.getExposuresByMemory(attr.memory_id);
-    // Find the most relevant exposure (same turn if possible)
-    const exposure = exposures.find((e) => e.turn_id === attr.turn_id) ?? exposures[0];
+  for (const attr of pendingAttrs) {
+    // Deterministic mode_weight: same turn exposure, or default hybrid
+    const retrievalMode = db.getExposureRetrievalMode(attr.memory_id, attr.turn_id);
     const modeWeight =
-      exposure?.retrieval_mode === "bm25_only" ? MODE_WEIGHT_BM25_ONLY : MODE_WEIGHT_HYBRID;
+      retrievalMode === "bm25_only" ? MODE_WEIGHT_BM25_ONLY : MODE_WEIGHT_HYBRID;
 
     const reinforcement = ETA * attr.confidence * modeWeight;
 
@@ -66,21 +64,29 @@ export function applyReinforcement(db: MemoryDatabase): number {
     reinforcements.set(attr.memory_id, current + reinforcement);
   }
 
-  // Apply reinforcements to DB
-  let count = 0;
-  for (const [memoryId, totalReinforcement] of reinforcements) {
-    if (totalReinforcement === 0) continue;
-    const mem = db.getMemory(memoryId);
-    if (!mem) continue;
+  // Apply reinforcements and mark as processed — all in one transaction
+  return db.transaction(() => {
+    let count = 0;
 
-    const newStrength = Math.max(0, Math.min(mem.strength + totalReinforcement, 1.0));
-    if (newStrength !== mem.strength) {
-      db.updateStrength(memoryId, newStrength);
-      count++;
+    for (const [memoryId, totalReinforcement] of reinforcements) {
+      if (totalReinforcement === 0) continue;
+      const mem = db.getMemory(memoryId);
+      if (!mem) continue;
+
+      const newStrength = Math.max(0, Math.min(mem.strength + totalReinforcement, 1.0));
+      if (newStrength !== mem.strength) {
+        db.updateStrength(memoryId, newStrength);
+        count++;
+      }
     }
-  }
 
-  return count;
+    // Mark all processed rows as reinforced
+    for (const attr of pendingAttrs) {
+      db.markAttributionsReinforced(attr.message_id, attr.memory_id);
+    }
+
+    return count;
+  });
 }
 
 // -- Step 2: Decay --
