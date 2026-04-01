@@ -8,7 +8,6 @@
  */
 
 import type { MemoryDatabase } from "./db.ts";
-import { parseRetrievalLog } from "./retrieval-log.ts";
 import type { TemporalState } from "./types.ts";
 
 // -- Constants --
@@ -135,35 +134,34 @@ export const TRANSITIVE_WEIGHT_THRESHOLD = 0.1;
 const CO_RETRIEVAL_BASE_WEIGHT = 0.1;
 
 /**
- * Update associations from co-retrieval events in the retrieval log.
+ * Update associations from co-retrieval events in the exposure table.
  *
- * Memories that appear together in the same search/recall event are
- * co-retrieved and get an association. Uses probabilistic OR for
- * weight accumulation: f(a,b) = a + b - a*b.
+ * Memories exposed in the same turn are co-retrieved and get an
+ * association. Uses probabilistic OR for weight accumulation:
+ * f(a,b) = a + b - a*b.
+ *
+ * Reads from turn_memory_exposure (SQLite) instead of retrieval.log,
+ * which avoids replay-on-rerun issues. Exposure data is written by
+ * afterTurn() and is already canonical in the DB.
  *
  * Returns count of associations updated.
  */
-export function updateCoRetrievalAssociations(
-  db: MemoryDatabase,
-  logPath: string,
-): number {
-  const entries = parseRetrievalLog(logPath);
+export function updateCoRetrievalAssociations(db: MemoryDatabase): number {
+  const groups = db.getCoRetrievalGroups();
   const now = new Date().toISOString();
+  const validIds = new Set(db.getAllMemories().map((m) => m.id));
   let count = 0;
 
-  for (const entry of entries) {
-    if (entry.event !== "search" && entry.event !== "recall") continue;
-    if (entry.ids.length < 2) continue;
+  for (const group of groups) {
+    const ids = group.memory_ids.filter((id) => validIds.has(id));
+    if (ids.length < 2) continue;
 
-    // All pairs in this event are co-retrieved
-    for (let i = 0; i < entry.ids.length; i++) {
-      for (let j = i + 1; j < entry.ids.length; j++) {
-        const a = entry.ids[i];
-        const b = entry.ids[j];
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        const a = ids[i];
+        const b = ids[j];
 
-        // Get existing weight
         const existing = db.getAssociationWeight(a, b);
-        // Probabilistic OR: new = old + base - old*base
         const newWeight = existing + CO_RETRIEVAL_BASE_WEIGHT - existing * CO_RETRIEVAL_BASE_WEIGHT;
 
         db.upsertAssociation(a, b, newWeight, now);

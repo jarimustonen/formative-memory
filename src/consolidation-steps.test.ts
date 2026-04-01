@@ -2,7 +2,6 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { writeFileSync } from "node:fs";
 import {
   DECAY_ASSOCIATION,
   DECAY_CONSOLIDATED,
@@ -309,16 +308,29 @@ describe("applyAssociationDecay", () => {
 
 // -- updateCoRetrievalAssociations --
 
+function insertExposure(sessionId: string, turnId: string, memoryId: string) {
+  db.insertExposure({
+    sessionId,
+    turnId,
+    memoryId,
+    mode: "tool_search_returned",
+    score: 0.8,
+    retrievalMode: "hybrid",
+    createdAt: "2026-03-01T00:00:00Z",
+  });
+}
+
 describe("updateCoRetrievalAssociations", () => {
-  it("creates associations from co-retrieved memories in search events", () => {
+  it("creates associations from memories exposed in same turn", () => {
     insertMemory("mem-a", 0.5);
     insertMemory("mem-b", 0.5);
     insertMemory("mem-c", 0.5);
 
-    const logPath = join(tmpDir, "retrieval.log");
-    writeFileSync(logPath, "2026-03-01T00:00:00Z search   mem-a mem-b mem-c\n");
+    insertExposure("s1", "t1", "mem-a");
+    insertExposure("s1", "t1", "mem-b");
+    insertExposure("s1", "t1", "mem-c");
 
-    const count = updateCoRetrievalAssociations(db, logPath);
+    const count = updateCoRetrievalAssociations(db);
     // 3 pairs: a-b, a-c, b-c
     expect(count).toBe(3);
 
@@ -327,33 +339,50 @@ describe("updateCoRetrievalAssociations", () => {
     expect(db.getAssociationWeight("mem-b", "mem-c")).toBeGreaterThan(0);
   });
 
-  it("accumulates weight with probabilistic OR on repeated co-retrieval", () => {
+  it("accumulates weight across multiple turns", () => {
     insertMemory("mem-a", 0.5);
     insertMemory("mem-b", 0.5);
 
-    const logPath = join(tmpDir, "retrieval.log");
-    writeFileSync(logPath, [
-      "2026-03-01T00:00:00Z search   mem-a mem-b",
-      "2026-03-01T01:00:00Z search   mem-a mem-b",
-    ].join("\n") + "\n");
+    insertExposure("s1", "t1", "mem-a");
+    insertExposure("s1", "t1", "mem-b");
+    insertExposure("s1", "t2", "mem-a");
+    insertExposure("s1", "t2", "mem-b");
 
-    updateCoRetrievalAssociations(db, logPath);
+    updateCoRetrievalAssociations(db);
 
+    // Two turns of co-retrieval: probabilistic OR twice
     // First: 0 + 0.1 - 0*0.1 = 0.1
     // Second: 0.1 + 0.1 - 0.1*0.1 = 0.19
     expect(db.getAssociationWeight("mem-a", "mem-b")).toBeCloseTo(0.19, 5);
   });
 
-  it("ignores single-memory events", () => {
+  it("ignores turns with only one memory", () => {
     insertMemory("mem-a", 0.5);
-    const logPath = join(tmpDir, "retrieval.log");
-    writeFileSync(logPath, "2026-03-01T00:00:00Z search   mem-a\n");
+    insertExposure("s1", "t1", "mem-a");
 
-    expect(updateCoRetrievalAssociations(db, logPath)).toBe(0);
+    expect(updateCoRetrievalAssociations(db)).toBe(0);
   });
 
-  it("returns 0 for empty log", () => {
-    expect(updateCoRetrievalAssociations(db, join(tmpDir, "nonexistent.log"))).toBe(0);
+  it("returns 0 when no exposures exist", () => {
+    expect(updateCoRetrievalAssociations(db)).toBe(0);
+  });
+
+  it("skips deleted/nonexistent memories", () => {
+    insertMemory("mem-a", 0.5);
+    // mem-b not in memories table but has exposure
+    insertExposure("s1", "t1", "mem-a");
+    db.insertExposure({
+      sessionId: "s1",
+      turnId: "t1",
+      memoryId: "orphan",
+      mode: "tool_search_returned",
+      score: 0.5,
+      retrievalMode: "hybrid",
+      createdAt: "2026-03-01T00:00:00Z",
+    });
+
+    const count = updateCoRetrievalAssociations(db);
+    expect(count).toBe(0); // only one valid memory in the group
   });
 });
 

@@ -60,7 +60,7 @@ export async function runConsolidation(
   summary.reinforced = applyReinforcement(params.db);
   summary.decayed = applyDecay(params.db);
   // Phase 4.2 — Associations + temporal transitions
-  updateCoRetrievalAssociations(params.db, params.logPath);
+  updateCoRetrievalAssociations(params.db);
   updateTransitiveAssociations(params.db);
   summary.transitioned = applyTemporalTransitions(params.db);
   // Phase 4.3 — Pre-merge pruning
