@@ -163,6 +163,32 @@ describe("executeMerge", () => {
     expect(db.getAttributionsByMemory("mem-c")).toHaveLength(1);
   });
 
+  it("generates embedding for merged memory when embedder provided", async () => {
+    insertMemory("mem-a", "content A");
+    insertMemory("mem-b", "content B");
+
+    const mockEmbedder = async (_text: string) => [0.1, 0.2, 0.3];
+
+    const result = await executeMerge(db, makePair("mem-a", "mem-b"), stubProducer, mockEmbedder);
+
+    const embedding = db.getEmbedding(result.newMemoryId);
+    expect(embedding).not.toBeNull();
+    expect(embedding!.length).toBe(3);
+  });
+
+  it("gracefully handles embedder failure", async () => {
+    insertMemory("mem-a", "content A");
+    insertMemory("mem-b", "content B");
+
+    const failingEmbedder = async () => { throw new Error("API error"); };
+
+    const result = await executeMerge(db, makePair("mem-a", "mem-b"), stubProducer, failingEmbedder);
+
+    // Memory created without embedding — still searchable via FTS
+    expect(db.getMemory(result.newMemoryId)).not.toBeNull();
+    expect(db.getEmbedding(result.newMemoryId)).toBeNull();
+  });
+
   it("uses content hash as new memory ID", async () => {
     insertMemory("mem-a", "content A");
     insertMemory("mem-b", "content B");

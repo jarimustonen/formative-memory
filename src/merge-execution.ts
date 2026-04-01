@@ -28,6 +28,9 @@ export type MergeContentProducer = (
   memoryB: { id: string; content: string; type: string },
 ) => Promise<{ content: string; type: string }>;
 
+/** Embedding generator. Returns null if unavailable (circuit breaker open, etc). */
+export type EmbedderFn = (text: string) => Promise<number[] | null>;
+
 export type MergeResult = {
   newMemoryId: string;
   mergedFrom: [string, string];
@@ -52,6 +55,7 @@ export async function executeMerge(
   db: MemoryDatabase,
   pair: MergePair,
   contentProducer: MergeContentProducer,
+  embedder?: EmbedderFn,
 ): Promise<MergeResult> {
   if (pair.a === pair.b) {
     throw new Error(`Merge failed: cannot merge memory with itself (${pair.a})`);
@@ -73,6 +77,16 @@ export async function executeMerge(
   const newId = contentHash(merged.content);
   const now = new Date().toISOString();
 
+  // Generate embedding (async, outside transaction — graceful degradation)
+  let embedding: number[] | null = null;
+  if (embedder) {
+    try {
+      embedding = await embedder(merged.content);
+    } catch {
+      // Circuit breaker or API error — memory is still searchable via BM25/FTS
+    }
+  }
+
   // 2. All DB mutations in a single transaction
   return db.transaction(() => {
     // Create new memory (skip if hash collision with existing)
@@ -90,6 +104,9 @@ export async function executeMerge(
         file_path: "consolidated.md",
       });
       db.insertFts(newId, merged.content, merged.type);
+      if (embedding) {
+        db.setEmbedding(newId, embedding);
+      }
     }
 
     // Handle originals
@@ -132,6 +149,7 @@ export async function executeMerges(
   db: MemoryDatabase,
   pairs: MergePair[],
   contentProducer: MergeContentProducer,
+  embedder?: EmbedderFn,
 ): Promise<MergeResult[]> {
   const consumed = new Set<string>();
   const results: MergeResult[] = [];
@@ -140,7 +158,7 @@ export async function executeMerges(
     if (consumed.has(pair.a) || consumed.has(pair.b)) continue;
     if (!db.getMemory(pair.a) || !db.getMemory(pair.b)) continue;
 
-    const result = await executeMerge(db, pair, contentProducer);
+    const result = await executeMerge(db, pair, contentProducer, embedder);
     results.push(result);
 
     consumed.add(pair.a);

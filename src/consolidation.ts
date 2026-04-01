@@ -18,12 +18,14 @@ import {
 } from "./consolidation-steps.ts";
 import type { MemoryDatabase } from "./db.ts";
 import { findMergeCandidates, type MemoryCandidate } from "./merge-candidates.ts";
-import { executeMerges, type MergeContentProducer } from "./merge-execution.ts";
+import { executeMerges, type EmbedderFn, type MergeContentProducer } from "./merge-execution.ts";
 
 export type ConsolidationParams = {
   db: MemoryDatabase;
   /** Content producer for merges. In production this calls an LLM. */
   mergeContentProducer?: MergeContentProducer;
+  /** Embedding generator for merged memories. */
+  embedder?: EmbedderFn;
 };
 
 export type ConsolidationSummary = {
@@ -95,7 +97,7 @@ export async function runConsolidation(
   if (pairs.length > 0) {
     // Execute merges — each merge writes within its own implicit transaction
     // via the DB helpers. executeMerges skips consumed/missing memories.
-    const mergeResults = await executeMerges(params.db, pairs, producer);
+    const mergeResults = await executeMerges(params.db, pairs, producer, params.embedder);
     summary.merged = mergeResults.length;
   }
 
