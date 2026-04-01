@@ -208,6 +208,96 @@ describe("executeMerge", () => {
   });
 });
 
+  describe("absorption", () => {
+    it("absorbs when merged content matches source A", async () => {
+      const memAContent = "User travels frequently to Germany";
+      const memAId = contentHash(memAContent);
+      insertMemory(memAId, memAContent, { strength: 0.7 });
+      insertMemory("mem-b", "User traveled to Germany last week");
+
+      // Producer returns A's exact content (A is already the best expression)
+      const absorbingProducer: MergeContentProducer = async () => ({
+        content: memAContent,
+        type: "fact",
+      });
+
+      const result = await executeMerge(
+        db, makePair(memAId, "mem-b"), absorbingProducer,
+      );
+
+      // A is the canonical result
+      expect(result.newMemoryId).toBe(memAId);
+      expect(result.absorbedInto).toBe(memAId);
+
+      // A's strength boosted to 1.0
+      expect(db.getMemory(memAId)!.strength).toBe(1.0);
+
+      // B is weakened (original)
+      expect(db.getMemory("mem-b")!.strength).toBeCloseTo(0.8 * 0.3, 5);
+    });
+
+    it("absorbs and deletes intermediate source", async () => {
+      const memAContent = "Canonical fact about database";
+      const memAId = contentHash(memAContent);
+      insertMemory(memAId, memAContent);
+      insertMemory("mem-c", "Prior consolidation version", { source: "consolidation" });
+
+      const absorbingProducer: MergeContentProducer = async () => ({
+        content: memAContent,
+        type: "fact",
+      });
+
+      const result = await executeMerge(
+        db, makePair(memAId, "mem-c"), absorbingProducer,
+      );
+
+      expect(result.absorbedInto).toBe(memAId);
+      expect(result.intermediatesDeleted).toContain("mem-c");
+      expect(db.getMemory("mem-c")).toBeNull();
+      expect(db.getAlias("mem-c")).toBe(memAId);
+    });
+
+    it("inherits associations from absorbed source", async () => {
+      const memAContent = "Main fact";
+      const memAId = contentHash(memAContent);
+      insertMemory(memAId, memAContent);
+      insertMemory("mem-b", "Duplicate fact");
+      insertMemory("mem-x", "Neighbor");
+
+      // B has association to X
+      db.upsertAssociation("mem-b", "mem-x", 0.5, "2026-03-01T00:00:00Z");
+
+      const absorbingProducer: MergeContentProducer = async () => ({
+        content: memAContent,
+        type: "fact",
+      });
+
+      await executeMerge(db, makePair(memAId, "mem-b"), absorbingProducer);
+
+      // A inherits B's association to X
+      expect(db.getAssociationWeight(memAId, "mem-x")).toBeGreaterThan(0);
+    });
+
+    it("does not generate embedding for absorption (reuses existing)", async () => {
+      const memAContent = "Existing content";
+      const memAId = contentHash(memAContent);
+      insertMemory(memAId, memAContent);
+      insertMemory("mem-b", "Duplicate");
+
+      let embedderCalled = false;
+      const trackingEmbedder = async () => { embedderCalled = true; return [0.1]; };
+
+      const absorbingProducer: MergeContentProducer = async () => ({
+        content: memAContent,
+        type: "fact",
+      });
+
+      await executeMerge(db, makePair(memAId, "mem-b"), absorbingProducer, trackingEmbedder);
+
+      expect(embedderCalled).toBe(false);
+    });
+  });
+
 // -- executeMerges --
 
 describe("executeMerges", () => {

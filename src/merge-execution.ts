@@ -5,8 +5,12 @@
  * manages originals (weaken or delete intermediates), inherits
  * associations, and writes aliases.
  *
- * Historical attributions are NOT rewritten. They remain attached to
- * the original memory IDs that actually influenced earlier responses.
+ * Supports three outcomes:
+ * - **New memory**: merged content is novel → create new canonical memory
+ * - **Absorption**: merged content matches one source → that source becomes canonical
+ * - **Reuse**: merged content matches an existing third memory → validate and refresh
+ *
+ * Historical attributions are NOT rewritten.
  * Alias table enables provenance tracing from old IDs to canonical IDs.
  *
  * Architecture: v2 §9.
@@ -19,21 +23,18 @@ import type { MemorySource } from "./types.ts";
 
 // -- Types --
 
-/**
- * Content producer function. In production this calls an LLM.
- * In tests, it can be a deterministic stub.
- */
 export type MergeContentProducer = (
   memoryA: { id: string; content: string; type: string },
   memoryB: { id: string; content: string; type: string },
 ) => Promise<{ content: string; type: string }>;
 
-/** Embedding generator. Returns null if unavailable (circuit breaker open, etc). */
 export type EmbedderFn = (text: string) => Promise<number[] | null>;
 
 export type MergeResult = {
   newMemoryId: string;
   mergedFrom: [string, string];
+  /** Which source was absorbed (null if new memory created). */
+  absorbedInto: string | null;
   originalsWeakened: string[];
   intermediatesDeleted: string[];
   aliasesCreated: string[];
@@ -44,12 +45,12 @@ export type MergeResult = {
 /**
  * Execute a single merge: A + B → C.
  *
- * 1. Produce merged content (via contentProducer — LLM or stub)
- * 2. All DB mutations in a single transaction:
- *    - Create new memory C (source: "consolidation", strength: 1.0)
- *    - Handle originals: intermediates deleted+aliased, originals weakened
- *    - Inherit associations from A and B to C (probabilistic OR)
- * 3. Historical attributions left unchanged — old IDs stay in attribution rows
+ * Three possible outcomes based on content hash:
+ * 1. newId matches source A or B (absorption): that source is the canonical result,
+ *    the other source is weakened/deleted+aliased. No new memory created.
+ * 2. newId matches an existing third memory (reuse): validate content match,
+ *    refresh strength to 1.0, handle sources normally.
+ * 3. newId is novel: create new memory with source="consolidation".
  */
 export async function executeMerge(
   db: MemoryDatabase,
@@ -77,9 +78,14 @@ export async function executeMerge(
   const newId = contentHash(merged.content);
   const now = new Date().toISOString();
 
-  // Generate embedding (async, outside transaction — graceful degradation)
+  // Determine merge outcome
+  const isAbsorptionA = newId === memA.id;
+  const isAbsorptionB = newId === memB.id;
+  const isAbsorption = isAbsorptionA || isAbsorptionB;
+
+  // Generate embedding only for novel content (absorption reuses existing)
   let embedding: number[] | null = null;
-  if (embedder) {
+  if (!isAbsorption && embedder) {
     try {
       embedding = await embedder(merged.content);
     } catch {
@@ -89,35 +95,56 @@ export async function executeMerge(
 
   // 2. All DB mutations in a single transaction
   return db.transaction(() => {
-    // Create new memory (skip if hash collision with existing)
-    if (!db.getMemory(newId)) {
-      db.insertMemory({
-        id: newId,
-        type: merged.type,
-        content: merged.content,
-        temporal_state: "none",
-        temporal_anchor: null,
-        created_at: now,
-        strength: 1.0,
-        source: "consolidation" as MemorySource,
-        consolidated: true,
-        file_path: "consolidated.md",
-      });
-      db.insertFts(newId, merged.content, merged.type);
-      if (embedding) {
-        db.setEmbedding(newId, embedding);
+    let canonicalId: string;
+
+    if (isAbsorption) {
+      // Absorption: one source IS the canonical result
+      // The canonical source gets strength boost, the other is absorbed
+      canonicalId = newId;
+      db.updateStrength(canonicalId, 1.0);
+    } else {
+      // Check if newId matches an existing third memory
+      const existing = db.getMemory(newId);
+      if (existing) {
+        // Reuse: validate content match, refresh strength
+        if (existing.content !== merged.content) {
+          throw new Error(`Merge failed: hash collision for ${newId} with different content`);
+        }
+        db.updateStrength(newId, 1.0);
+      } else {
+        // Novel: create new memory
+        db.insertMemory({
+          id: newId,
+          type: merged.type,
+          content: merged.content,
+          temporal_state: "none",
+          temporal_anchor: null,
+          created_at: now,
+          strength: 1.0,
+          source: "consolidation" as MemorySource,
+          consolidated: true,
+          file_path: "consolidated.md",
+        });
+        db.insertFts(newId, merged.content, merged.type);
+        if (embedding) {
+          db.setEmbedding(newId, embedding);
+        }
       }
+      canonicalId = newId;
     }
 
-    // Handle originals
+    // Handle the other source(s) — skip the canonical source in absorption
     const originalsWeakened: string[] = [];
     const intermediatesDeleted: string[] = [];
     const aliasesCreated: string[] = [];
 
     for (const mem of [memA, memB]) {
+      // In absorption, the canonical source is kept as-is (already strength-boosted)
+      if (mem.id === canonicalId) continue;
+
       if (isIntermediate(mem)) {
         db.deleteMemory(mem.id);
-        db.insertAlias(mem.id, newId, "merged", now);
+        db.insertAlias(mem.id, canonicalId, "merged", now);
         intermediatesDeleted.push(mem.id);
         aliasesCreated.push(mem.id);
       } else {
@@ -127,12 +154,13 @@ export async function executeMerge(
       }
     }
 
-    // Inherit associations (probabilistic OR, respects existing edges on newId)
-    inheritAssociations(db, [memA.id, memB.id], newId, now);
+    // Inherit associations from absorbed/weakened sources into canonical
+    inheritAssociations(db, [memA.id, memB.id], canonicalId, now);
 
     return {
-      newMemoryId: newId,
+      newMemoryId: canonicalId,
       mergedFrom: [pair.a, pair.b] as [string, string],
+      absorbedInto: isAbsorption ? canonicalId : null,
       originalsWeakened,
       intermediatesDeleted,
       aliasesCreated,
@@ -142,8 +170,8 @@ export async function executeMerge(
 
 /**
  * Execute multiple merges from a list of candidate pairs.
- * Pairs are processed in order (highest score first from findMergeCandidates).
- * Skips pairs where either memory was already consumed by a prior merge.
+ * Pairs are processed in order (highest score first).
+ * Skips pairs where either memory was already consumed.
  */
 export async function executeMerges(
   db: MemoryDatabase,
@@ -171,31 +199,33 @@ export async function executeMerges(
 
 // -- Helpers --
 
-/** A memory is an intermediate consolidation product if source is "consolidation". */
 function isIntermediate(mem: MemoryRow): boolean {
   return mem.source === "consolidation";
 }
 
 /**
- * Inherit associations from source memories to the new merged memory.
- * Uses probabilistic OR: f(a,b) = a + b - a*b for combining weights
- * when both sources have an association to the same neighbor.
- * Respects existing associations on newId (combines, doesn't overwrite).
+ * Inherit associations from source memories to the canonical memory.
+ * Uses probabilistic OR for combining weights.
+ * Respects existing associations on canonical (combines, doesn't overwrite).
+ * Skips edges from canonical to itself or between sources.
  */
 function inheritAssociations(
   db: MemoryDatabase,
   sourceIds: string[],
-  newId: string,
+  canonicalId: string,
   now: string,
 ): void {
-  // Collect all neighbor weights from all sources
+  const sourceSet = new Set(sourceIds);
   const neighborWeights = new Map<string, number>();
 
   for (const sourceId of sourceIds) {
+    // In absorption, canonical is one of the sources — skip its self-edges
+    if (sourceId === canonicalId) continue;
+
     const assocs = db.getAssociations(sourceId);
     for (const assoc of assocs) {
       const neighbor = assoc.memory_a === sourceId ? assoc.memory_b : assoc.memory_a;
-      if (neighbor === newId || sourceIds.includes(neighbor)) continue;
+      if (neighbor === canonicalId || sourceSet.has(neighbor)) continue;
 
       const existing = neighborWeights.get(neighbor) ?? 0;
       const combined = existing + assoc.weight - existing * assoc.weight;
@@ -203,10 +233,9 @@ function inheritAssociations(
     }
   }
 
-  // Write inherited associations, combining with any existing edges on newId
   for (const [neighbor, inheritedWeight] of neighborWeights) {
-    const existingWeight = db.getAssociationWeight(newId, neighbor);
+    const existingWeight = db.getAssociationWeight(canonicalId, neighbor);
     const finalWeight = existingWeight + inheritedWeight - existingWeight * inheritedWeight;
-    db.upsertAssociation(newId, neighbor, finalWeight, now);
+    db.upsertAssociation(canonicalId, neighbor, finalWeight, now);
   }
 }
