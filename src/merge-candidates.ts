@@ -52,6 +52,9 @@ export function findMergeCandidates(
 ): MergePair[] {
   if (memories.length < 2) return [];
 
+  // Precompute text features once per memory (avoids redundant O(N²) recomputation)
+  const features = memories.map((m) => textFeatures(m.content));
+
   const pairs: MergePair[] = [];
 
   for (let i = 0; i < memories.length; i++) {
@@ -59,7 +62,7 @@ export function findMergeCandidates(
       const a = memories[i];
       const b = memories[j];
 
-      const jaccardScore = jaccardSimilarity(a.content, b.content);
+      const jaccardScore = jaccardFromSets(features[i], features[j]);
 
       let embeddingScore: number | null = null;
       let combinedScore = jaccardScore;
@@ -89,13 +92,15 @@ export function findMergeCandidates(
 // -- Similarity functions --
 
 /**
- * Jaccard similarity between two texts based on word trigrams.
+ * Jaccard similarity between two texts based on text features.
  * Returns value in [0, 1].
  */
 export function jaccardSimilarity(a: string, b: string): number {
-  const setA = textFeatures(a);
-  const setB = textFeatures(b);
+  return jaccardFromSets(textFeatures(a), textFeatures(b));
+}
 
+/** Jaccard similarity from precomputed feature sets. */
+export function jaccardFromSets(setA: Set<string>, setB: Set<string>): number {
   if (setA.size === 0 && setB.size === 0) return 1;
   if (setA.size === 0 || setB.size === 0) return 0;
 
