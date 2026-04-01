@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS turn_memory_exposure (
   mode TEXT NOT NULL,
   score REAL,
   retrieval_mode TEXT,
+  message_index INTEGER,
   created_at TEXT NOT NULL,
   PRIMARY KEY (session_id, turn_id, memory_id, mode)
 );
@@ -77,6 +78,7 @@ CREATE TABLE IF NOT EXISTS message_memory_attribution (
   turn_id TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT,
+  reinforcement_applied INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (message_id, memory_id)
 );
 
@@ -107,6 +109,7 @@ export type ExposureRow = {
   mode: string;
   score: number | null;
   retrieval_mode: string | null;
+  message_index: number | null;
   created_at: string;
 };
 
@@ -118,6 +121,7 @@ export type AttributionRow = {
   turn_id: string;
   created_at: string;
   updated_at: string | null;
+  reinforcement_applied: number;
 };
 
 export class MemoryDatabase {
@@ -469,13 +473,14 @@ export class MemoryDatabase {
     mode: string;
     score: number | null;
     retrievalMode: string | null;
+    messageIndex?: number | null;
     createdAt: string;
   }): void {
     this.db
       .prepare(
         `INSERT INTO turn_memory_exposure
-         (session_id, turn_id, memory_id, mode, score, retrieval_mode, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+         (session_id, turn_id, memory_id, mode, score, retrieval_mode, message_index, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(session_id, turn_id, memory_id, mode) DO NOTHING`,
       )
       .run(
@@ -485,6 +490,7 @@ export class MemoryDatabase {
         params.mode,
         params.score,
         params.retrievalMode,
+        params.messageIndex ?? null,
         params.createdAt,
       );
   }
@@ -628,6 +634,48 @@ export class MemoryDatabase {
     return this.db
       .prepare("SELECT * FROM message_memory_attribution")
       .all() as AttributionRow[];
+  }
+
+  /** Get attribution rows not yet processed by consolidation reinforcement. */
+  getUnreinforcedAttributions(): AttributionRow[] {
+    return this.db
+      .prepare("SELECT * FROM message_memory_attribution WHERE reinforcement_applied = 0")
+      .all() as AttributionRow[];
+  }
+
+  /** Mark attribution rows as reinforced (within a transaction). */
+  markAttributionsReinforced(messageId: string, memoryId: string): void {
+    this.db
+      .prepare(
+        "UPDATE message_memory_attribution SET reinforcement_applied = 1 WHERE message_id = ? AND memory_id = ?",
+      )
+      .run(messageId, memoryId);
+  }
+
+  /** Get retrieval mode for a specific memory+turn exposure, or null. */
+  getExposureRetrievalMode(memoryId: string, turnId: string): string | null {
+    const row = this.db
+      .prepare(
+        "SELECT retrieval_mode FROM turn_memory_exposure WHERE memory_id = ? AND turn_id = ? LIMIT 1",
+      )
+      .get(memoryId, turnId) as { retrieval_mode: string | null } | undefined;
+    return row?.retrieval_mode ?? null;
+  }
+
+  /** Get all distinct (turn_id, memory_id) pairs from exposure for co-retrieval. */
+  getCoRetrievalGroups(): Array<{ turn_id: string; memory_ids: string[] }> {
+    const rows = this.db
+      .prepare(
+        `SELECT turn_id, GROUP_CONCAT(DISTINCT memory_id) as memory_ids
+         FROM turn_memory_exposure
+         GROUP BY turn_id
+         HAVING COUNT(DISTINCT memory_id) >= 2`,
+      )
+      .all() as Array<{ turn_id: string; memory_ids: string }>;
+    return rows.map((r) => ({
+      turn_id: r.turn_id,
+      memory_ids: r.memory_ids.split(","),
+    }));
   }
 
   deleteAttributionsForMessages(messageIds: string[]): void {
