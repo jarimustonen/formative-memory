@@ -53,6 +53,10 @@ export async function executeMerge(
   pair: MergePair,
   contentProducer: MergeContentProducer,
 ): Promise<MergeResult> {
+  if (pair.a === pair.b) {
+    throw new Error(`Merge failed: cannot merge memory with itself (${pair.a})`);
+  }
+
   const memA = db.getMemory(pair.a);
   const memB = db.getMemory(pair.b);
 
@@ -141,6 +145,7 @@ export async function executeMerges(
 
     consumed.add(pair.a);
     consumed.add(pair.b);
+    consumed.add(result.newMemoryId);
   }
 
   return results;
