@@ -3,7 +3,11 @@
  *
  * Executes memory merges: creates new consolidated memory from a pair,
  * manages originals (weaken or delete intermediates), inherits
- * associations and attributions, writes aliases.
+ * associations, and writes aliases.
+ *
+ * Historical attributions are NOT rewritten. They remain attached to
+ * the original memory IDs that actually influenced earlier responses.
+ * Alias table enables provenance tracing from old IDs to canonical IDs.
  *
  * Architecture: v2 §9.
  */
@@ -38,14 +42,11 @@ export type MergeResult = {
  * Execute a single merge: A + B → C.
  *
  * 1. Produce merged content (via contentProducer — LLM or stub)
- * 2. Create new memory C (source: "consolidation", strength: 1.0)
- * 3. Handle originals:
- *    - If source is "consolidation" (intermediate) → delete + alias
- *    - Otherwise (original) → weaken to strength × 0.1
- * 4. Inherit associations from A and B to C (probabilistic OR)
- * 5. Rewrite attributions from A and B to C
- *
- * Must be called inside a DB transaction.
+ * 2. All DB mutations in a single transaction:
+ *    - Create new memory C (source: "consolidation", strength: 1.0)
+ *    - Handle originals: intermediates deleted+aliased, originals weakened
+ *    - Inherit associations from A and B to C (probabilistic OR)
+ * 3. Historical attributions left unchanged — old IDs stay in attribution rows
  */
 export async function executeMerge(
   db: MemoryDatabase,
@@ -59,67 +60,63 @@ export async function executeMerge(
     throw new Error(`Merge failed: memory not found (${pair.a}, ${pair.b})`);
   }
 
-  const now = new Date().toISOString();
-
-  // 1. Produce merged content
+  // 1. Produce merged content (async, outside transaction)
   const merged = await contentProducer(
     { id: memA.id, content: memA.content, type: memA.type },
     { id: memB.id, content: memB.content, type: memB.type },
   );
 
-  // 2. Create new memory
   const newId = contentHash(merged.content);
+  const now = new Date().toISOString();
 
-  // Skip if merged content produces same hash as existing memory
-  if (!db.getMemory(newId)) {
-    db.insertMemory({
-      id: newId,
-      type: merged.type,
-      content: merged.content,
-      temporal_state: "none",
-      temporal_anchor: null,
-      created_at: now,
-      strength: 1.0,
-      source: "consolidation" as MemorySource,
-      consolidated: true,
-      file_path: "consolidated.md",
-    });
-    db.insertFts(newId, merged.content, merged.type);
-  }
-
-  // 3. Handle originals
-  const originalsWeakened: string[] = [];
-  const intermediatesDeleted: string[] = [];
-  const aliasesCreated: string[] = [];
-
-  for (const mem of [memA, memB]) {
-    if (isIntermediate(mem)) {
-      // Intermediate (prior consolidation product) → delete + alias
-      db.deleteMemory(mem.id);
-      db.insertAlias(mem.id, newId, "merged", now);
-      intermediatesDeleted.push(mem.id);
-      aliasesCreated.push(mem.id);
-    } else {
-      // Original → weaken
-      const weakenedStrength = Math.max(0, mem.strength * 0.1);
-      db.updateStrength(mem.id, weakenedStrength);
-      originalsWeakened.push(mem.id);
+  // 2. All DB mutations in a single transaction
+  return db.transaction(() => {
+    // Create new memory (skip if hash collision with existing)
+    if (!db.getMemory(newId)) {
+      db.insertMemory({
+        id: newId,
+        type: merged.type,
+        content: merged.content,
+        temporal_state: "none",
+        temporal_anchor: null,
+        created_at: now,
+        strength: 1.0,
+        source: "consolidation" as MemorySource,
+        consolidated: true,
+        file_path: "consolidated.md",
+      });
+      db.insertFts(newId, merged.content, merged.type);
     }
-  }
 
-  // 4. Inherit associations (probabilistic OR)
-  inheritAssociations(db, [memA.id, memB.id], newId, now);
+    // Handle originals
+    const originalsWeakened: string[] = [];
+    const intermediatesDeleted: string[] = [];
+    const aliasesCreated: string[] = [];
 
-  // 5. Rewrite attributions from merged sources to new memory
-  rewriteAttributions(db, [memA.id, memB.id], newId);
+    for (const mem of [memA, memB]) {
+      if (isIntermediate(mem)) {
+        db.deleteMemory(mem.id);
+        db.insertAlias(mem.id, newId, "merged", now);
+        intermediatesDeleted.push(mem.id);
+        aliasesCreated.push(mem.id);
+      } else {
+        const weakenedStrength = Math.max(0, mem.strength * 0.1);
+        db.updateStrength(mem.id, weakenedStrength);
+        originalsWeakened.push(mem.id);
+      }
+    }
 
-  return {
-    newMemoryId: newId,
-    mergedFrom: [pair.a, pair.b],
-    originalsWeakened,
-    intermediatesDeleted,
-    aliasesCreated,
-  };
+    // Inherit associations (probabilistic OR, respects existing edges on newId)
+    inheritAssociations(db, [memA.id, memB.id], newId, now);
+
+    return {
+      newMemoryId: newId,
+      mergedFrom: [pair.a, pair.b] as [string, string],
+      originalsWeakened,
+      intermediatesDeleted,
+      aliasesCreated,
+    };
+  });
 }
 
 /**
@@ -136,10 +133,7 @@ export async function executeMerges(
   const results: MergeResult[] = [];
 
   for (const pair of pairs) {
-    // Skip if either memory was already merged in this run
     if (consumed.has(pair.a) || consumed.has(pair.b)) continue;
-
-    // Skip if either memory no longer exists (pruned earlier)
     if (!db.getMemory(pair.a) || !db.getMemory(pair.b)) continue;
 
     const result = await executeMerge(db, pair, contentProducer);
@@ -163,6 +157,7 @@ function isIntermediate(mem: MemoryRow): boolean {
  * Inherit associations from source memories to the new merged memory.
  * Uses probabilistic OR: f(a,b) = a + b - a*b for combining weights
  * when both sources have an association to the same neighbor.
+ * Respects existing associations on newId (combines, doesn't overwrite).
  */
 function inheritAssociations(
   db: MemoryDatabase,
@@ -177,47 +172,18 @@ function inheritAssociations(
     const assocs = db.getAssociations(sourceId);
     for (const assoc of assocs) {
       const neighbor = assoc.memory_a === sourceId ? assoc.memory_b : assoc.memory_a;
-
-      // Skip self-references and other source memories
       if (neighbor === newId || sourceIds.includes(neighbor)) continue;
 
       const existing = neighborWeights.get(neighbor) ?? 0;
-      // Probabilistic OR
       const combined = existing + assoc.weight - existing * assoc.weight;
       neighborWeights.set(neighbor, combined);
     }
   }
 
-  // Write inherited associations
-  for (const [neighbor, weight] of neighborWeights) {
-    db.upsertAssociation(newId, neighbor, weight, now);
-  }
-}
-
-/**
- * Rewrite attributions from source memory IDs to the new merged memory ID.
- * Uses mergeAttributionRow via replaceMemoryId-style logic to handle
- * PK collisions when both sources attributed the same message.
- */
-function rewriteAttributions(
-  db: MemoryDatabase,
-  sourceIds: string[],
-  newId: string,
-): void {
-  for (const sourceId of sourceIds) {
-    const attrs = db.getAttributionsByMemory(sourceId);
-    for (const attr of attrs) {
-      // Use upsertAttribution which handles PK collision via mergeAttributionRow
-      db.upsertAttribution({
-        messageId: attr.message_id,
-        memoryId: newId,
-        evidence: attr.evidence,
-        confidence: attr.confidence,
-        turnId: attr.turn_id,
-        createdAt: attr.created_at,
-      });
-    }
-    // Delete old attributions for the source
-    db.deleteAttributionsForMemory(sourceId);
+  // Write inherited associations, combining with any existing edges on newId
+  for (const [neighbor, inheritedWeight] of neighborWeights) {
+    const existingWeight = db.getAssociationWeight(newId, neighbor);
+    const finalWeight = existingWeight + inheritedWeight - existingWeight * inheritedWeight;
+    db.upsertAssociation(newId, neighbor, finalWeight, now);
   }
 }

@@ -112,7 +112,7 @@ describe("executeMerge", () => {
     expect(weight).toBeCloseTo(0.65, 5);
   });
 
-  it("rewrites attributions from sources to new memory", async () => {
+  it("leaves source attributions untouched (no rewrite)", async () => {
     insertMemory("mem-a", "content A");
     insertMemory("mem-b", "content B");
 
@@ -135,44 +135,32 @@ describe("executeMerge", () => {
 
     const result = await executeMerge(db, makePair("mem-a", "mem-b"), stubProducer);
 
-    // Attributions rewritten to new memory
-    const attrs = db.getAttributionsByMemory(result.newMemoryId);
-    expect(attrs).toHaveLength(2);
+    // Source attributions remain on original memory IDs
+    expect(db.getAttributionsByMemory("mem-a")).toHaveLength(1);
+    expect(db.getAttributionsByMemory("mem-b")).toHaveLength(1);
 
-    // Old attributions gone
-    expect(db.getAttributionsByMemory("mem-a")).toHaveLength(0);
-    expect(db.getAttributionsByMemory("mem-b")).toHaveLength(0);
+    // New memory has no attributions — earns them through future usage
+    expect(db.getAttributionsByMemory(result.newMemoryId)).toHaveLength(0);
   });
 
-  it("handles attribution PK collision (same message attributed to both sources)", async () => {
-    insertMemory("mem-a", "content A");
-    insertMemory("mem-b", "content B");
+  it("deleted intermediate's attributions survive as durable orphans", async () => {
+    insertMemory("mem-a", "original content");
+    insertMemory("mem-c", "prior consolidation", { source: "consolidation" });
 
-    // Same message attributed to both A (0.3) and B (0.6)
     db.upsertAttribution({
       messageId: "t1:msg:1",
-      memoryId: "mem-a",
-      evidence: "tool_search_returned",
-      confidence: 0.3,
-      turnId: "t1",
-      createdAt: "2026-03-01T00:00:00Z",
-    });
-    db.upsertAttribution({
-      messageId: "t1:msg:1",
-      memoryId: "mem-b",
-      evidence: "tool_get",
-      confidence: 0.6,
+      memoryId: "mem-c",
+      evidence: "auto_injected",
+      confidence: 0.15,
       turnId: "t1",
       createdAt: "2026-03-01T00:00:00Z",
     });
 
-    const result = await executeMerge(db, makePair("mem-a", "mem-b"), stubProducer);
+    await executeMerge(db, makePair("mem-a", "mem-c"), stubProducer);
 
-    // Should have 1 attribution row (PK collision resolved)
-    const attrs = db.getAttributionsByMemory(result.newMemoryId);
-    expect(attrs).toHaveLength(1);
-    // Higher confidence wins (tool_get 0.6 > tool_search_returned 0.3)
-    expect(attrs[0].confidence).toBe(0.6);
+    // mem-c is deleted, but its attribution row survives (durable by design)
+    expect(db.getMemory("mem-c")).toBeNull();
+    expect(db.getAttributionsByMemory("mem-c")).toHaveLength(1);
   });
 
   it("uses content hash as new memory ID", async () => {
