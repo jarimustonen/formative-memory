@@ -288,6 +288,8 @@ Erillinen kuvaus: `history/openclaw-upstream-changes.md`
 10. Consolidated.md:n kasvu pitkällä aikavälillä
 11. Unicode-tokenizer Jaccard-vertailuun
 12. Konsolidaation kesto jos tuhansia muistoja (cap merge candidates per run?)
+14. Temporal metadata merged muistoissa: pitäisikö periä temporal_state/anchor lähdemuistoilta? Nyt aina `none`. Konsolidoitu muisto on abstraktio, mutta aikasidonnaiset faktat (deadlinet, tapahtumat) voivat menettää kontekstinsa.
+15. Merge-logi (durable record of A+B→C): alias-taulu kertoo B→C mutta ei tallenna paria. Erillinen merge_history-taulu tarvittaessa auditointiin.
 13. Signal analysis prompt design (Phase 5)
 
 ---
