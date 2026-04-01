@@ -686,6 +686,10 @@ export class MemoryDatabase {
     }));
   }
 
+  deleteAttributionsForMemory(memoryId: string): void {
+    this.db.prepare("DELETE FROM message_memory_attribution WHERE memory_id = ?").run(memoryId);
+  }
+
   deleteAttributionsForMessages(messageIds: string[]): void {
     if (messageIds.length === 0) return;
     const stmt = this.db.prepare("DELETE FROM message_memory_attribution WHERE message_id = ?");
