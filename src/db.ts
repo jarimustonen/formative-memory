@@ -87,6 +87,14 @@ CREATE INDEX IF NOT EXISTS idx_exposure_memory_id ON turn_memory_exposure(memory
 CREATE INDEX IF NOT EXISTS idx_exposure_created_at ON turn_memory_exposure(created_at);
 CREATE INDEX IF NOT EXISTS idx_attribution_memory_id ON message_memory_attribution(memory_id);
 CREATE INDEX IF NOT EXISTS idx_attribution_turn_id ON message_memory_attribution(turn_id);
+
+-- Alias table: maps deleted/merged memory IDs to their replacement
+CREATE TABLE IF NOT EXISTS memory_aliases (
+  old_id TEXT PRIMARY KEY,
+  new_id TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
 `;
 
 export type MemoryRow = {
@@ -686,6 +694,41 @@ export class MemoryDatabase {
         stmt.run(id);
       }
     })();
+  }
+
+  // -- Aliases --
+
+  insertAlias(oldId: string, newId: string, reason: string, createdAt: string): void {
+    this.db
+      .prepare("INSERT OR REPLACE INTO memory_aliases (old_id, new_id, reason, created_at) VALUES (?, ?, ?, ?)")
+      .run(oldId, newId, reason, createdAt);
+  }
+
+  /**
+   * Resolve a memory ID through the alias chain.
+   * Returns the canonical ID (following aliases), or the original ID if no alias exists.
+   * Detects cycles and limits traversal depth.
+   */
+  resolveAlias(id: string, maxDepth = 10): string {
+    let current = id;
+    const visited = new Set<string>();
+    for (let i = 0; i < maxDepth; i++) {
+      if (visited.has(current)) return current; // cycle detected
+      visited.add(current);
+      const row = this.db
+        .prepare("SELECT new_id FROM memory_aliases WHERE old_id = ?")
+        .get(current) as { new_id: string } | undefined;
+      if (!row) return current;
+      current = row.new_id;
+    }
+    return current; // max depth reached
+  }
+
+  getAlias(oldId: string): string | null {
+    const row = this.db
+      .prepare("SELECT new_id FROM memory_aliases WHERE old_id = ?")
+      .get(oldId) as { new_id: string } | undefined;
+    return row?.new_id ?? null;
   }
 
   // -- Layout --
