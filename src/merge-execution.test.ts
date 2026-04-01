@@ -68,14 +68,14 @@ describe("executeMerge", () => {
     expect(newMem!.consolidated).toBe(1);
   });
 
-  it("weakens original memories to 10% strength", async () => {
+  it("weakens original memories to 30% strength", async () => {
     insertMemory("mem-a", "content A", { strength: 0.8 });
     insertMemory("mem-b", "content B", { strength: 0.6 });
 
     await executeMerge(db, makePair("mem-a", "mem-b"), stubProducer);
 
-    expect(db.getMemory("mem-a")!.strength).toBeCloseTo(0.08, 5);
-    expect(db.getMemory("mem-b")!.strength).toBeCloseTo(0.06, 5);
+    expect(db.getMemory("mem-a")!.strength).toBeCloseTo(0.24, 5);
+    expect(db.getMemory("mem-b")!.strength).toBeCloseTo(0.18, 5);
   });
 
   it("deletes intermediates (source=consolidation) and creates aliases", async () => {

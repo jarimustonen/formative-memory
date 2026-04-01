@@ -104,7 +104,7 @@ export async function executeMerge(
         intermediatesDeleted.push(mem.id);
         aliasesCreated.push(mem.id);
       } else {
-        const weakenedStrength = Math.max(0, mem.strength * 0.1);
+        const weakenedStrength = Math.max(0, mem.strength * 0.3);
         db.updateStrength(mem.id, weakenedStrength);
         originalsWeakened.push(mem.id);
       }
