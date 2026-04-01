@@ -156,6 +156,25 @@ describe("applyReinforcement", () => {
     expect(mem.strength).toBeCloseTo(0.15, 5);
   });
 
+  it("clamps strength to 0 on strong negative reinforcement", () => {
+    insertMemory("mem-a", 0.1);
+
+    db.upsertAttribution({
+      messageId: "t1:msg:1",
+      memoryId: "mem-a",
+      evidence: "agent_feedback_negative",
+      confidence: -0.5,
+      turnId: "t1",
+      createdAt: "2026-03-01T00:00:00Z",
+    });
+
+    applyReinforcement(db);
+
+    // 0.1 + (0.7 × -0.5 × 1.0) = 0.1 - 0.35 = -0.25 → clamped to 0
+    const mem = db.getMemory("mem-a")!;
+    expect(mem.strength).toBe(0);
+  });
+
   it("accumulates multiple attributions for same memory", () => {
     insertMemory("mem-a", 0.3);
 

@@ -73,7 +73,7 @@ export function applyReinforcement(db: MemoryDatabase): number {
     const mem = db.getMemory(memoryId);
     if (!mem) continue;
 
-    const newStrength = Math.min(mem.strength + totalReinforcement, 1.0);
+    const newStrength = Math.max(0, Math.min(mem.strength + totalReinforcement, 1.0));
     if (newStrength !== mem.strength) {
       db.updateStrength(memoryId, newStrength);
       count++;
