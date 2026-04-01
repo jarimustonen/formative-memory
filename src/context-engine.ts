@@ -478,7 +478,7 @@ export function extractLastUserMessage(messages: { role?: string; content?: unkn
 const SLEEP_DEBT_HOURS = 48;
 
 /**
- * Check if memory consolidation is overdue (> 72h since last run).
+ * Check if memory consolidation is overdue (> 48h since last run).
  * Returns a warning string for systemPromptAddition, or empty string.
  */
 export function checkSleepDebt(getDb?: () => MemoryDatabase): string {

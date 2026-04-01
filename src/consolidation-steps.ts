@@ -124,9 +124,6 @@ export function applyAssociationDecay(db: MemoryDatabase): void {
 
 // -- Step 3: Co-retrieval association update --
 
-/** Max transitive hops for indirect associations. */
-export const TRANSITIVE_MAX_HOPS = 1;
-
 /** Minimum weight for a transitive association to be created. */
 export const TRANSITIVE_WEIGHT_THRESHOLD = 0.1;
 
