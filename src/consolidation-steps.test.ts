@@ -585,7 +585,7 @@ describe("applyTemporalTransitions", () => {
 // -- promoteWorkingToConsolidated --
 
 describe("promoteWorkingToConsolidated", () => {
-  it("promotes working memories to consolidated with strength 1.0", () => {
+  it("promotes working memories to consolidated, preserving strength", () => {
     insertMemory("mem-a", 0.5, false);
     insertMemory("mem-b", 0.3, false);
 
@@ -594,12 +594,12 @@ describe("promoteWorkingToConsolidated", () => {
 
     const memA = db.getMemory("mem-a")!;
     expect(memA.consolidated).toBe(1);
-    expect(memA.strength).toBe(1.0);
+    expect(memA.strength).toBe(0.5); // preserved, not reset
     expect(memA.file_path).toBe("consolidated.md");
 
     const memB = db.getMemory("mem-b")!;
     expect(memB.consolidated).toBe(1);
-    expect(memB.strength).toBe(1.0);
+    expect(memB.strength).toBe(0.3); // preserved
   });
 
   it("does not re-promote already consolidated memories", () => {

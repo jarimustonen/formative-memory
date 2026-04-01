@@ -301,7 +301,8 @@ export function applyTemporalTransitions(db: MemoryDatabase): number {
 
 /**
  * Promote working memories to consolidated state.
- * Sets consolidated=1, file_path="consolidated.md", strength=1.0.
+ * Sets consolidated=1, file_path="consolidated.md".
+ * Preserves current strength — reinforcement/decay dynamics are not reset.
  * Run AFTER merge/prune so only surviving working memories are promoted.
  *
  * Returns count of memories promoted.
@@ -312,7 +313,6 @@ export function promoteWorkingToConsolidated(db: MemoryDatabase): number {
 
   for (const mem of working) {
     db.updateConsolidated(mem.id, true, "consolidated.md");
-    db.updateStrength(mem.id, 1.0);
     count++;
   }
 
