@@ -353,7 +353,7 @@ Consolidation never modifies memories in-place. It creates new memories and mana
 
 | Operation                  | Old memories                                                                                                                    | New memory                                             | Associations                             |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ---------------------------------------- |
-| **Merge** (A + B → C)      | A, B weakened (strength × 0.1). If A or B was itself a consolidation product (`source: "consolidation"`), it's deleted instead. | C gets new ID, `source: "consolidation"`, strength 1.0 | C inherits all associations from A and B |
+| **Merge** (A + B → C)      | A, B weakened (strength × 0.3). If A or B was itself a consolidation product (`source: "consolidation"`), it's deleted instead. If merged content matches A, A is the canonical result (absorption — no new memory created). | C gets new ID, `source: "consolidation"`, strength 1.0 | C inherits all associations from A and B (probabilistic OR) |
 | **Working → consolidated** | Same memory, metadata changes only                                                                                              | N/A (same ID)                                          | Unchanged                                |
 | **Pruning**                | Deleted (strength ≤ 0.05)                                                                                                       | N/A                                                    | Associations deleted                     |
 

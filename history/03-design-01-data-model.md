@@ -310,7 +310,7 @@ Esimerkki: muisto haettiin 2× searchilla (1.0+1.0), sai palautteen ★★★ (1
 
 ### 5.3 Konsolidaation strength-nollaus
 
-Kun muisto siirtyy working → consolidated, sen strength **nollataan 1.0:aan**. Tämä simuloi biologista pitkäkestomuistiin siirtymistä: konsolidoitu muisto on "uudelleensynnyttynyt" vahvempana.
+Kun muisto siirtyy working → consolidated, sen strength **säilyy ennallaan**. Promootio on metadata-muutos (consolidated=1, file_path), ei strength-muutos. Strength on kumulatiivinen signaali muiston hyödyllisyydestä — sen nollaaminen 1.0:aan pyyhkisi reinforcement/decay-dynamiikan ja tekisi koko strength-konseptista merkityksettömän.
 
 ### 5.4 Ominaisuudet
 
