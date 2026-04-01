@@ -212,6 +212,9 @@ export function updateTransitiveAssociations(
         // Probabilistic OR
         const newWeight = existing + transitiveWeight - existing * transitiveWeight;
 
+        // Skip no-op updates to avoid wasting maxUpdates cap
+        if (newWeight - existing < 1e-9) continue;
+
         db.upsertAssociation(otherId1, otherId2, newWeight, now);
         count++;
       }
@@ -270,6 +273,7 @@ export function applyTemporalTransitions(db: MemoryDatabase): number {
   for (const mem of allMemories) {
     if (!mem.temporal_anchor) continue;
     const anchor = new Date(mem.temporal_anchor);
+    if (Number.isNaN(anchor.getTime())) continue;
 
     let newState: TemporalState | null = null;
 

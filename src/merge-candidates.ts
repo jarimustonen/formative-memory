@@ -93,8 +93,8 @@ export function findMergeCandidates(
  * Returns value in [0, 1].
  */
 export function jaccardSimilarity(a: string, b: string): number {
-  const setA = trigrams(a);
-  const setB = trigrams(b);
+  const setA = textFeatures(a);
+  const setB = textFeatures(b);
 
   if (setA.size === 0 && setB.size === 0) return 1;
   if (setA.size === 0 || setB.size === 0) return 0;
@@ -109,9 +109,11 @@ export function jaccardSimilarity(a: string, b: string): number {
 }
 
 /**
- * Extract word trigrams from text (lowercased, whitespace-normalized).
+ * Extract text features for similarity comparison.
+ * Uses word trigrams for structural similarity, plus individual words
+ * as fallback for short texts (< 3 words produce no trigrams).
  */
-export function trigrams(text: string): Set<string> {
+export function textFeatures(text: string): Set<string> {
   const words = text.toLowerCase().split(/\s+/).filter(Boolean);
   const result = new Set<string>();
   for (let i = 0; i <= words.length - 3; i++) {

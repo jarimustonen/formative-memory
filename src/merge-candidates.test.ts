@@ -4,15 +4,15 @@ import {
   cosineSimilarity,
   findMergeCandidates,
   jaccardSimilarity,
-  trigrams,
+  textFeatures,
   type MemoryCandidate,
 } from "./merge-candidates.ts";
 
-// -- trigrams --
+// -- textFeatures --
 
-describe("trigrams", () => {
+describe("textFeatures", () => {
   it("extracts word trigrams and individual words", () => {
-    const result = trigrams("the quick brown fox");
+    const result = textFeatures("the quick brown fox");
     expect(result.has("the quick brown")).toBe(true);
     expect(result.has("quick brown fox")).toBe(true);
     expect(result.has("the")).toBe(true);
@@ -20,21 +20,21 @@ describe("trigrams", () => {
   });
 
   it("lowercases text", () => {
-    const result = trigrams("Hello World Test");
+    const result = textFeatures("Hello World Test");
     expect(result.has("hello")).toBe(true);
     expect(result.has("hello world test")).toBe(true);
   });
 
   it("returns individual words for short text", () => {
-    const result = trigrams("hello world");
+    const result = textFeatures("hello world");
     expect(result.has("hello")).toBe(true);
     expect(result.has("world")).toBe(true);
     expect(result.size).toBe(2); // no trigrams possible with 2 words
   });
 
   it("returns empty set for empty text", () => {
-    expect(trigrams("").size).toBe(0);
-    expect(trigrams("   ").size).toBe(0);
+    expect(textFeatures("").size).toBe(0);
+    expect(textFeatures("   ").size).toBe(0);
   });
 });
 
