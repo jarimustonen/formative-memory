@@ -59,6 +59,7 @@ describe("runConsolidation", () => {
       pruned: 0,
       merged: 0,
       transitioned: 0,
+      promoted: 0,
     });
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
   });

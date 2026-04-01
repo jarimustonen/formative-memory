@@ -13,6 +13,9 @@ import {
   applyPruning,
   applyReinforcement,
   applyTemporalTransitions,
+  promoteWorkingToConsolidated,
+  provenanceGC,
+  regenerateMarkdownFiles,
   updateCoRetrievalAssociations,
   updateTransitiveAssociations,
 } from "./consolidation-steps.ts";
@@ -26,6 +29,10 @@ export type ConsolidationParams = {
   mergeContentProducer?: MergeContentProducer;
   /** Embedding generator for merged memories. */
   embedder?: EmbedderFn;
+  /** Path to working.md for markdown regeneration. */
+  workingPath?: string;
+  /** Path to consolidated.md for markdown regeneration. */
+  consolidatedPath?: string;
 };
 
 export type ConsolidationSummary = {
@@ -34,6 +41,7 @@ export type ConsolidationSummary = {
   pruned: number;
   merged: number;
   transitioned: number;
+  promoted: number;
 };
 
 export type ConsolidationResult = {
@@ -53,8 +61,8 @@ const defaultContentProducer: MergeContentProducer = async (a, b) => ({
  *
  * Pre-merge steps (reinforcement, decay, associations, pruning) run
  * in a single transaction. Merge execution runs separately because
- * the content producer may be async (LLM call). Post-merge timestamp
- * is written in its own transaction.
+ * the content producer may be async (LLM call). Finalization
+ * (promote, GC, markdown regen) runs in its own transaction.
  */
 export async function runConsolidation(
   params: ConsolidationParams,
@@ -68,6 +76,7 @@ export async function runConsolidation(
     pruned: 0,
     merged: 0,
     transitioned: 0,
+    promoted: 0,
   };
 
   // Transaction 1: Pre-merge deterministic steps
@@ -93,18 +102,26 @@ export async function runConsolidation(
   }));
   const pairs = findMergeCandidates(candidates);
 
-  // Phase 4.5 — Merge execution (async content producer, then DB transaction)
+  // Phase 4.5 — Merge execution (async content producer, then DB transaction per merge)
   if (pairs.length > 0) {
-    // Execute merges — each merge writes within its own implicit transaction
-    // via the DB helpers. executeMerges skips consumed/missing memories.
     const mergeResults = await executeMerges(params.db, pairs, producer, params.embedder);
     summary.merged = mergeResults.length;
   }
 
-  // TODO: Phase 4.6 — Finalization (working→consolidated, GC, markdown regen)
+  // Transaction 2: Finalization
+  params.db.transaction(() => {
+    // Phase 4.6 — Promote working → consolidated
+    summary.promoted = promoteWorkingToConsolidated(params.db);
+    // Provenance GC
+    provenanceGC(params.db);
+    // Write completion timestamp
+    params.db.setState("last_consolidation_at", new Date().toISOString());
+  });
 
-  // Write completion timestamp
-  params.db.setState("last_consolidation_at", new Date().toISOString());
+  // Regenerate markdown files (outside transaction — file I/O)
+  if (params.workingPath && params.consolidatedPath) {
+    regenerateMarkdownFiles(params.db, params.workingPath, params.consolidatedPath);
+  }
 
   return {
     ok: true,

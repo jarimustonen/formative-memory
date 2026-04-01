@@ -1,7 +1,8 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { parseChunks } from "./chunks.ts";
 import {
   DECAY_ASSOCIATION,
   DECAY_CONSOLIDATED,
@@ -17,6 +18,8 @@ import {
   applyPruning,
   applyReinforcement,
   applyTemporalTransitions,
+  promoteWorkingToConsolidated,
+  regenerateMarkdownFiles,
   updateCoRetrievalAssociations,
   updateTransitiveAssociations,
 } from "./consolidation-steps.ts";
@@ -576,5 +579,87 @@ describe("applyTemporalTransitions", () => {
     });
 
     expect(applyTemporalTransitions(db)).toBe(0);
+  });
+});
+
+// -- promoteWorkingToConsolidated --
+
+describe("promoteWorkingToConsolidated", () => {
+  it("promotes working memories to consolidated with strength 1.0", () => {
+    insertMemory("mem-a", 0.5, false);
+    insertMemory("mem-b", 0.3, false);
+
+    const count = promoteWorkingToConsolidated(db);
+    expect(count).toBe(2);
+
+    const memA = db.getMemory("mem-a")!;
+    expect(memA.consolidated).toBe(1);
+    expect(memA.strength).toBe(1.0);
+    expect(memA.file_path).toBe("consolidated.md");
+
+    const memB = db.getMemory("mem-b")!;
+    expect(memB.consolidated).toBe(1);
+    expect(memB.strength).toBe(1.0);
+  });
+
+  it("does not re-promote already consolidated memories", () => {
+    insertMemory("mem-a", 0.8, true); // already consolidated
+
+    const count = promoteWorkingToConsolidated(db);
+    expect(count).toBe(0);
+  });
+
+  it("returns 0 when no working memories exist", () => {
+    expect(promoteWorkingToConsolidated(db)).toBe(0);
+  });
+});
+
+// -- regenerateMarkdownFiles --
+
+describe("regenerateMarkdownFiles", () => {
+  it("regenerates working.md and consolidated.md from DB state", () => {
+    insertMemory("mem-a", 0.8, false);
+    // Need content in DB for markdown generation
+    db.insertMemory({
+      id: "mem-c",
+      type: "decision",
+      content: "Consolidated decision about architecture",
+      temporal_state: "none",
+      temporal_anchor: null,
+      created_at: "2026-03-01T00:00:00Z",
+      strength: 0.9,
+      source: "consolidation",
+      consolidated: true,
+      file_path: "consolidated.md",
+    });
+
+    const workingPath = join(tmpDir, "working.md");
+    const consolidatedPath = join(tmpDir, "consolidated.md");
+
+    regenerateMarkdownFiles(db, workingPath, consolidatedPath);
+
+    const workingContent = readFileSync(workingPath, "utf8");
+    const consolidatedContent = readFileSync(consolidatedPath, "utf8");
+
+    expect(workingContent).toContain("Working Memory");
+    const workingChunks = parseChunks(workingContent);
+    expect(workingChunks).toHaveLength(1);
+    expect(workingChunks[0].content).toContain("content for mem-a");
+
+    expect(consolidatedContent).toContain("Consolidated Memory");
+    const consolidatedChunks = parseChunks(consolidatedContent);
+    expect(consolidatedChunks).toHaveLength(1);
+    expect(consolidatedChunks[0].content).toContain("Consolidated decision");
+  });
+
+  it("writes empty files when no memories exist", () => {
+    const workingPath = join(tmpDir, "working.md");
+    const consolidatedPath = join(tmpDir, "consolidated.md");
+
+    regenerateMarkdownFiles(db, workingPath, consolidatedPath);
+
+    const workingContent = readFileSync(workingPath, "utf8");
+    expect(workingContent).toContain("Working Memory");
+    expect(parseChunks(workingContent)).toHaveLength(0);
   });
 });
