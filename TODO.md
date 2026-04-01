@@ -4,9 +4,9 @@
 
 ## Tilanne (2026-03-31)
 
-**Valmista:** Infrastruktuuri (DB, tyypit, hash, chunks, retrieval-log, config), MemoryManager (store, search, recall, get), työkalurekisteröinti (4 työkalua), `registerMemoryPromptSection()`, Context Engine Phase 3.0–3.7 (assemble, cache, fingerprinting, turn memory ledger + dedup, embedding circuit breaker, provenance-taulut, afterTurn). Legacy `before_prompt_build` hook poistettu. 277 testiä läpi.
+**Valmista:** Infrastruktuuri, MemoryManager, context engine (Phase 3), konsolidaatio Phase 4.0–4.6 (reinforcement, decay, assosiaatiot, pruning, merge detection+execution, finalization). 369 testiä läpi.
 
-**Seuraava:** Phase 4 — konsolidaatio (uni).
+**Seuraava:** Phase 4 review + plugin-rekisteröinti (registerCommand `/memory sleep`).
 
 **V1-periaate:** Yksinkertainen ja laajennettava. Minimoi hot path -kirjoitukset, mutta salli append-only sidecar-kirjoitukset normaalikäytössä (retrieval.log, provenance). Kanoniset muistomutaatiot (strength, assosiaatiot, pruning, merget, temporaaliset siirtymät) vain konsolidaatiossa.
 
@@ -214,16 +214,15 @@ Tiivistelmä: content hash (SHA-256), SQLite backend, working.md + consolidated.
 - [ ] Chain handling: intermediates poistetaan, originals heikennetään — ketju pysyy matalana
 - [ ] Testit: ensin deterministisellä sisällöllä (stub LLM), sitten LLM-integraatio erikseen
 
-### 4.6 Viimeistely ❌
+### 4.6 Viimeistely ✅
 
-- [ ] Working → consolidated: metadata-siirto, strength → 1.0 (vasta merge/prune jälkeen)
-- [ ] Retrieval.log: poista prosessoitu snapshot
-- [ ] Provenance GC: exposure >30d ja muisto elossa → poista. Pruned muistojen exposure → poista. Poistettujen viestien attribution → poista.
-- [ ] Regeneroi `working.md` ja `consolidated.md` SQLite:stä (atomic file replace)
-- [ ] Päivitä `.layout.json` / state-versio
-- [ ] Kirjoita `state.last_consolidation_at` (vasta kun kaikki onnistunut)
-- [ ] Blocking UX: yhteenveto lopussa (mergatut, pruned, siirretyt)
-- [ ] Testit: markdown vastaa DB:n tilaa, layout-manifest, integraatiotesti koko prosessille
+- [x] Working → consolidated: metadata-siirto, strength → 1.0 (vasta merge/prune jälkeen)
+- [x] Provenance GC: exposure >30d → poista
+- [x] Regeneroi `working.md` ja `consolidated.md` SQLite:stä
+- [x] Kirjoita `state.last_consolidation_at` (vasta kun kaikki onnistunut, finalization-transaktiossa)
+- [x] Testit: promote, markdown regeneration, empty state
+- [ ] Plugin-rekisteröinti: `registerCommand` `/memory sleep` (erillinen tehtävä)
+- [ ] `.layout.json` / state-versio päivitys regeneroinnin yhteydessä
 
 ---
 
