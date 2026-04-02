@@ -14,6 +14,7 @@ import { Type } from "@sinclair/typebox";
 import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk";
 import type { AssociativeMemoryConfig } from "./config.ts";
 import { memoryConfigSchema } from "./config.ts";
+import { runConsolidation } from "./consolidation.ts";
 import { CONTEXT_ENGINE_ID, createAssociativeMemoryContextEngine } from "./context-engine.ts";
 import { EmbeddingCircuitBreaker } from "./embedding-circuit-breaker.ts";
 import { MemoryManager } from "./memory-manager.ts";
@@ -294,8 +295,28 @@ const associativeMemoryPlugin = {
       }),
     );
 
-    // Legacy before_prompt_build hook removed — context engine assemble()
-    // replaces it with ledger-aware dedup and token budget management.
+    // Register /memory sleep command for manual consolidation trigger
+    api.registerCommand({
+      name: "memory sleep",
+      description: "Run memory consolidation (strengthens associations, merges duplicates, cleans up)",
+      async handler() {
+        const ws = getLastWorkspace(config, ".");
+        const memoryDir = resolveMemoryDir(config, ".");
+
+        const result = await runConsolidation({
+          db: ws.manager.getDatabase(),
+          workingPath: join(memoryDir, "working.md"),
+          consolidatedPath: join(memoryDir, "consolidated.md"),
+        });
+
+        const s = result.summary;
+        return `Memory consolidation complete (${result.durationMs}ms).\n` +
+          `Reinforced: ${s.reinforced}, Decayed: ${s.decayed}, ` +
+          `Pruned: ${s.pruned} memories + ${s.prunedAssociations} associations, ` +
+          `Merged: ${s.merged}, Transitioned: ${s.transitioned}, ` +
+          `Promoted: ${s.promoted}, Exposure GC: ${s.exposuresGc}`;
+      },
+    });
   },
 };
 
