@@ -4,9 +4,9 @@
 
 ## Tilanne (2026-03-31)
 
-**Valmista:** Infrastruktuuri, MemoryManager, context engine (Phase 3), konsolidaatio Phase 4.0–4.6 (reinforcement, decay, assosiaatiot, pruning, merge detection+execution, finalization). 369 testiä läpi.
+**Valmista:** Infrastruktuuri, MemoryManager, context engine (Phase 3), konsolidaatio Phase 4.0–4.6 (reinforcement, decay, assosiaatiot, pruning, merge detection+execution, finalization), `/memory sleep` komento. 374 testiä läpi.
 
-**Seuraava:** Phase 4 review + plugin-rekisteröinti (registerCommand `/memory sleep`).
+**Seuraava:** Phase 5 — jatkokehitys.
 
 **V1-periaate:** Yksinkertainen ja laajennettava. Minimoi hot path -kirjoitukset, mutta salli append-only sidecar-kirjoitukset normaalikäytössä (retrieval.log, provenance). Kanoniset muistomutaatiot (strength, assosiaatiot, pruning, merget, temporaaliset siirtymät) vain konsolidaatiossa.
 
@@ -151,7 +151,7 @@ Tiivistelmä: content hash (SHA-256), SQLite backend, working.md + consolidated.
 
 ---
 
-## Phase 4: Konsolidaatio (uni) ❌
+## Phase 4: Konsolidaatio (uni) ✅
 
 > V1: synkroninen ja blokkaava. Ei background-ajoa, ei samanaikaisuusongelmia.
 > **Trigger:** OpenClaw:n session reset (oletus 4am) + eksplisiittinen komento (`/memory sleep`).
@@ -221,7 +221,7 @@ Tiivistelmä: content hash (SHA-256), SQLite backend, working.md + consolidated.
 - [x] Regeneroi `working.md` ja `consolidated.md` SQLite:stä
 - [x] Kirjoita `state.last_consolidation_at` (vasta kun kaikki onnistunut, finalization-transaktiossa)
 - [x] Testit: promote, markdown regeneration, empty state
-- [ ] Plugin-rekisteröinti: `registerCommand` `/memory sleep` (erillinen tehtävä)
+- [x] Plugin-rekisteröinti: `registerCommand` `/memory sleep`
 - [ ] `.layout.json` / state-versio päivitys regeneroinnin yhteydessä
 
 ---
