@@ -519,8 +519,8 @@ export class MemoryDatabase {
     this.db.prepare("DELETE FROM turn_memory_exposure WHERE session_id = ?").run(sessionId);
   }
 
-  deleteExposuresOlderThan(cutoffDate: string): void {
-    this.db.prepare("DELETE FROM turn_memory_exposure WHERE created_at < ?").run(cutoffDate);
+  deleteExposuresOlderThan(cutoffDate: string): number {
+    return this.db.prepare("DELETE FROM turn_memory_exposure WHERE created_at < ?").run(cutoffDate).changes;
   }
 
   // -- Provenance: Attribution --

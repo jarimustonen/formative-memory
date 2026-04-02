@@ -39,9 +39,11 @@ export type ConsolidationSummary = {
   reinforced: number;
   decayed: number;
   pruned: number;
+  prunedAssociations: number;
   merged: number;
   transitioned: number;
   promoted: number;
+  exposuresGc: number;
 };
 
 export type ConsolidationResult = {
@@ -74,9 +76,11 @@ export async function runConsolidation(
     reinforced: 0,
     decayed: 0,
     pruned: 0,
+    prunedAssociations: 0,
     merged: 0,
     transitioned: 0,
     promoted: 0,
+    exposuresGc: 0,
   };
 
   // Transaction 1: Pre-merge deterministic steps
@@ -91,6 +95,7 @@ export async function runConsolidation(
     // Phase 4.3 — Pre-merge pruning
     const pruneResult = applyPruning(params.db);
     summary.pruned = pruneResult.memoriesPruned;
+    summary.prunedAssociations = pruneResult.associationsPruned;
   });
 
   // Phase 4.4 — Merge candidate detection (pure, no mutations)
@@ -113,7 +118,7 @@ export async function runConsolidation(
     // Phase 4.6 — Promote working → consolidated
     summary.promoted = promoteWorkingToConsolidated(params.db);
     // Provenance GC
-    provenanceGC(params.db);
+    summary.exposuresGc = provenanceGC(params.db);
     // Write completion timestamp
     params.db.setState("last_consolidation_at", new Date().toISOString());
   });

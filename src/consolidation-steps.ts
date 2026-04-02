@@ -329,8 +329,7 @@ export function promoteWorkingToConsolidated(db: MemoryDatabase): number {
  */
 export function provenanceGC(db: MemoryDatabase, cutoffDays = 30): number {
   const cutoffDate = new Date(Date.now() - cutoffDays * 24 * 60 * 60 * 1000).toISOString();
-  db.deleteExposuresOlderThan(cutoffDate);
-  return 0;
+  return db.deleteExposuresOlderThan(cutoffDate);
 }
 
 /**
