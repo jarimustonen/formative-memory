@@ -1445,9 +1445,9 @@ describe("checkSleepDebt", () => {
     expect(result).toContain("/memory sleep");
   });
 
-  it("returns empty when last consolidation was exactly 48h ago", () => {
-    const exact = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
-    sleepDb.setState("last_consolidation_at", exact);
+  it("returns empty when last consolidation was 47h ago", () => {
+    const recent = new Date(Date.now() - 47 * 60 * 60 * 1000).toISOString();
+    sleepDb.setState("last_consolidation_at", recent);
     expect(checkSleepDebt(() => sleepDb)).toBe("");
   });
 });

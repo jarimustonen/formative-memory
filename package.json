@@ -7,6 +7,9 @@
   "exports": {
     ".": "./dist/index.js"
   },
+  "bin": {
+    "memory": "./src/cli.ts"
+  },
   "scripts": {
     "build": "tsdown",
     "check": "pnpm format:check && pnpm tsgo && pnpm lint",
