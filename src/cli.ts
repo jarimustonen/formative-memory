@@ -15,9 +15,10 @@
  *   export   — Export database to JSON
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { MemoryDatabase } from "./db.ts";
+import type { MemorySource, TemporalState } from "./types.ts";
 
 // -- Types --
 
@@ -85,6 +86,15 @@ function main(): void {
         break;
       case "export":
         cmdExport(ctx);
+        break;
+      case "history":
+        cmdHistory(ctx, rest);
+        break;
+      case "graph":
+        cmdGraph(ctx);
+        break;
+      case "import":
+        cmdImport(ctx, rest);
         break;
       default:
         console.error(`Unknown command: ${command}`);
@@ -338,6 +348,209 @@ function cmdExport(ctx: CliContext): void {
   console.log(JSON.stringify(exportData, null, 2));
 }
 
+function cmdHistory(ctx: CliContext, args: string[]): void {
+  const { db } = ctx;
+  const id = args[0];
+
+  if (!id) {
+    console.error("Error: memory ID required");
+    process.exit(1);
+  }
+
+  let row = db.getMemory(id);
+  if (!row) {
+    const all = db.getAllMemories();
+    row = all.find((m) => m.id.startsWith(id)) ?? null;
+  }
+
+  if (!row) {
+    console.error(`Memory not found: ${id}`);
+    process.exit(1);
+  }
+
+  // Trace alias chain forward (what did this become?)
+  const canonical = db.resolveAlias(row.id);
+  const isAliased = canonical !== row.id;
+
+  // Trace alias chain backward (what was merged into this?)
+  const predecessors = db.getAliasedIdsPointingTo(row.id);
+
+  // Attribution history
+  const attributions = db.getAttributionsByMemory(row.id);
+
+  // Exposure history
+  const exposures = db.getExposuresByMemory(row.id);
+
+  const result = {
+    id: row.id,
+    id_short: row.id.slice(0, 8),
+    source: row.source,
+    created_at: row.created_at,
+    current_strength: row.strength,
+    consolidated: row.consolidated === 1,
+    alias: isAliased ? { canonical, note: "This memory was merged into another" } : null,
+    predecessors: predecessors.length > 0 ? predecessors : null,
+    attribution_count: attributions.length,
+    exposure_count: exposures.length,
+    timeline: [
+      { event: "created", at: row.created_at, detail: `source=${row.source}, type=${row.type}` },
+      ...attributions.map((a) => ({
+        event: "attributed",
+        at: a.created_at,
+        detail: `${a.evidence} conf=${a.confidence} msg=${a.message_id.slice(0, 20)}`,
+      })),
+      ...exposures.map((e) => ({
+        event: "exposed",
+        at: e.created_at,
+        detail: `${e.mode} turn=${e.turn_id.slice(0, 20)}`,
+      })),
+    ].sort((a, b) => a.at.localeCompare(b.at)),
+  };
+
+  output(ctx, result, () => {
+    console.log(`History for ${result.id_short} (${row!.type})`);
+    console.log(`Source: ${result.source} | Created: ${result.created_at}`);
+    console.log(`Current strength: ${result.current_strength}`);
+    if (result.alias) {
+      console.log(`Merged into: ${result.alias.canonical.slice(0, 8)}`);
+    }
+    if (result.predecessors) {
+      console.log(`Predecessors: ${result.predecessors.map((p: string) => p.slice(0, 8)).join(", ")}`);
+    }
+    console.log(`\nTimeline (${result.timeline.length} events):`);
+    for (const ev of result.timeline) {
+      console.log(`  ${ev.at} ${ev.event}: ${ev.detail}`);
+    }
+  });
+}
+
+function cmdGraph(ctx: CliContext): void {
+  const { db } = ctx;
+  const memories = db.getAllMemories();
+
+  // Collect all unique associations
+  const edges: Array<{ a: string; b: string; weight: number }> = [];
+  const seen = new Set<string>();
+
+  for (const mem of memories) {
+    for (const assoc of db.getAssociations(mem.id)) {
+      const key = `${assoc.memory_a}:${assoc.memory_b}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        edges.push({ a: assoc.memory_a, b: assoc.memory_b, weight: assoc.weight });
+      }
+    }
+  }
+
+  if (ctx.format === "text") {
+    // Output Graphviz DOT format
+    console.log("graph associations {");
+    console.log("  node [shape=box, style=rounded];");
+    for (const mem of memories) {
+      const label = mem.content.length > 30 ? mem.content.slice(0, 27) + "..." : mem.content;
+      const flag = mem.consolidated === 1 ? "C" : "W";
+      console.log(`  "${mem.id.slice(0, 8)}" [label="${mem.id.slice(0, 8)}\\n${flag} str=${mem.strength.toFixed(2)}\\n${label.replace(/"/g, '\\"')}"];`);
+    }
+    for (const e of edges) {
+      console.log(`  "${e.a.slice(0, 8)}" -- "${e.b.slice(0, 8)}" [label="${e.weight.toFixed(2)}"];`);
+    }
+    console.log("}");
+  } else {
+    const result = {
+      nodes: memories.map((m) => ({
+        id: m.id,
+        id_short: m.id.slice(0, 8),
+        type: m.type,
+        strength: m.strength,
+        consolidated: m.consolidated === 1,
+      })),
+      edges: edges.map((e) => ({
+        a: e.a.slice(0, 8),
+        b: e.b.slice(0, 8),
+        weight: Math.round(e.weight * 1000) / 1000,
+      })),
+    };
+    console.log(JSON.stringify(result, null, 2));
+  }
+}
+
+function cmdImport(ctx: CliContext, args: string[]): void {
+  const { db } = ctx;
+  const filePath = args[0];
+
+  if (!filePath) {
+    console.error("Error: import file path required");
+    process.exit(1);
+  }
+
+  if (!existsSync(filePath)) {
+    console.error(`Error: file not found: ${filePath}`);
+    process.exit(1);
+  }
+
+  const raw = readFileSync(filePath, "utf8");
+  const data = JSON.parse(raw) as {
+    memories?: Array<{
+      id: string;
+      type: string;
+      content: string;
+      strength: number;
+      temporal_state: string;
+      temporal_anchor: string | null;
+      consolidated: boolean;
+      source: string;
+      created_at: string;
+    }>;
+    associations?: Array<{ a: string; b: string; weight: number }>;
+  };
+
+  let memoriesImported = 0;
+  let memoriesSkipped = 0;
+  let associationsImported = 0;
+
+  db.transaction(() => {
+    if (data.memories) {
+      for (const m of data.memories) {
+        if (db.getMemory(m.id)) {
+          memoriesSkipped++;
+          continue;
+        }
+        db.insertMemory({
+          id: m.id,
+          type: m.type,
+          content: m.content,
+          strength: m.strength,
+          temporal_state: m.temporal_state as TemporalState,
+          temporal_anchor: m.temporal_anchor,
+          consolidated: m.consolidated,
+          source: m.source as MemorySource,
+          created_at: m.created_at,
+          file_path: m.consolidated ? "consolidated.md" : "working.md",
+        });
+        db.insertFts(m.id, m.content, m.type);
+        memoriesImported++;
+      }
+    }
+
+    if (data.associations) {
+      const now = new Date().toISOString();
+      for (const a of data.associations) {
+        db.upsertAssociation(a.a, a.b, a.weight, now);
+        associationsImported++;
+      }
+    }
+  });
+
+  const result = { memoriesImported, memoriesSkipped, associationsImported };
+
+  output(ctx, result, () => {
+    console.log(`Imported: ${memoriesImported} memories, ${associationsImported} associations`);
+    if (memoriesSkipped > 0) {
+      console.log(`Skipped: ${memoriesSkipped} (already exist)`);
+    }
+  });
+}
+
 // -- Helpers --
 
 function output(ctx: CliContext, data: unknown, textFn: () => void): void {
@@ -359,7 +572,10 @@ Commands:
   list                 List memories
   inspect <id>         Detailed view of a single memory
   search <query>       Search memories by content
+  history <id>         Timeline of a memory's lifecycle
+  graph                Association graph (DOT format in text mode)
   export               Export database to JSON
+  import <file>        Import memories from JSON export file
 
 Options:
   --format json|text   Output format (default: json)

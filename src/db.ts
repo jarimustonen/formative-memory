@@ -735,6 +735,14 @@ export class MemoryDatabase {
     return row?.new_id ?? null;
   }
 
+  /** Get all old IDs that were aliased to this new ID (reverse lookup). */
+  getAliasedIdsPointingTo(newId: string): string[] {
+    const rows = this.db
+      .prepare("SELECT old_id FROM memory_aliases WHERE new_id = ?")
+      .all(newId) as Array<{ old_id: string }>;
+    return rows.map((r) => r.old_id);
+  }
+
   // -- Layout --
 
   getLayoutManifest(): LayoutManifest | null {

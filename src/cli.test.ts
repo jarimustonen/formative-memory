@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -204,6 +204,85 @@ describe("export", () => {
     const result = cliJson(["export", tmpDir]) as any;
     const mem = result.memories.find((m: any) => m.id === MEM_A);
     expect(mem.content).toBe("Team chose PostgreSQL for the database");
+  });
+});
+
+// -- history --
+
+describe("history", () => {
+  it("shows memory timeline as JSON", () => {
+    const result = cliJson(["history", tmpDir, "aaaa1111"]) as any;
+    expect(result.id).toBe(MEM_A);
+    expect(result.source).toBe("agent_tool");
+    expect(result.timeline.length).toBeGreaterThanOrEqual(1);
+    // Should have at least: created + 1 attribution
+    const events = result.timeline.map((e: any) => e.event);
+    expect(events).toContain("created");
+    expect(events).toContain("attributed");
+  });
+
+  it("text format shows timeline", () => {
+    const result = cli(["history", tmpDir, "aaaa1111", "--text"]);
+    expect(result).toContain("History for aaaa1111");
+    expect(result).toContain("Timeline");
+    expect(result).toContain("created");
+  });
+
+  it("exits with error for unknown ID", () => {
+    expect(() => cli(["history", tmpDir, "nonexistent"])).toThrow();
+  });
+});
+
+// -- graph --
+
+describe("graph", () => {
+  it("returns nodes and edges as JSON", () => {
+    const result = cliJson(["graph", tmpDir]) as any;
+    expect(result.nodes).toHaveLength(2);
+    expect(result.edges).toHaveLength(1);
+    expect(result.edges[0].weight).toBe(0.4);
+  });
+
+  it("text format outputs Graphviz DOT", () => {
+    const result = cli(["graph", tmpDir, "--text"]);
+    expect(result).toContain("graph associations {");
+    expect(result).toContain("aaaa1111");
+    expect(result).toContain("bbbb2222");
+    expect(result).toContain("0.40");
+  });
+});
+
+// -- import --
+
+describe("import", () => {
+  it("imports memories from export file", () => {
+    const exportData = cli(["export", tmpDir]);
+    const exportPath = join(tmpDir, "export.json");
+    writeFileSync(exportPath, exportData);
+
+    // Create a fresh DB to import into
+    const importDir = join(tmpDir, "import-target");
+    mkdirSync(importDir, { recursive: true });
+    const importDb = new MemoryDatabase(join(importDir, "associations.db"));
+    importDb.close();
+
+    const result = cliJson(["import", importDir, exportPath]) as any;
+    expect(result.memoriesImported).toBe(2);
+    expect(result.associationsImported).toBe(1);
+
+    // Verify imported data
+    const stats = cliJson(["stats", importDir]) as any;
+    expect(stats.total).toBe(2);
+  });
+
+  it("skips existing memories on import", () => {
+    const exportData = cli(["export", tmpDir]);
+    const exportPath = join(tmpDir, "export.json");
+    writeFileSync(exportPath, exportData);
+
+    const result = cliJson(["import", tmpDir, exportPath]) as any;
+    expect(result.memoriesImported).toBe(0);
+    expect(result.memoriesSkipped).toBe(2);
   });
 });
 
