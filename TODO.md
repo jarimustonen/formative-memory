@@ -4,9 +4,9 @@
 
 ## Tilanne (2026-03-31)
 
-**Valmista:** Infrastruktuuri, MemoryManager, context engine (Phase 3), konsolidaatio Phase 4.0–4.6 (reinforcement, decay, assosiaatiot, pruning, merge detection+execution, finalization), `/memory sleep` komento. 374 testiä läpi.
+**Valmista:** Infrastruktuuri, MemoryManager, context engine (Phase 3), konsolidaatio (Phase 4), `/memory sleep` komento, CLI-työkalu (Phase 5: stats, list, inspect, search, history, graph, export, import). 399 testiä läpi.
 
-**Seuraava:** Phase 5 — jatkokehitys.
+**Seuraava:** Phase 5 TUI (interaktiivinen versio) tai Phase 6 (jatkokehitys).
 
 **V1-periaate:** Yksinkertainen ja laajennettava. Minimoi hot path -kirjoitukset, mutta salli append-only sidecar-kirjoitukset normaalikäytössä (retrieval.log, provenance). Kanoniset muistomutaatiot (strength, assosiaatiot, pruning, merget, temporaaliset siirtymät) vain konsolidaatiossa.
 
@@ -226,19 +226,25 @@ Tiivistelmä: content hash (SHA-256), SQLite backend, working.md + consolidated.
 
 ---
 
-## Phase 5: Komentorivityökalu (memory inspector) ❌
+## Phase 5: Komentorivityökalu (memory inspector) ✅
 
-> Kun plugin on valmis (Phase 3–4), rakennetaan erillinen CLI-työkalu muistin tutkimiseen. Tämä korvaa markdown-tiedostot ensisijaisena ihmisrajapintana.
+> CLI-työkalu muistin tutkimiseen ja hallintaan. JSON-output oletuksena, --text ihmiselle. Ei vaadi OpenClaw-runtimea.
+> Review: `history/review-phase5-cli.md`
 
-- [ ] **`memory inspect <id>`** — yksittäisen muiston tarkastelu: sisältö, metadata, strength-historia, assosiaatiot, provenance-ketju (exposure + attribution)
-- [ ] **`memory search <query>`** — haku CLI:stä, samat tulokset kuin plugin
-- [ ] **`memory list`** — muistojen listaus (suodatus: tyyppi, temporal_state, strength-raja, aika)
-- [ ] **`memory stats`** — yhteenveto: muistojen määrä, keskivahvuus, assosiaatioiden määrä, viimeinen konsolidaatio, provenance-tilastot
-- [ ] **`memory history <id>`** — muiston muodostumishistoria: alkuperäinen luonti, merget (mitkä muistot yhdistettiin), strength-muutokset, alias-ketju, konsolidaatiosyklit
-- [ ] **`memory graph`** — assosiaatioverkon visualisointi (teksti/dot-formaatti)
-- [ ] **`memory consolidate`** — konsolidaation ajo CLI:stä (sama logiikka kuin plugin)
-- [ ] **`memory export`** — koko tietokannan vienti YAML-formaattiin (sama formaatti kuin testifixtuurit)
-- [ ] **`memory import`** — YAML-tiedoston tuonti tietokantaan (testaus, migraatio, varmuuskopiointi)
+- [x] **`memory stats <dir>`** — yleiskatsaus (muistojen määrä, assosiaatiot, viimeinen konsolidaatio)
+- [x] **`memory list <dir>`** — muistojen listaus (--type, --state, --min-strength, --limit)
+- [x] **`memory inspect <dir> <id>`** — yksittäisen muiston kaikki tiedot (assosiaatiot, attribuutiot, exposuret, aliakset)
+- [x] **`memory search <dir> <query>`** — FTS-haku
+- [x] **`memory history <dir> <id>`** — muiston elinkaaritimeline (luonti, attribuutiot, exposuret)
+- [x] **`memory graph <dir>`** — assosiaatioverkko (JSON / Graphviz DOT)
+- [x] **`memory export <dir>`** — täydellinen DB-vienti JSON v2 (muistot, assosiaatiot, attribuutiot, exposuret, aliakset, state)
+- [x] **`memory import <dir> <file>`** — JSON-tuonti (luo DB:n tarvittaessa, v1+v2 yhteensopiva)
+- [x] Error boundary, argument-validointi, prefix-ambiguity check, DOT escaping
+- [x] 25 automaattista testiä
+
+### Phase 5 TUI (myöhemmin)
+- [ ] Interaktiivinen terminaali-UI (Ink tai vastaava)
+- [ ] Muistojen selaus, haku, graafin navigointi
 
 ## Phase 6: Jatkokehitys ❌
 
