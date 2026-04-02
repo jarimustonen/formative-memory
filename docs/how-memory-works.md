@@ -1,194 +1,167 @@
-# How the Memory System Works
+---
+title: How Associative Memory Works
+summary: Conceptual guide to how the plugin stores, recalls, reinforces, and forgets memories — the mental model you need before using or extending it.
+read_when:
+  - You want to understand the plugin's behavior before enabling it
+  - You need the mental model for memory recall and consolidation
+  - You are deciding whether the memory model fits your workflow
+---
 
-> This document describes the memory system's operating principles as implemented.
-> It is implementation-independent — it focuses on *what* the system does, not *how* it is coded.
+# How Associative Memory Works
 
-## Biological Inspiration
+The associative memory plugin gives an OpenClaw agent persistent, long-term memory that behaves more like human recall than a database lookup. Memories strengthen when used, weaken when neglected, form connections through shared context, and consolidate during periodic "sleep" cycles. The result is a memory system where important, frequently-used knowledge naturally surfaces while stale information gradually fades away.
 
-Human memory is not a database you query for records. It is a dynamic network where memories strengthen through use, weaken through neglect, connect to each other through shared experience, and consolidate during sleep. This system mimics these mechanisms.
+## What this analogy does and does not mean
 
-## Anatomy of a Memory
+The biological metaphor is useful but has limits. Key differences from human memory:
 
-Each memory is a self-contained unit with:
+- **Recall is ranked retrieval**, not spreading activation. The system searches by meaning and keywords, not by walking association graphs.
+- **Associations are recorded but do not drive retrieval** in the current version. They are structural data used during consolidation.
+- **Strengthening is not immediate.** A memory gains strength only during the next consolidation cycle, based on how it was used.
+- **"Sleep" is not autonomous.** Consolidation runs when explicitly triggered, not on a timer.
 
-- **Content** — free-form text (a fact, a decision, an observation, anything)
-- **Identity** — derived from the content (same content = same identity)
-- **Strength** — a value between 0 and 1 representing how "alive" the memory is. New memories are born at strength 1.0
-- **Type** — a free-form classification (e.g. "fact", "decision", "observation")
-- **Temporal state** — the memory's relationship to time:
-  - *future*: not yet relevant (e.g. an upcoming deadline)
-  - *present*: relevant now
-  - *past*: no longer relevant
-  - *none*: timeless
-- **Source** — how the memory was created (agent tool, consolidation, import)
+## A typical interaction
 
-## Two Channels of Remembering
+To make the system concrete, here is what happens during a normal conversation:
 
-The system surfaces memories to the agent through two channels:
+1. A user asks the agent about an upcoming release deadline.
+2. Before the agent responds, the system automatically recalls a relevant memory: *"Alpha release deadline is April 15."*
+3. The agent sees this memory in its context and uses it in the response.
+4. Later in the conversation, the agent explicitly searches for related memories and finds deployment procedures.
+5. The agent gives positive feedback on the deadline memory, marking it as useful.
+6. During the next consolidation cycle, the deadline memory is reinforced (it influenced a response), the deployment memory decays slightly (it was not used), and the two memories form an association because they appeared together.
 
-### 1. Automatic recall
+## What a memory looks like
 
-Before every response, the system examines the recent conversation and automatically recalls relevant memories. The agent does not request this — it happens in the background. The number of recalled memories depends on the remaining context budget:
+Each memory is a self-contained unit:
 
-| Situation | Memories |
-|-----------|----------|
-| Plenty of space | 5 |
-| Moderate | 3 |
-| Little | 1 (short hint) |
-| No space | 0 |
+- **Content** — free-form text: a fact, a decision, an observation, anything worth remembering
+- **Identity** — derived from the content itself. Same content always produces the same identity, preventing duplicates
+- **Strength** — a value between 0 and 1 representing how "alive" the memory is. New memories start at 1.0
+- **Type** — a free-form label (e.g. `fact`, `decision`, `preference`)
+- **Temporal state** — the memory's relationship to time: *future*, *present*, *past*, or *none* (timeless)
 
-### 2. Agent-initiated
+## Two channels of recall
 
-The agent can actively:
-- **Store** a new memory
-- **Search** memories by keyword or semantic similarity
-- **Get** a specific memory by its identifier
-- **Give feedback** on a memory's usefulness (scale 1–5)
+The system surfaces memories through two complementary channels:
 
-If the agent has already seen a memory through a tool call, automatic injection skips it. This prevents the same information from appearing twice.
+### Automatic recall
 
-## How Search Works
+Before every response, the system examines the recent conversation and automatically recalls relevant memories. The agent does not request this — it happens transparently. The number of recalled memories adapts to the remaining context budget: more when space is plentiful, fewer when the context is tight, none when there is almost no space left.
 
-Search combines two methods:
+Automatically recalled memories are explicitly framed as data, not instructions. This prevents prompt injection attacks through memory content.
 
-1. **Semantic search** — measures meaning similarity using vector embeddings (60% weight)
-2. **Keyword search** — traditional text matching with the BM25 algorithm (40% weight)
+### Agent-initiated tools
 
-The combined score is multiplied by the memory's strength. Strong memories rank higher, weak ones sink lower.
+The agent can also work with memories directly:
 
-If semantic search is unavailable, the system falls back to keyword-only search and informs the agent.
+| Tool | Purpose |
+|------|---------|
+| `memory_store` | Save a new memory |
+| `memory_search` | Find memories by keyword or meaning |
+| `memory_get` | Retrieve a specific memory by ID |
+| `memory_feedback` | Rate a memory's usefulness (1–5) |
 
-## Associations: Links Between Memories
+If the agent has already seen a memory through a tool call, automatic recall skips it. This prevents the same information from appearing twice.
 
-Memories can be linked to each other. Links are bidirectional and weighted (0–1):
+## How search works
 
-- **Co-retrieval:** If two memories are retrieved in the same conversation turn, a link is created or strengthened between them
-- **Transitive links:** If A is linked to B and B to C, an indirect link may form between A and C (one hop maximum)
-- **Decay:** Unused links weaken over time
+When the system looks for relevant memories, it combines two methods:
 
-Associations do not influence search in V1 — they are structural data used by consolidation.
+- **Semantic search** finds memories with similar meaning, even if the words differ. *"shipping date"* can match a memory about *"release deadline."*
+- **Keyword search** finds memories containing matching terms. This catches exact references that semantic search might miss.
 
-## Provenance: Traceability
+The combined relevance score is weighted by the memory's strength. Strong memories rank higher; weak ones sink. If semantic search is unavailable, the system falls back to keyword-only search and informs the agent.
 
-The system tracks memory usage at two levels:
+## Associations: links between memories
 
-### Exposure: what was offered
+Memories form weighted, bidirectional links:
 
-Every memory shown to the model is recorded — where it came from (automatic injection, search, get, store), with what score, and in which retrieval mode.
+- **Co-retrieval** — when two memories appear in the same conversation turn, a link forms or strengthens between them
+- **Transitive links** — if A is linked to B and B to C, an indirect link may form between A and C
+- **Decay** — unused links weaken over time
 
-### Attribution: what influenced the response
+In the current version, associations do not affect search results. They are structural data that consolidation uses to identify related memories for merging and to model the knowledge graph.
 
-Memories receive a confidence score based on how they ended up in the response:
+## Provenance: tracing memory influence
 
-| Method | Confidence |
-|--------|------------|
-| Automatic injection | Low (0.15) |
-| Search result | Moderate (0.3) |
-| Explicit get | High (0.6) |
-| Positive feedback (4–5) | Very high (0.95) |
-| Negative feedback (1–2) | Negative (−0.5) |
+The system tracks how memories are used:
 
-Attribution is durable — it survives even if the memory is deleted. Explicit feedback always overrides implicit attribution, enabling both promotion (positive feedback boosts) and demotion (negative feedback reduces).
+**Exposure** records which memories were shown to the model in each turn — whether through automatic recall, search results, or explicit retrieval.
 
-### Cross-turn feedback
+**Attribution** records how memories influenced responses. Each attribution carries a confidence score: low for automatically recalled memories, moderate for search results, high for explicitly retrieved ones, and very high (or negative) for memories that received explicit agent feedback. Attribution is durable — it survives even if the memory itself is later deleted or merged.
 
-Feedback may arrive in a later turn than the original memory use. The system links late feedback to the correct earlier attribution.
+Feedback can arrive in a later turn than the original memory use. The system links late feedback to the correct earlier attribution.
 
-## Consolidation: Processing During Sleep
+## Time-aware memories
 
-The memory system does not modify memories during normal operation (except for creating new ones). All maintenance happens during consolidation — analogous to biological sleep.
+Memories can carry a time anchor:
 
-Consolidation is triggered explicitly (`/memory sleep`). It is a synchronous, blocking process.
+- A memory like *"demo scheduled for Friday"* is created with temporal state **future** and an anchor on Friday's date
+- When Friday arrives, the memory transitions to **present**
+- After Friday passes, the memory transitions to **past**
 
-### What happens during consolidation
+Temporal transitions happen during consolidation, not in real time. Timeless memories (state **none**) have no anchor and do not transition.
 
-```
-1. Reinforcement
-   Memories that influenced responses (attributions) receive a
-   strength boost. Higher confidence → larger boost.
+## Consolidation: maintenance during sleep
 
-2. Decay
-   All memory strengths decrease slightly.
-   Recent (working) memories decay faster than
-   established (consolidated) ones.
-   Association weights also decay.
+The memory system does not modify existing memories during normal operation. All maintenance happens during **consolidation** — a batch process analogous to biological sleep, triggered explicitly with `/memory sleep`.
 
-3. Association updates
-   Co-retrieval pairs get a new or strengthened link.
-   Transitive links are computed (1 hop).
-
-4. Temporal transitions
-   Future memories become present when their anchor date
-   has passed. Present memories become past 24 hours
-   after their anchor.
-
-5. Pruning
-   Very weak memories (strength ≤ 0.05) are deleted.
-   Very weak links (weight < 0.01) are deleted.
-
-6. Merging
-   Similar memories are identified and merged.
-   Merging can produce three outcomes:
-   - Absorption: one memory subsumes the other
-   - Reuse: content matches an already existing memory
-   - New memory: merging produces new content
-
-7. Promotion
-   Remaining working memories become consolidated.
-
-8. Provenance cleanup
-   Exposure records older than 30 days are deleted.
-   Attribution history is preserved permanently.
+```mermaid
+flowchart TD
+    R[Reinforcement] --> D[Decay]
+    D --> A[Association updates]
+    A --> T[Temporal transitions]
+    T --> P[Pruning]
+    P --> M[Merging]
+    M --> PR[Promotion]
+    PR --> GC[Provenance cleanup]
 ```
 
-### Memory lifecycle
+What each step does:
 
-```
-              store
-                │
-                ▼
-            ┌───────-──┐
-            │ Working  │ ◄── new memory (strength 1.0)
-            │          │
-            └────┬─────┘
-                 │  consolidation
-                 │  (decay, reinforce, merge, prune)
-                 ▼
-            ┌───────────────┐
-            │ Consolidated  │ ◄── established memory
-            │               │
-            └───────┬───────┘
-                    │
-          ┌─────────┼──────────┐
-          ▼         ▼          ▼
-      reinforced  weakened   merged
-      (use)       (decay)    (merge)
-          │         │          │
-          ▼         ▼          ▼
-       survives   pruned     new
-                             memory
+1. **Reinforcement** — memories that influenced responses receive a strength boost proportional to their attribution confidence
+2. **Decay** — all memory strengths decrease. Recent memories decay faster than established ones. Association weights also decay
+3. **Association updates** — co-retrieval pairs get linked; transitive links are computed
+4. **Temporal transitions** — future memories become present or past based on their anchor dates
+5. **Pruning** — very weak memories and associations are deleted
+6. **Merging** — similar memories are identified and combined. One may absorb the other, or a new merged memory is created. Old identities are preserved as aliases for traceability
+7. **Promotion** — surviving recent memories become established
+8. **Provenance cleanup** — old exposure records are deleted; attribution history is preserved permanently
+
+### The memory lifecycle
+
+```mermaid
+flowchart TD
+    S[Store] --> W[Working memory]
+    W -->|consolidation| C[Consolidated memory]
+    C -->|used| C
+    C -->|unused| D[Decay]
+    D -->|below threshold| PR[Pruned]
+    C -->|similar to another| M[Merged]
+    M --> N[New memory]
 ```
 
-## Temporality
+A new memory starts as **working** — recent and fast-decaying. After surviving a consolidation cycle, it is **promoted** to **consolidated** — established and slow-decaying. Active use reinforces it; neglect lets it fade. If it weakens below the pruning threshold, it is deleted. If it is similar enough to another memory, they may be merged into a new, combined memory.
 
-Memories can have a time anchor:
+## Core principles
 
-- **"Deadline on Friday"** is created in state *future* with an anchor on Friday's date
-- When Friday arrives, the memory automatically transitions to *present*
-- 24 hours after Friday, the memory transitions to *past*
+1. **Content is identity.** Same content produces the same memory. Duplicates are prevented at creation time.
 
-Temporal transitions happen during consolidation. Timeless memories (state *none*) have no anchor.
+2. **Mutations only during consolidation.** Normal operation only creates new memories and appends to logs. All strength updates, associations, pruning, and merging happen during sleep.
 
-## Core Principles
+3. **Gradual forgetting.** Memories do not disappear suddenly — they weaken across consolidation cycles until they fall below the pruning threshold. Active use reinforces and prevents forgetting.
 
-1. **Content is identity.** Same content = same memory. Duplicates are prevented at creation time.
+4. **Provenance is durable.** Attribution history survives memory deletion and merging, enabling retrospective analysis of which memories influenced which responses.
 
-2. **Mutations only during consolidation.** During normal operation, only new memories and append-only log entries are written. All strength updates, associations, pruning, and merging happen during "sleep."
+5. **Untrusted data.** Memory content is always framed as data, never as instructions, to prevent prompt injection.
 
-3. **Graceful degradation.** If semantic search is unavailable, the system continues with keyword search only.
+## Current limitations
 
-4. **Memory content is untrusted data.** Automatically injected memories are framed as data, not instructions. This prevents prompt injection attacks through memory content.
+- Associations do not influence search — they are recorded for consolidation use only
+- Consolidation is synchronous and blocking
+- Recall uses only the recent transcript as query context
+- Numeric parameters (decay rates, pruning thresholds, search weights) are subject to tuning
+- Semantic search depends on an external embedding service; degradation to keyword-only search is automatic but reduces recall quality
 
-5. **Provenance is durable.** Attribution history survives memory deletion. This enables retrospective analysis of which memories influenced which responses.
-
-6. **Gradual forgetting.** Memories do not disappear suddenly — they weaken across consolidation cycles until they fall below the pruning threshold. Active use reinforces memories and prevents forgetting.
+See [Architecture](./architecture.md) for implementation details, storage model, and configuration reference.
