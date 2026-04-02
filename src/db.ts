@@ -159,6 +159,10 @@ export class MemoryDatabase {
     return row?.value ?? null;
   }
 
+  getAllState(): Array<{ key: string; value: string }> {
+    return this.db.prepare("SELECT key, value FROM state").all() as Array<{ key: string; value: string }>;
+  }
+
   setState(key: string, value: string): void {
     this.db.prepare("INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)").run(key, value);
   }
@@ -437,6 +441,12 @@ export class MemoryDatabase {
       .run(sortedA, sortedB);
   }
 
+  getAllAssociations(): Association[] {
+    return this.db
+      .prepare("SELECT * FROM associations ORDER BY memory_a, memory_b")
+      .all() as Association[];
+  }
+
   /** Multiply all association weights by a decay factor. */
   decayAllAssociationWeights(factor: number): void {
     this.db.prepare("UPDATE associations SET weight = weight * ?").run(factor);
@@ -521,6 +531,26 @@ export class MemoryDatabase {
 
   deleteExposuresOlderThan(cutoffDate: string): number {
     return this.db.prepare("DELETE FROM turn_memory_exposure WHERE created_at < ?").run(cutoffDate).changes;
+  }
+
+  /** Raw insert for import — preserves all fields including message_index. */
+  insertExposureRaw(row: ExposureRow): void {
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO turn_memory_exposure
+         (session_id, turn_id, memory_id, mode, score, retrieval_mode, message_index, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        row.session_id, row.turn_id, row.memory_id, row.mode,
+        row.score, row.retrieval_mode, row.message_index, row.created_at,
+      );
+  }
+
+  getAllExposures(): ExposureRow[] {
+    return this.db
+      .prepare("SELECT * FROM turn_memory_exposure ORDER BY created_at ASC")
+      .all() as ExposureRow[];
   }
 
   // -- Provenance: Attribution --
@@ -638,6 +668,20 @@ export class MemoryDatabase {
       .all(turnId) as AttributionRow[];
   }
 
+  /** Raw insert for import — preserves all fields including reinforcement_applied. */
+  insertAttributionRaw(row: AttributionRow): void {
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO message_memory_attribution
+         (message_id, memory_id, evidence, confidence, turn_id, created_at, updated_at, reinforcement_applied)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        row.message_id, row.memory_id, row.evidence, row.confidence,
+        row.turn_id, row.created_at, row.updated_at, row.reinforcement_applied,
+      );
+  }
+
   getAllAttributions(): AttributionRow[] {
     return this.db
       .prepare("SELECT * FROM message_memory_attribution")
@@ -733,6 +777,12 @@ export class MemoryDatabase {
       .prepare("SELECT new_id FROM memory_aliases WHERE old_id = ?")
       .get(oldId) as { new_id: string } | undefined;
     return row?.new_id ?? null;
+  }
+
+  getAllAliases(): Array<{ old_id: string; new_id: string; reason: string; created_at: string }> {
+    return this.db
+      .prepare("SELECT * FROM memory_aliases ORDER BY created_at ASC")
+      .all() as Array<{ old_id: string; new_id: string; reason: string; created_at: string }>;
   }
 
   /** Get all old IDs that were aliased to this new ID (reverse lookup). */

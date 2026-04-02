@@ -29,6 +29,40 @@ type CliContext = {
   format: OutputFormat;
 };
 
+// -- Helpers: validation --
+
+function fail(message: string): never {
+  throw new CliError(message);
+}
+
+class CliError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CliError";
+  }
+}
+
+function parsePositiveInt(value: string, name: string): number {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1) {
+    fail(`Invalid value for ${name}: '${value}'. Expected a positive integer.`);
+  }
+  return n;
+}
+
+function parseNonNegativeNumber(value: string, name: string): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) {
+    fail(`Invalid value for ${name}: '${value}'. Expected a non-negative number.`);
+  }
+  return n;
+}
+
+function validateFormat(value: string): OutputFormat {
+  if (value === "json" || value === "text") return value;
+  fail(`Invalid format: '${value}'. Expected 'json' or 'text'.`);
+}
+
 // -- Main --
 
 function main(): void {
@@ -39,7 +73,7 @@ function main(): void {
   const filteredArgs: string[] = [];
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--format" && args[i + 1]) {
-      format = args[++i] as OutputFormat;
+      format = validateFormat(args[++i]);
     } else if (args[i] === "--text") {
       format = "text";
     } else {
@@ -55,15 +89,13 @@ function main(): void {
   }
 
   if (!memoryDir) {
-    console.error("Error: memory directory path required");
-    console.error("Usage: memory <command> <memory-dir> [options]");
-    process.exit(1);
+    fail("Memory directory path required. Usage: memory <command> <memory-dir> [options]");
   }
 
+  // Import is allowed to create a new DB; other commands require existing DB
   const dbPath = join(memoryDir, "associations.db");
-  if (!existsSync(dbPath)) {
-    console.error(`Error: database not found at ${dbPath}`);
-    process.exit(1);
+  if (command !== "import" && !existsSync(dbPath)) {
+    fail(`Database not found at ${dbPath}`);
   }
 
   const db = new MemoryDatabase(dbPath);
@@ -97,13 +129,23 @@ function main(): void {
         cmdImport(ctx, rest);
         break;
       default:
-        console.error(`Unknown command: ${command}`);
-        printUsage();
-        process.exit(1);
+        fail(`Unknown command: ${command}`);
     }
   } finally {
     db.close();
   }
+}
+
+// Top-level error boundary
+try {
+  main();
+} catch (err) {
+  if (err instanceof CliError) {
+    console.error(`Error: ${err.message}`);
+  } else {
+    console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  process.exit(1);
 }
 
 // -- Commands --
@@ -135,10 +177,12 @@ function cmdList(ctx: CliContext, args: string[]): void {
   let limit = 50;
 
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === "--type" && args[i + 1]) type = args[++i];
-    else if (args[i] === "--state" && args[i + 1]) state = args[++i];
-    else if (args[i] === "--min-strength" && args[i + 1]) minStrength = Number(args[++i]);
-    else if (args[i] === "--limit" && args[i + 1]) limit = Number(args[++i]);
+    const arg = args[i];
+    if (arg === "--type") { type = args[++i] ?? fail("Missing value for --type"); }
+    else if (arg === "--state") { state = args[++i] ?? fail("Missing value for --state"); }
+    else if (arg === "--min-strength") { minStrength = parseNonNegativeNumber(args[++i] ?? "", "--min-strength"); }
+    else if (arg === "--limit") { limit = parsePositiveInt(args[++i] ?? "", "--limit"); }
+    else if (arg.startsWith("--")) { fail(`Unknown option for list: ${arg}`); }
   }
 
   let memories = db.getAllMemories();
@@ -173,26 +217,28 @@ function cmdList(ctx: CliContext, args: string[]): void {
   });
 }
 
+/** Resolve a memory by exact ID or unique prefix. Fails on ambiguous or missing. */
+function resolveMemory(db: MemoryDatabase, idOrPrefix: string) {
+  const exact = db.getMemory(idOrPrefix);
+  if (exact) return exact;
+
+  const all = db.getAllMemories();
+  const matches = all.filter((m) => m.id.startsWith(idOrPrefix));
+  if (matches.length === 0) fail(`Memory not found: ${idOrPrefix}`);
+  if (matches.length > 1) {
+    const ids = matches.slice(0, 5).map((m) => m.id.slice(0, 12)).join(", ");
+    fail(`Ambiguous prefix '${idOrPrefix}'. Matches: ${ids}${matches.length > 5 ? `, ... (${matches.length} total)` : ""}`);
+  }
+  return matches[0];
+}
+
 function cmdInspect(ctx: CliContext, args: string[]): void {
   const { db } = ctx;
   const id = args[0];
 
-  if (!id) {
-    console.error("Error: memory ID required");
-    process.exit(1);
-  }
+  if (!id) fail("Memory ID required for inspect");
 
-  // Support short prefix lookup
-  let row = db.getMemory(id);
-  if (!row) {
-    const all = db.getAllMemories();
-    row = all.find((m) => m.id.startsWith(id)) ?? null;
-  }
-
-  if (!row) {
-    console.error(`Memory not found: ${id}`);
-    process.exit(1);
-  }
+  const row = resolveMemory(db, id);
 
   const associations = db.getAssociations(row.id).map((a) => ({
     neighbor: a.memory_a === row!.id ? a.memory_b : a.memory_a,
@@ -317,31 +363,28 @@ function cmdExport(ctx: CliContext): void {
     created_at: m.created_at,
   }));
 
-  const associations = (() => {
-    // Get all unique associations
-    const seen = new Set<string>();
-    const result: Array<{ a: string; b: string; weight: number }> = [];
-    for (const mem of memories) {
-      for (const assoc of db.getAssociations(mem.id)) {
-        const key = `${assoc.memory_a}:${assoc.memory_b}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          result.push({ a: assoc.memory_a, b: assoc.memory_b, weight: assoc.weight });
-        }
-      }
-    }
-    return result;
-  })();
+  const associations = db.getAllAssociations().map((a) => ({
+    memory_a: a.memory_a,
+    memory_b: a.memory_b,
+    weight: a.weight,
+    created_at: a.created_at,
+    last_updated_at: a.last_updated_at,
+  }));
 
-  const stats = db.stats();
-  const lastConsolidation = db.getState("last_consolidation_at");
+  const attributions = db.getAllAttributions();
+  const exposures = db.getAllExposures();
+  const aliases = db.getAllAliases();
+  const state = db.getAllState();
 
   const exportData = {
-    version: 1,
+    version: 2,
     exported_at: new Date().toISOString(),
-    stats: { ...stats, lastConsolidation },
     memories,
     associations,
+    attributions,
+    exposures,
+    aliases,
+    state,
   };
 
   // Export always uses JSON regardless of --format
@@ -352,21 +395,9 @@ function cmdHistory(ctx: CliContext, args: string[]): void {
   const { db } = ctx;
   const id = args[0];
 
-  if (!id) {
-    console.error("Error: memory ID required");
-    process.exit(1);
-  }
+  if (!id) fail("Memory ID required for history");
 
-  let row = db.getMemory(id);
-  if (!row) {
-    const all = db.getAllMemories();
-    row = all.find((m) => m.id.startsWith(id)) ?? null;
-  }
-
-  if (!row) {
-    console.error(`Memory not found: ${id}`);
-    process.exit(1);
-  }
+  const row = resolveMemory(db, id);
 
   // Trace alias chain forward (what did this become?)
   const canonical = db.resolveAlias(row.id);
@@ -449,7 +480,7 @@ function cmdGraph(ctx: CliContext): void {
     for (const mem of memories) {
       const label = mem.content.length > 30 ? mem.content.slice(0, 27) + "..." : mem.content;
       const flag = mem.consolidated === 1 ? "C" : "W";
-      console.log(`  "${mem.id.slice(0, 8)}" [label="${mem.id.slice(0, 8)}\\n${flag} str=${mem.strength.toFixed(2)}\\n${label.replace(/"/g, '\\"')}"];`);
+      console.log(`  "${mem.id.slice(0, 8)}" [label="${mem.id.slice(0, 8)}\\n${flag} str=${mem.strength.toFixed(2)}\\n${escapeDot(label)}"];`);
     }
     for (const e of edges) {
       console.log(`  "${e.a.slice(0, 8)}" -- "${e.b.slice(0, 8)}" [label="${e.weight.toFixed(2)}"];`);
@@ -478,41 +509,39 @@ function cmdImport(ctx: CliContext, args: string[]): void {
   const { db } = ctx;
   const filePath = args[0];
 
-  if (!filePath) {
-    console.error("Error: import file path required");
-    process.exit(1);
+  if (!filePath) fail("Import file path required");
+  if (!existsSync(filePath)) fail(`File not found: ${filePath}`);
+
+  let data: Record<string, unknown>;
+  try {
+    data = JSON.parse(readFileSync(filePath, "utf8"));
+  } catch (err) {
+    fail(`Failed to parse import file: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  if (!existsSync(filePath)) {
-    console.error(`Error: file not found: ${filePath}`);
-    process.exit(1);
+  if (typeof data !== "object" || data === null) fail("Import file must contain a JSON object");
+  const version = (data as any).version;
+  if (version !== 1 && version !== 2) {
+    fail(`Unsupported export version: ${version}. Expected 1 or 2.`);
   }
 
-  const raw = readFileSync(filePath, "utf8");
-  const data = JSON.parse(raw) as {
-    memories?: Array<{
-      id: string;
-      type: string;
-      content: string;
-      strength: number;
-      temporal_state: string;
-      temporal_anchor: string | null;
-      consolidated: boolean;
-      source: string;
-      created_at: string;
-    }>;
-    associations?: Array<{ a: string; b: string; weight: number }>;
+  const counts = {
+    memories: 0,
+    memoriesSkipped: 0,
+    associations: 0,
+    attributions: 0,
+    exposures: 0,
+    aliases: 0,
+    state: 0,
   };
 
-  let memoriesImported = 0;
-  let memoriesSkipped = 0;
-  let associationsImported = 0;
-
   db.transaction(() => {
-    if (data.memories) {
-      for (const m of data.memories) {
+    // Memories
+    const memories = (data as any).memories as any[] | undefined;
+    if (memories) {
+      for (const m of memories) {
         if (db.getMemory(m.id)) {
-          memoriesSkipped++;
+          counts.memoriesSkipped++;
           continue;
         }
         db.insertMemory({
@@ -520,38 +549,91 @@ function cmdImport(ctx: CliContext, args: string[]): void {
           type: m.type,
           content: m.content,
           strength: m.strength,
-          temporal_state: m.temporal_state as TemporalState,
-          temporal_anchor: m.temporal_anchor,
-          consolidated: m.consolidated,
-          source: m.source as MemorySource,
+          temporal_state: (m.temporal_state ?? "none") as TemporalState,
+          temporal_anchor: m.temporal_anchor ?? null,
+          consolidated: m.consolidated ?? false,
+          source: (m.source ?? "agent_tool") as MemorySource,
           created_at: m.created_at,
-          file_path: m.consolidated ? "consolidated.md" : "working.md",
+          file_path: m.file_path ?? (m.consolidated ? "consolidated.md" : "working.md"),
         });
         db.insertFts(m.id, m.content, m.type);
-        memoriesImported++;
+        counts.memories++;
       }
     }
 
-    if (data.associations) {
-      const now = new Date().toISOString();
-      for (const a of data.associations) {
-        db.upsertAssociation(a.a, a.b, a.weight, now);
-        associationsImported++;
+    // Associations (v1: {a, b, weight}, v2: {memory_a, memory_b, weight, ...})
+    const associations = (data as any).associations as any[] | undefined;
+    if (associations) {
+      for (const a of associations) {
+        const memA = a.memory_a ?? a.a;
+        const memB = a.memory_b ?? a.b;
+        const createdAt = a.created_at ?? new Date().toISOString();
+        db.upsertAssociation(memA, memB, a.weight, createdAt);
+        counts.associations++;
+      }
+    }
+
+    // Attributions (v2 only)
+    const attributions = (data as any).attributions as any[] | undefined;
+    if (attributions) {
+      for (const a of attributions) {
+        db.insertAttributionRaw({
+          message_id: a.message_id,
+          memory_id: a.memory_id,
+          evidence: a.evidence,
+          confidence: a.confidence,
+          turn_id: a.turn_id,
+          created_at: a.created_at,
+          updated_at: a.updated_at ?? null,
+          reinforcement_applied: a.reinforcement_applied ?? 0,
+        });
+        counts.attributions++;
+      }
+    }
+
+    // Exposures (v2 only)
+    const exposures = (data as any).exposures as any[] | undefined;
+    if (exposures) {
+      for (const e of exposures) {
+        db.insertExposureRaw(e);
+        counts.exposures++;
+      }
+    }
+
+    // Aliases (v2 only)
+    const aliases = (data as any).aliases as any[] | undefined;
+    if (aliases) {
+      for (const a of aliases) {
+        db.insertAlias(a.old_id, a.new_id, a.reason, a.created_at);
+        counts.aliases++;
+      }
+    }
+
+    // State (v2 only)
+    const stateEntries = (data as any).state as any[] | undefined;
+    if (stateEntries) {
+      for (const s of stateEntries) {
+        db.setState(s.key, s.value);
+        counts.state++;
       }
     }
   });
 
-  const result = { memoriesImported, memoriesSkipped, associationsImported };
-
-  output(ctx, result, () => {
-    console.log(`Imported: ${memoriesImported} memories, ${associationsImported} associations`);
-    if (memoriesSkipped > 0) {
-      console.log(`Skipped: ${memoriesSkipped} (already exist)`);
-    }
+  output(ctx, counts, () => {
+    console.log(`Imported: ${counts.memories} memories, ${counts.associations} associations`);
+    if (counts.attributions > 0) console.log(`  ${counts.attributions} attributions`);
+    if (counts.exposures > 0) console.log(`  ${counts.exposures} exposures`);
+    if (counts.aliases > 0) console.log(`  ${counts.aliases} aliases`);
+    if (counts.state > 0) console.log(`  ${counts.state} state entries`);
+    if (counts.memoriesSkipped > 0) console.log(`Skipped: ${counts.memoriesSkipped} memories (already exist)`);
   });
 }
 
 // -- Helpers --
+
+function escapeDot(s: string): string {
+  return s.replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/\r/g, "").replace(/"/g, '\\"');
+}
 
 function output(ctx: CliContext, data: unknown, textFn: () => void): void {
   if (ctx.format === "text") {
@@ -589,6 +671,3 @@ List filters:
 `.trim());
 }
 
-// -- FTS helper (need to check if db exposes searchFts) --
-
-main();

@@ -194,10 +194,11 @@ describe("search", () => {
 describe("export", () => {
   it("exports full database as JSON", () => {
     const result = cliJson(["export", tmpDir]) as any;
-    expect(result.version).toBe(1);
+    expect(result.version).toBe(2);
     expect(result.memories).toHaveLength(2);
     expect(result.associations).toHaveLength(1);
-    expect(result.stats.total).toBe(2);
+    expect(result.attributions).toHaveLength(1);
+    expect(result.state).toBeInstanceOf(Array);
   });
 
   it("includes memory content in export", () => {
@@ -255,20 +256,19 @@ describe("graph", () => {
 // -- import --
 
 describe("import", () => {
-  it("imports memories from export file", () => {
+  it("imports full export to new directory (creates DB)", () => {
     const exportData = cli(["export", tmpDir]);
     const exportPath = join(tmpDir, "export.json");
     writeFileSync(exportPath, exportData);
 
-    // Create a fresh DB to import into
+    // Import to a new directory — no pre-existing DB
     const importDir = join(tmpDir, "import-target");
     mkdirSync(importDir, { recursive: true });
-    const importDb = new MemoryDatabase(join(importDir, "associations.db"));
-    importDb.close();
 
     const result = cliJson(["import", importDir, exportPath]) as any;
-    expect(result.memoriesImported).toBe(2);
-    expect(result.associationsImported).toBe(1);
+    expect(result.memories).toBe(2);
+    expect(result.associations).toBe(1);
+    expect(result.attributions).toBe(1);
 
     // Verify imported data
     const stats = cliJson(["stats", importDir]) as any;
@@ -281,7 +281,7 @@ describe("import", () => {
     writeFileSync(exportPath, exportData);
 
     const result = cliJson(["import", tmpDir, exportPath]) as any;
-    expect(result.memoriesImported).toBe(0);
+    expect(result.memories).toBe(0);
     expect(result.memoriesSkipped).toBe(2);
   });
 });
