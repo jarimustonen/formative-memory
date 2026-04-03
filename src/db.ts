@@ -8,7 +8,7 @@
  * lexicographic ordering matching chronological ordering.
  */
 
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import type { Association, LayoutManifest, MemorySource, TemporalState } from "./types.ts";
 
 const SCHEMA_VERSION = 3;
@@ -133,12 +133,13 @@ export type AttributionRow = {
 };
 
 export class MemoryDatabase {
-  private db: Database.Database;
+  private db: DatabaseSync;
 
   constructor(dbPath: string) {
-    this.db = new Database(dbPath);
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma("foreign_keys = ON");
+    this.db = new DatabaseSync(dbPath);
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec("PRAGMA foreign_keys = ON");
+    this.db.exec("PRAGMA busy_timeout = 5000");
     this.init();
   }
 
@@ -238,7 +239,7 @@ export class MemoryDatabase {
   }
 
   deleteMemory(id: string): void {
-    const del = this.db.transaction(() => {
+    this.transaction(() => {
       this.db.prepare("DELETE FROM memories WHERE id = ?").run(id);
       this.db.prepare("DELETE FROM memory_embeddings WHERE id = ?").run(id);
       this.db.prepare("DELETE FROM memory_fts WHERE id = ?").run(id);
@@ -247,19 +248,18 @@ export class MemoryDatabase {
       // Attribution is durable — intentionally kept for historical reinforcement data.
       this.db.prepare("DELETE FROM turn_memory_exposure WHERE memory_id = ?").run(id);
     });
-    del();
   }
 
   replaceMemoryId(oldId: string, newId: string, newContent: string): void {
-    const replace = this.db.transaction(() => {
+    this.transaction(() => {
       // Fail fast if target already exists — this is a rename, not a merge.
       // Full memory merge (consolidation) requires different semantics.
       if (this.getMemory(newId)) {
         throw new Error(`replaceMemoryId: target memory already exists: ${newId}`);
       }
 
-      // Update memory row
-      this.db.prepare("UPDATE memories SET id = ? WHERE id = ?").run(newId, oldId);
+      // Update memory row (id + content)
+      this.db.prepare("UPDATE memories SET id = ?, content = ? WHERE id = ?").run(newId, newContent, oldId);
 
       // Update FTS
       this.db.prepare("DELETE FROM memory_fts WHERE id = ?").run(oldId);
@@ -277,8 +277,8 @@ export class MemoryDatabase {
       this.db
         .prepare(
           `INSERT OR IGNORE INTO turn_memory_exposure
-           (session_id, turn_id, memory_id, mode, score, retrieval_mode, created_at)
-           SELECT session_id, turn_id, ?, mode, score, retrieval_mode, created_at
+           (session_id, turn_id, memory_id, mode, score, retrieval_mode, message_index, created_at)
+           SELECT session_id, turn_id, ?, mode, score, retrieval_mode, message_index, created_at
            FROM turn_memory_exposure WHERE memory_id = ?`,
         )
         .run(newId, oldId);
@@ -337,7 +337,6 @@ export class MemoryDatabase {
           .run(sortedA, sortedB, mergedWeight, mergedCreatedAt, mergedLastUpdated);
       }
     });
-    replace();
   }
 
   // -- Embeddings --
@@ -454,7 +453,8 @@ export class MemoryDatabase {
 
   /** Delete associations with weight below threshold. Returns count deleted. */
   pruneWeakAssociations(threshold: number): number {
-    return this.db.prepare("DELETE FROM associations WHERE weight < ?").run(threshold).changes;
+    this.db.prepare("DELETE FROM associations WHERE weight < ?").run(threshold);
+    return (this.db.prepare("SELECT changes() as c").get() as { c: number }).c;
   }
 
   // -- Stats --
@@ -530,7 +530,8 @@ export class MemoryDatabase {
   }
 
   deleteExposuresOlderThan(cutoffDate: string): number {
-    return this.db.prepare("DELETE FROM turn_memory_exposure WHERE created_at < ?").run(cutoffDate).changes;
+    this.db.prepare("DELETE FROM turn_memory_exposure WHERE created_at < ?").run(cutoffDate);
+    return (this.db.prepare("SELECT changes() as c").get() as { c: number }).c;
   }
 
   /** Raw insert for import — preserves all fields including message_index. */
@@ -737,11 +738,11 @@ export class MemoryDatabase {
   deleteAttributionsForMessages(messageIds: string[]): void {
     if (messageIds.length === 0) return;
     const stmt = this.db.prepare("DELETE FROM message_memory_attribution WHERE message_id = ?");
-    this.db.transaction(() => {
+    this.transaction(() => {
       for (const id of messageIds) {
         stmt.run(id);
       }
-    })();
+    });
   }
 
   // -- Aliases --
@@ -807,8 +808,41 @@ export class MemoryDatabase {
 
   // -- Transaction helper --
 
+  private txDepth = 0;
+
   transaction<T>(fn: () => T): T {
-    return this.db.transaction(fn)();
+    if (this.txDepth > 0) {
+      // Nested: use savepoint
+      const sp = `sp_${this.txDepth}`;
+      this.db.exec(`SAVEPOINT ${sp}`);
+      this.txDepth++;
+      try {
+        const result = fn();
+        this.db.exec(`RELEASE ${sp}`);
+        this.txDepth--;
+        return result;
+      } catch (err) {
+        this.txDepth--;
+        try {
+          this.db.exec(`ROLLBACK TO ${sp}`);
+          this.db.exec(`RELEASE ${sp}`);
+        } catch {}
+        throw err;
+      }
+    }
+    // Top-level transaction
+    this.db.exec("BEGIN IMMEDIATE");
+    this.txDepth++;
+    try {
+      const result = fn();
+      this.db.exec("COMMIT");
+      this.txDepth--;
+      return result;
+    } catch (err) {
+      this.txDepth--;
+      try { this.db.exec("ROLLBACK"); } catch {}
+      throw err;
+    }
   }
 
   close(): void {
