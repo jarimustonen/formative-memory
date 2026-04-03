@@ -36,7 +36,7 @@ To make the system concrete, here is what happens during a normal conversation:
 Each memory is a self-contained unit:
 
 - **Content** — free-form text: a fact, a decision, an observation, anything worth remembering
-- **Identity** — derived from the content itself. Same content always produces the same identity, preventing duplicates
+- **Identity** — derived from the content itself (SHA-256 hash). Same content always produces the same identity, preventing exact duplicates. This also means that two memories with identical text but different metadata (e.g. different type or temporal state) are considered the same memory — to store a revised version, the content itself must change
 - **Strength** — a value between 0 and 1 representing how "alive" the memory is. New memories start at 1.0
 - **Type** — a free-form label (e.g. `fact`, `decision`, `preference`)
 - **Temporal state** — the memory's relationship to time: *future*, *present*, *past*, or *none* (timeless)
@@ -49,7 +49,7 @@ The system surfaces memories through two complementary channels:
 
 Before every response, the system examines the recent conversation and automatically recalls relevant memories. The agent does not request this — it happens transparently. The number of recalled memories adapts to the remaining context budget: more when space is plentiful, fewer when the context is tight, none when there is almost no space left.
 
-Automatically recalled memories are explicitly framed as data, not instructions. This prevents prompt injection attacks through memory content.
+Automatically recalled memories are explicitly framed as data, not instructions. This reduces prompt injection risk through memory content, though it does not eliminate it entirely — model compliance with framing is probabilistic.
 
 ### Agent-initiated tools
 
@@ -101,11 +101,11 @@ Memories can carry a time anchor:
 - When Friday arrives, the memory transitions to **present**
 - After Friday passes, the memory transitions to **past**
 
-Temporal transitions happen during consolidation, not in real time. Timeless memories (state **none**) have no anchor and do not transition.
+Temporal transitions happen during consolidation, not in real time. This means a memory's temporal state can lag behind the actual date until the next `/memory sleep` is run. Timeless memories (state **none**) have no anchor and do not transition.
 
 ## Consolidation: maintenance during sleep
 
-The memory system does not modify existing memories during normal operation. All maintenance happens during **consolidation** — a batch process analogous to biological sleep, triggered explicitly with `/memory sleep`.
+Normal operation does not update memory strength, associations, temporal state, or consolidation status. It does write provenance records (exposure and attribution) and append to the retrieval log, but these are observational side effects — they do not change the memories themselves. All memory maintenance happens during **consolidation** — a batch process analogous to biological sleep, triggered explicitly with `/memory sleep`.
 
 ```mermaid
 flowchart TD
@@ -146,15 +146,15 @@ A new memory starts as **working** — recent and fast-decaying. After surviving
 
 ## Core principles
 
-1. **Content is identity.** Same content produces the same memory. Duplicates are prevented at creation time.
+1. **Content is identity.** Same content produces the same memory. Exact-text duplicates are prevented at creation time. This is content-addressed deduplication, not semantic deduplication — two memories with different wording but the same meaning are distinct.
 
-2. **Mutations only during consolidation.** Normal operation only creates new memories and appends to logs. All strength updates, associations, pruning, and merging happen during sleep.
+2. **Mutations only during consolidation.** Normal operation creates new memories and appends observational records (provenance, retrieval log). All strength updates, associations, pruning, and merging happen during sleep.
 
 3. **Gradual forgetting.** Memories do not disappear suddenly — they weaken across consolidation cycles until they fall below the pruning threshold. Active use reinforces and prevents forgetting.
 
 4. **Provenance is durable.** Attribution history survives memory deletion and merging, enabling retrospective analysis of which memories influenced which responses.
 
-5. **Untrusted data.** Memory content is always framed as data, never as instructions, to prevent prompt injection.
+5. **Untrusted data.** Memory content is always framed as data, never as instructions, to reduce prompt injection risk.
 
 ## Current limitations
 

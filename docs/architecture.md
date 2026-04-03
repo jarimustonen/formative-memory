@@ -66,7 +66,7 @@ flowchart TD
 
 **Context engine** implements `assemble()`, `afterTurn()`, `compact()`, and `dispose()`. Compaction is delegated to the OpenClaw runtime. Dispose resets per-run caches but does not reset the deduplication ledger — that is owned by the caller.
 
-**Workspace isolation** — each unique combination of memory directory, embedding model, and API key gets its own manager instance, circuit breaker, and database. The plugin tracks the most recently accessed workspace so the context engine and tools coordinate on the same state.
+**Workspace isolation** — each unique combination of memory directory, embedding model, and API key gets its own manager instance, circuit breaker, and database. The plugin tracks the most recently accessed workspace so the context engine and tools coordinate on the same state. This assumes a single active workspace per process — concurrent multi-workspace use within one OpenClaw process is not supported.
 
 ## Storage model
 
@@ -145,7 +145,7 @@ flowchart LR
     S --> R[Top-K results]
 ```
 
-The hybrid score weights embedding similarity at 60% and BM25 at 40%. The final score is multiplied by the memory's strength, so weak memories rank lower regardless of textual relevance.
+Both scores are normalized to a 0–1 range before combining. The hybrid score weights embedding similarity at 60% and BM25 at 40%. The final score is multiplied by the memory's strength (clamped to 0–1), so weak memories rank lower regardless of textual relevance.
 
 ### Embedding circuit breaker
 
@@ -216,9 +216,9 @@ The process runs in three database transactions:
 
 ### Transaction 1: Deterministic maintenance
 
-1. **Reinforcement** — processes unprocessed attributions: `Δstrength = η × confidence × modeWeight`
+1. **Reinforcement** — processes unprocessed attributions: `Δstrength = η × confidence × modeWeight`. Strength is clamped to 0–1 after each update
 2. **Decay** — working memories ×0.906, consolidated ×0.977, associations ×0.9
-3. **Co-retrieval associations** — memories retrieved in the same turn get linked (probabilistic OR)
+3. **Co-retrieval associations** — memories retrieved in the same turn get linked. Weights combine via probabilistic OR: `w_new = w_old + w_add − w_old × w_add`, which keeps weights in the 0–1 range
 4. **Transitive associations** — 1-hop indirect links computed (max 100 per run)
 5. **Temporal transitions** — future → present → past based on anchor dates
 6. **Pruning** — memories with strength ≤ 0.05 and associations with weight < 0.01 are deleted
@@ -227,7 +227,7 @@ The process runs in three database transactions:
 
 1. **Candidate detection** — all pairs scored by Jaccard + cosine similarity, threshold ≥ 0.6, max 20 pairs
 2. **Execution** — each pair produces one of: absorption (one subsumes the other), reuse (matches an existing third memory), or a novel merged memory
-3. **Inheritance** — the merged memory inherits associations via probabilistic OR; aliases are recorded
+3. **Inheritance** — the merged memory inherits associations via probabilistic OR (`w = a + b − ab`); aliases are recorded
 
 ### Transaction 3: Finalization
 
@@ -246,7 +246,7 @@ The process runs in three database transactions:
         "apiKey": "${OPENAI_API_KEY}",
         "model": "text-embedding-3-small"  // or text-embedding-3-large
       },
-      "dbPath": "~/.openclaw/memory/associative"  // optional
+      "dbPath": "~/.openclaw/memory/associative"  // optional, ~ is expanded by the plugin
     }
   }
 }
@@ -291,9 +291,8 @@ Output is JSON by default; use `--format text` for human-readable output.
 
 ## Current limitations
 
-- **Consolidation phases 4.0–4.5 are not yet implemented.** The reinforcement, decay, association updates, pruning, and merge steps described above are the target design. Currently, consolidation performs promotion, provenance GC, and markdown regeneration only.
-- Consolidation is synchronous and blocking — no background processing.
+- Consolidation is synchronous and blocking — it runs in the calling process with no background scheduling.
 - Associations do not influence search results — they are structural data for consolidation.
-- The CLI reads the database directly; running write commands (`import`) while the runtime is active is not recommended.
+- Do not run CLI write commands (`import`) while the OpenClaw runtime is active. The runtime caches state in memory and will not observe external database mutations, leading to inconsistent behavior.
 
 See [How Associative Memory Works](./how-memory-works.md) for the conceptual model.

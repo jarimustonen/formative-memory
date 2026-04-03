@@ -2,7 +2,7 @@
 
 > Plugin OpenClaw:lle. Arkkitehtuuri: `history/plan-context-engine-architecture-v2.md`
 
-## Tilanne (2026-03-31)
+## Tilanne (2026-04-03)
 
 **Valmista:** Infrastruktuuri, MemoryManager, context engine (Phase 3), konsolidaatio (Phase 4), `/memory sleep` komento, CLI-työkalu (Phase 5: stats, list, inspect, search, history, graph, export, import). 399 testiä läpi.
 
@@ -158,61 +158,61 @@ Tiivistelmä: content hash (SHA-256), SQLite backend, working.md + consolidated.
 > Väritys (coloring) on implisiittinen mergen kautta (v2 §9) — ei erillistä vaihetta.
 > Review: `history/review-phase4-breakdown.md`
 
-### 4.0 Infrastruktuuri ❌
+### 4.0 Infrastruktuuri ✅
 
-- [ ] **Content DB:hen (blokkeri):** Lisää `content TEXT NOT NULL` memories-tauluun. `rowToMemory()` lukee DB:stä, ei markdown-tiedostoista. Schema v2→v3 migraatio. Markdown-tiedostot ovat pelkkiä generoituja näkymiä.
-- [ ] Konsolidaation entrypoint ja trigger (`/memory sleep`)
-- [ ] Blocking UX: aloitusilmoitus ("Starting memory consolidation...") entrypointissa
-- [ ] `state.last_consolidation_at` — aikaleima, kirjoitetaan vasta onnistuneen konsolidaation lopussa
-- [ ] Sleep debt -varoitus: `assemble()` tarkistaa `last_consolidation_at`, >72h → varoitus systemPromptAddition:iin
-- [ ] **Alias-taulu:** `memory_aliases` (old_id → new_id, reason, created_at). Kanoninen `resolveCanonicalMemoryId()` joka resolvoi ketjut, detectoi syklit, max traversal depth. Käytetään haussa, get:ssä, feedback:ssä.
-- [ ] **Retrieval.log crash-turvallinen kulutus:** Snapshot/rotate ennen prosessointia (rename `.processing.<ts>`, poista onnistumisen jälkeen). Ei "lue ja trunckaa myöhemmin" ilman crash-semantiikkaa.
-- [ ] Bulk DB-helperit konsolidaatiota varten (bulk strength update, memory iteration with content, association bulk ops)
-- [ ] Testit: alias-resoluutio (1-hop, multi-hop, cycle, pruned target), sleep debt, content DB round-trip
+- [x] **Content DB:hen (blokkeri):** Lisää `content TEXT NOT NULL` memories-tauluun. `rowToMemory()` lukee DB:stä, ei markdown-tiedostoista. Schema v2→v3 migraatio. Markdown-tiedostot ovat pelkkiä generoituja näkymiä.
+- [x] Konsolidaation entrypoint ja trigger (`/memory sleep`)
+- [x] Blocking UX: aloitusilmoitus ("Starting memory consolidation...") entrypointissa
+- [x] `state.last_consolidation_at` — aikaleima, kirjoitetaan vasta onnistuneen konsolidaation lopussa
+- [x] Sleep debt -varoitus: `assemble()` tarkistaa `last_consolidation_at`, >72h → varoitus systemPromptAddition:iin
+- [x] **Alias-taulu:** `memory_aliases` (old_id → new_id, reason, created_at). Kanoninen `resolveCanonicalMemoryId()` joka resolvoi ketjut, detectoi syklit, max traversal depth. Käytetään haussa, get:ssä, feedback:ssä.
+- [x] **Retrieval.log crash-turvallinen kulutus:** Snapshot/rotate ennen prosessointia (rename `.processing.<ts>`, poista onnistumisen jälkeen). Ei "lue ja trunckaa myöhemmin" ilman crash-semantiikkaa.
+- [x] Bulk DB-helperit konsolidaatiota varten (bulk strength update, memory iteration with content, association bulk ops)
+- [x] Testit: alias-resoluutio (1-hop, multi-hop, cycle, pruned target), sleep debt, content DB round-trip
 
-### 4.1 Retrieval-vahvistus + decay ❌
+### 4.1 Retrieval-vahvistus + decay ✅
 
-- [ ] Normalisoi retrieval.log-tapahtumat + join provenance-tauluihin (attribution confidence, exposure retrieval_mode)
-- [ ] Reinforcement: `η × confidence × mode_weight` (v2 §8). BM25-only events: mode_weight=0.5
-- [ ] Muistojen decay: working ×0.906, consolidated ×0.977
-- [ ] **Assosiaatioiden decay:** weight × decay_factor (ratkaistava: λ_assoc, ks. avoin kysymys 5). Ilman decayta assosiaatiot eivät koskaan saavuta pruning-thresholdia.
-- [ ] Testit: tarkat numeeriset lopputulokset, reinforcement eri confidence-arvoilla, decay round-trip
+- [x] Normalisoi retrieval.log-tapahtumat + join provenance-tauluihin (attribution confidence, exposure retrieval_mode)
+- [x] Reinforcement: `η × confidence × mode_weight` (v2 §8). BM25-only events: mode_weight=0.5
+- [x] Muistojen decay: working ×0.906, consolidated ×0.977
+- [x] **Assosiaatioiden decay:** weight × decay_factor (ratkaistava: λ_assoc, ks. avoin kysymys 5). Ilman decayta assosiaatiot eivät koskaan saavuta pruning-thresholdia.
+- [x] Testit: tarkat numeeriset lopputulokset, reinforcement eri confidence-arvoilla, decay round-trip
 
-### 4.2 Assosiaatiot + temporaaliset siirtymät ❌
+### 4.2 Assosiaatiot + temporaaliset siirtymät ✅
 
-- [ ] Co-retrieval-parit → associations-taulu (retrieval.log-tapahtumista, sama turn = co-retrieval)
-- [ ] **Bounded transitive assosiaatio:** max 1 hop, tuotetun yhteyden weight ≥ threshold (esim. 0.1), cap päivitettyjen yhteyksien määrä per run
-- [ ] Temporaaliset siirtymät: future→present→past (temporal_anchor < now)
-- [ ] Testit: assosiaatiopäivitys, transitive bounds, temporaalinen siirtymä
+- [x] Co-retrieval-parit → associations-taulu (retrieval.log-tapahtumista, sama turn = co-retrieval)
+- [x] **Bounded transitive assosiaatio:** max 1 hop, tuotetun yhteyden weight ≥ threshold (esim. 0.1), cap päivitettyjen yhteyksien määrä per run
+- [x] Temporaaliset siirtymät: future→present→past (temporal_anchor < now)
+- [x] Testit: assosiaatiopäivitys, transitive bounds, temporaalinen siirtymä
 
-### 4.3 Pre-merge pruning ❌
+### 4.3 Pre-merge pruning ✅
 
-- [ ] Muistot: strength ≤ 0.05 → poisto (exposure poistetaan, attribution säilyy)
-- [ ] Assosiaatiot: weight < 0.01 → poisto
-- [ ] Pruning ennen mergea: halvat muistot eivät kuluta merge-kandidaattien arviointia
-- [ ] Testit: pruning-thresholdit, provenance-käyttäytyminen poiston jälkeen
+- [x] Muistot: strength ≤ 0.05 → poisto (exposure poistetaan, attribution säilyy)
+- [x] Assosiaatiot: weight < 0.01 → poisto
+- [x] Pruning ennen mergea: halvat muistot eivät kuluta merge-kandidaattien arviointia
+- [x] Testit: pruning-thresholdit, provenance-käyttäytyminen poiston jälkeen
 
-### 4.4 Merge-kandidaattien tunnistus ❌
+### 4.4 Merge-kandidaattien tunnistus ✅
 
-- [ ] Jaccard-samankaltaisuus (content-pohjainen)
-- [ ] Embedding cosine similarity (jos embeddingiä saatavilla, circuit breaker -tietoinen)
-- [ ] Deterministinen kandidaattien ranking ja threshold
-- [ ] Max pairs per run -cap, token-budjetti klustereille
-- [ ] Vain puhdas logiikka — ei LLM-kutsuja, ei DB-mutaatioita
-- [ ] Testit: mock-muistoilla, deterministiset ryhmittelyt, edge caset (ei embeddingiä, yksi muisto jne.)
+- [x] Jaccard-samankaltaisuus (content-pohjainen)
+- [x] Embedding cosine similarity (jos embeddingiä saatavilla, circuit breaker -tietoinen)
+- [x] Deterministinen kandidaattien ranking ja threshold
+- [x] Max pairs per run -cap, token-budjetti klustereille
+- [x] Vain puhdas logiikka — ei LLM-kutsuja, ei DB-mutaatioita
+- [x] Testit: mock-muistoilla, deterministiset ryhmittelyt, edge caset (ei embeddingiä, yksi muisto jne.)
 
-### 4.5 Merge-suoritus ❌
+### 4.5 Merge-suoritus ✅
 
-- [ ] LLM-kutsu: tuota yhdistetty sisältö kandidaattiklusterille
-- [ ] DB-transaktio:
+- [x] LLM-kutsu: tuota yhdistetty sisältö kandidaattiklusterille
+- [x] DB-transaktio:
   - Luo uusi muisto (`source: "consolidation"`, strength 1.0, uusi content hash)
   - Heikennä alkuperäiset (strength × 0.1)
   - Poista intermediates (`source: "consolidation"`) → kirjoita `memory_aliases`
   - Assosiaatioiden perintö: probabilistic OR `f(a,b) = a + b - a×b` (v2 §9)
   - Attribution rewrite: `replaceMemoryId()` + `mergeAttributionRow()` PK-collision handling
   - Alias-ketjujen path compression
-- [ ] Chain handling: intermediates poistetaan, originals heikennetään — ketju pysyy matalana
-- [ ] Testit: ensin deterministisellä sisällöllä (stub LLM), sitten LLM-integraatio erikseen
+- [x] Chain handling: intermediates poistetaan, originals heikennetään — ketju pysyy matalana
+- [x] Testit: ensin deterministisellä sisällöllä (stub LLM), sitten LLM-integraatio erikseen
 
 ### 4.6 Viimeistely ✅
 
