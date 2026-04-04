@@ -2,6 +2,20 @@
 created: 2026-04-04T12:00:00+03:00
 source_branch: main
 task: Implement memory-core migration tool (Phase 6.1–6.3)
+merged: 2026-04-06T08:11:17+03:00
+commits:
+  - hash: 28e9245
+    message: "docs: update todo — migration service logic complete"
+  - hash: 749beac
+    message: "feat: add memory-core migration service"
+  - hash: 2654585
+    message: "docs: update migration plan to automatic service architecture"
+  - hash: 565b14f
+    message: "fix: apply review findings to import preprocessor"
+  - hash: aa72f83
+    message: "refactor: remove batch machinery from import preprocessor"
+  - hash: fa02ae5
+    message: "docs: add worktree prompt for memory-core-migration"
 ---
 
 # Task: Memory-core Migration Tool

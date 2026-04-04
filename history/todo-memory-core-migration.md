@@ -32,24 +32,29 @@
   - [x] POSIX-polut, deterministinen järjestys
   - [x] Symlinkit, lukukielletyt tiedostot
 
-## 6.2 Migraatiopalvelu ❌
+## 6.2 Migraatiopalvelu ✅ (logiikka) / ❌ (index.ts kytkentä)
 
-- [ ] **`registerService("memory-migration")`** — `src/index.ts`:ssä
-  - [ ] `start()`: tarkista db-state `migration_completed_at`
-  - [ ] Jos ei migratoitu: `discoverMemoryFiles()` + `segmentMarkdown()`
-  - [ ] Jos ei tiedostoja: merkitse migratoitu, lopeta
-  - [ ] LLM-rikastus erissä `runEmbeddedPiAgent()`:lla
-    - [ ] Prompt: päättele type, temporal_state, temporal_anchor
-    - [ ] Pyydä pilkkomaan jos segmentti sisältää useita erillisiä asioita
-  - [ ] Tallenna `MemoryManager.store()`:lla
-  - [ ] Merkitse db-state `migration_completed_at`
-  - [ ] Virhetilanteet: LLM-virhe → fallback-arvot, yksittäinen virhe → jatka
-- [ ] **Testit**
-  - [ ] Ei memory-core-tiedostoja → ei mitään
-  - [ ] Tiedostoja löytyy → importoi
-  - [ ] Jo migratoitu → ohita
-  - [ ] LLM-virhe → fallback-arvot
-  - [ ] Idempotenssi: uudelleenajo ei luo duplikaatteja
+- [x] **`src/migration-service.ts`** — migraatiologiikka
+  - [x] `runMigration()`: tarkista db-state → discover → segment → enrich → store → mark done
+  - [x] LLM-rikastus erissä `EnrichFn`:lla (4 segmenttiä/erä)
+  - [x] `buildEnrichmentPrompt()` + `parseEnrichmentResponse()` — LLM-prompt ja -parsinta
+  - [x] `createLlmEnrichFn()` — factory `runEmbeddedPiAgent`-integraatiolle
+  - [x] Heuristinen fallback: LLM-virhe → inferType/inferTemporalState
+  - [x] Per-segmentti-virheenkäsittely
+  - [x] Sub-segmenttien tuki (LLM voi pilkkoa)
+  - [x] Idempotenssi: db-state lippu estää uudelleenajon
+- [x] **Testit** (17 testiä)
+  - [x] Ei tiedostoja → no_files
+  - [x] Jo migratoitu → skipped
+  - [x] Tiedostoja löytyy → completed
+  - [x] LLM-virhe → fallback
+  - [x] Sub-segmentit
+  - [x] Idempotenssi
+  - [x] Store-virhe ei keskeytä
+- [ ] **index.ts kytkentä** — `api.registerService()` + deps wiring
+  - [ ] Kaappaa `api.runtime` register()-vaiheessa
+  - [ ] Kytke `MemoryManager.store()`, `db.getState/setState`, `createLlmEnrichFn()`
+  - [ ] ⚠️ Odota embed-provider-integration mergeä ennen kytkentää (index.ts konfliktialtis)
 
 ## 6.3 Sessiotranskriptit ❌
 
