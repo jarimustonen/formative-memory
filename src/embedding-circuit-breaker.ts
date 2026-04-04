@@ -175,6 +175,14 @@ export class EmbeddingTimeoutError extends Error {
   }
 }
 
+/** Thrown when no embedding provider could be resolved (no API keys etc.). */
+export class ProviderUnavailableError extends Error {
+  constructor() {
+    super("No embedding provider available — degrading to BM25-only");
+    this.name = "ProviderUnavailableError";
+  }
+}
+
 /** Runtime-agnostic AbortError check — works with DOMException, plain Error, or polyfills. */
 function isAbortError(error: unknown): boolean {
   return (
