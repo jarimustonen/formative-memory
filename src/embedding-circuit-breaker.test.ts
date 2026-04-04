@@ -200,28 +200,24 @@ describe("EmbeddingCircuitBreaker", () => {
   });
 
   describe("timeout", () => {
-    /** Create a function that respects AbortSignal — simulates a cancellable network call. */
-    function abortableSlowFn(delayMs: number) {
-      return (signal: AbortSignal) =>
-        new Promise<number[]>((resolve, reject) => {
-          const timer = setTimeout(() => resolve([1]), delayMs);
-          signal.addEventListener("abort", () => {
-            clearTimeout(timer);
-            reject(new DOMException("The operation was aborted.", "AbortError"));
-          });
+    /** Create a slow function that resolves after delayMs. */
+    function slowFn(delayMs: number) {
+      return () =>
+        new Promise<number[]>((resolve) => {
+          setTimeout(() => resolve([1]), delayMs);
         });
     }
 
     it("rejects with EmbeddingTimeoutError when call exceeds timeout", async () => {
       const breaker = createBreaker({ timeoutMs: 50 });
-      await expect(breaker.call(abortableSlowFn(200))).rejects.toThrow(EmbeddingTimeoutError);
-      await expect(breaker.call(abortableSlowFn(200))).rejects.toThrow("50ms");
+      await expect(breaker.call(slowFn(200))).rejects.toThrow(EmbeddingTimeoutError);
+      await expect(breaker.call(slowFn(200))).rejects.toThrow("50ms");
     });
 
     it("timeout counts as a failure", async () => {
       const breaker = createBreaker({ timeoutMs: 10, failureThreshold: 2 });
-      await expect(breaker.call(abortableSlowFn(100))).rejects.toThrow(EmbeddingTimeoutError);
-      await expect(breaker.call(abortableSlowFn(100))).rejects.toThrow(EmbeddingTimeoutError);
+      await expect(breaker.call(slowFn(100))).rejects.toThrow(EmbeddingTimeoutError);
+      await expect(breaker.call(slowFn(100))).rejects.toThrow(EmbeddingTimeoutError);
       expect(breaker.getState()).toBe("OPEN");
     });
 
@@ -229,6 +225,13 @@ describe("EmbeddingCircuitBreaker", () => {
       const breaker = createBreaker({ timeoutMs: 500 });
       const result = await breaker.call(() => Promise.resolve([1, 2, 3]));
       expect(result).toEqual([1, 2, 3]);
+    });
+
+    it("times out even when fn ignores cancellation (Promise.race)", async () => {
+      const breaker = createBreaker({ timeoutMs: 50 });
+      // This function never resolves — but the breaker should still timeout
+      const neverResolve = () => new Promise<number[]>(() => {});
+      await expect(breaker.call(neverResolve)).rejects.toThrow(EmbeddingTimeoutError);
     });
   });
 
@@ -360,7 +363,7 @@ describe("EmbeddingCircuitBreaker", () => {
       let resolveProbe: (v: string) => void;
 
       // Start probe
-      const probePromise = breaker.call((_signal) => {
+      const probePromise = breaker.call(() => {
         calls.push("probe");
         return new Promise<string>((r) => { resolveProbe = r; });
       });

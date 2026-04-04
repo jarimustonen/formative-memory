@@ -13,13 +13,11 @@ import type { LayoutManifest, Memory, MemorySource, TemporalState } from "./type
 /**
  * Embedding provider interface.
  *
- * Implementations MUST honor the `signal` parameter by passing it to
- * the underlying network call (e.g. `fetch({ signal })`). The circuit
- * breaker relies on cooperative cancellation — ignoring the signal
- * defeats timeout enforcement.
+ * Timeout is enforced by the circuit breaker via Promise.race — the
+ * provider does not need to support AbortSignal.
  */
 export type EmbeddingProvider = {
-  embed(text: string, signal?: AbortSignal): Promise<number[]>;
+  embed(text: string): Promise<number[]>;
 };
 
 export type SearchResult = {

@@ -87,15 +87,14 @@ export class EmbeddingCircuitBreaker {
   /**
    * Execute an embedding call through the circuit breaker.
    * Returns the embedding on success, or throws EmbeddingCircuitOpenError when OPEN.
-   * Handles timeout (with AbortSignal) and failure tracking.
    *
-   * **Cooperative timeout contract:** `fn` MUST pass the provided `signal` to
-   * the underlying network call (e.g. `fetch({ signal })`). If `fn` ignores
-   * the signal, the timeout cannot cancel the operation and `call()` will
-   * block until `fn` resolves or rejects on its own. The breaker does not
-   * race against an independent timer — cancellation is cooperative only.
+   * Uses Promise.race for timeout enforcement — the timeout fires regardless
+   * of whether the underlying call supports AbortSignal. This matches
+   * OpenClaw memory-core's withTimeout() approach. The underlying call may
+   * continue in the background after timeout, but the caller receives the
+   * timeout error promptly.
    */
-  async call<T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  async call<T>(fn: () => Promise<T>): Promise<T> {
     const currentState = this.getState();
 
     if (currentState === "OPEN") {
@@ -110,25 +109,23 @@ export class EmbeddingCircuitBreaker {
       this.halfOpenProbeInFlight = true;
     }
 
-    const controller = new AbortController();
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, this.timeoutMs);
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new EmbeddingTimeoutError(this.timeoutMs)),
+        this.timeoutMs,
+      );
+    });
 
     try {
-      const result = await fn(controller.signal);
+      const result = await Promise.race([fn(), timeoutPromise]);
       this.onSuccess();
       return result;
     } catch (error) {
       this.onFailure();
-      if (timedOut && isAbortError(error)) {
-        throw new EmbeddingTimeoutError(this.timeoutMs);
-      }
       throw error;
     } finally {
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       if (currentState === "HALF_OPEN") {
         this.halfOpenProbeInFlight = false;
       }
@@ -175,12 +172,3 @@ export class EmbeddingTimeoutError extends Error {
   }
 }
 
-/** Runtime-agnostic AbortError check — works with DOMException, plain Error, or polyfills. */
-function isAbortError(error: unknown): boolean {
-  return (
-    !!error &&
-    typeof error === "object" &&
-    "name" in error &&
-    (error as { name: unknown }).name === "AbortError"
-  );
-}

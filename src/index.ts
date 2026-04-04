@@ -139,12 +139,8 @@ function createWorkspace(
 
   const embedder = {
     async embed(text: string): Promise<number[]> {
-      return circuitBreaker.call(async (signal) => {
+      return circuitBreaker.call(async () => {
         const provider = await getProvider();
-        // AbortSignal: the circuit breaker manages timeout via its own
-        // AbortController. The provider's embedQuery doesn't accept a signal
-        // directly — if the breaker aborts, the promise rejection propagates.
-        void signal;
         return provider.embedQuery(text);
       });
     },
