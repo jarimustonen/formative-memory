@@ -3,77 +3,59 @@
 > Importoi memory-coren muistot assosiatiiviseen muistijärjestelmään.
 > Suunnitelma: `plan-memory-core-importer.md`, sanasto: `../docs/glossary.md`
 >
-> Arkkitehtuuri: `openclaw memory migrate` (CLI) tekee esiprosessoinnin,
-> agentti hoitaa LLM-rikastuksen erissä `memory_import_batch`-työkalulla + `memory_store`:lla.
-> Ei omaa LLM-integraatiota — käyttää OpenClaw:n konfiguroitua mallia.
+> Arkkitehtuuri: Automaattinen migraatio plugin-käynnistyksessä.
+> `registerService()` havaitsee vanhat muistot, segmentoi markdown-it:llä,
+> rikastaa `runEmbeddedPiAgent()`:lla ja tallentaa `MemoryManager.store()`:lla.
 
 ---
 
-## 6.1 Esiprosessointi (markdown) ❌
+## 6.1 Esiprosessointi (markdown) ✅
 
-- [ ] **`src/import-preprocess.ts`** — tiedostojen skannaus ja segmentointi
-  - [ ] `discoverMemoryFiles(workspaceDir)` — skannaa `MEMORY.md`, `memory.md`, `memory/*.md` + extra paths
-  - [ ] `segmentMarkdown(content, filePath)` — pilko otsikkotasolla (H1/H2/H3)
-  - [ ] Liian iso segmentti (>2000 merkkiä) → pilko kappaleittain
-  - [ ] Liian pieni segmentti (<200 merkkiä) → yhdistä seuraavan kanssa
-  - [ ] Metadata per segmentti: source_file, heading, date (tiedostonimestä), evergreen, char_count
-  - [ ] Kirjoita `import-segments.json` plugin-hakemistoon
-- [ ] **Testit** — segmentointi eri markdown-rakenteilla
-  - [ ] Normaali H1/H2/H3-rakenne
-  - [ ] Iso segmentti → kappaleittain pilkkominen
-  - [ ] Pieni segmentti → yhdistäminen
-  - [ ] Päiväystunnistus tiedostonimestä (`2026-03-15.md`)
-  - [ ] Evergreen-tunnistus (`MEMORY.md` vs `memory/*.md`)
-  - [ ] Tyhjä/puuttuva tiedosto
+- [x] **`src/import-preprocess.ts`** — tiedostojen skannaus ja segmentointi
+  - [x] `discoverMemoryFiles(workspaceDir)` — skannaa `MEMORY.md`, `memory.md`, `memory/*.md` + extra paths
+  - [x] `segmentMarkdown(content, filePath)` — pilko otsikkotasolla (H1/H2/H3) markdown-it:llä
+  - [x] Liian iso segmentti (>2000 merkkiä) → pilko kappaleittain, fallback sanarajalla
+  - [x] Liian pieni segmentti (<200 merkkiä) → yhdistä edelliseen (accumulator)
+  - [x] Metadata: source_file (POSIX), heading, heading_level, date, evergreen, char_count
+  - [x] Cross-platform polut (isAbsolute, dirname, realpathSync, toPosixRelative)
+  - [x] Per-tiedosto-virheenkäsittely (jatkaa seuraavaan)
+  - [x] Deterministinen tiedostojärjestys
+  - [x] Symlink-suojaus
+- [x] **Testit** (50 testiä)
+  - [x] Normaali H1/H2/H3-rakenne
+  - [x] Iso segmentti → kappaleittain pilkkominen
+  - [x] Ylisuuret kappaleet → sanarajalla pilkkominen
+  - [x] Pieni segmentti → yhdistäminen (accumulator)
+  - [x] Koodilohkojen sisällä olevat headingit (markdown-it)
+  - [x] YAML frontmatter (normaali, CRLF, BOM)
+  - [x] Päiväystunnistus, evergreen-tunnistus
+  - [x] POSIX-polut, deterministinen järjestys
+  - [x] Symlinkit, lukukielletyt tiedostot
 
-## 6.2 CLI-komento: `openclaw memory migrate` ❌
+## 6.2 Migraatiopalvelu ❌
 
-- [ ] **CLI-rekisteröinti** — `api.registerCli()` lisää `openclaw memory migrate`
-  - [ ] Lue workspace-polku ja memory-coren konfiguraatio `api.config`:sta
-  - [ ] Kutsu `discoverMemoryFiles()` + `segmentMarkdown()`
-  - [ ] Kirjoita `import-segments.json`
-  - [ ] Tulosta yhteenveto (tiedostot, segmentit, ohje jatkamiseen)
-  - [ ] `--scope memories` (oletus) vs `--scope full` (sisältää sessiot, vaihe 6.4)
-  - [ ] Virhetilanteet: ei löydy tiedostoja, kirjoitusoikeudet, tyhjä workspace
-- [ ] **Testit** — CLI-komennon integraatiotesti
-
-## 6.3 Agenttityökalu + skilli ❌
-
-- [ ] **`memory_import_batch`-työkalu** — `api.registerTool()`
-  - [ ] Lue `import-segments.json`
-  - [ ] `action: "status"` → palauta yhteenveto (montako segmenttiä, montako käsitelty)
-  - [ ] `action: "next"` → palauta seuraava erä (3–5 segmenttiä)
-  - [ ] `action: "skip"` → ohita nykyinen erä
-  - [ ] Tilan hallinta: pidä kirjaa käsitellyistä eristä
-  - [ ] `done: true` kun kaikki käsitelty + loppuyhteenveto
-  - [ ] Virhetilanteet: ei import-segments.json:ää, tyhjä segments, korruptoitunut tiedosto
-- [ ] **Skilli: `/memory import`** — prompt-template agentille
-  - [ ] Prosessiohjeet: status → next → rikasta → memory_store → toista
-  - [ ] Type-päättelyohjeet: fact, decision, preference, observation, plan, narrative
-  - [ ] Temporal-päättelyohjeet: none, past, present, future + anchor
-  - [ ] Segmentin pilkkomis- ja yhdistämisohjeet
-  - [ ] Rekisteröinti plugin-manifestissa
+- [ ] **`registerService("memory-migration")`** — `src/index.ts`:ssä
+  - [ ] `start()`: tarkista db-state `migration_completed_at`
+  - [ ] Jos ei migratoitu: `discoverMemoryFiles()` + `segmentMarkdown()`
+  - [ ] Jos ei tiedostoja: merkitse migratoitu, lopeta
+  - [ ] LLM-rikastus erissä `runEmbeddedPiAgent()`:lla
+    - [ ] Prompt: päättele type, temporal_state, temporal_anchor
+    - [ ] Pyydä pilkkomaan jos segmentti sisältää useita erillisiä asioita
+  - [ ] Tallenna `MemoryManager.store()`:lla
+  - [ ] Merkitse db-state `migration_completed_at`
+  - [ ] Virhetilanteet: LLM-virhe → fallback-arvot, yksittäinen virhe → jatka
 - [ ] **Testit**
-  - [ ] Batch-logiikka: eräkoko, tilanhallinta, done-ehto
-  - [ ] Status-kutsu ilman valmista import-segments.json:ää
-  - [ ] Skip-toiminnallisuus
+  - [ ] Ei memory-core-tiedostoja → ei mitään
+  - [ ] Tiedostoja löytyy → importoi
+  - [ ] Jo migratoitu → ohita
+  - [ ] LLM-virhe → fallback-arvot
+  - [ ] Idempotenssi: uudelleenajo ei luo duplikaatteja
 
-## 6.4 Sessiotranskriptit ❌
+## 6.3 Sessiotranskriptit ❌
 
-> `openclaw memory migrate --scope full`
-> Käsitellään markdown-importin jälkeen. Eri segmentointilogiikka.
+> Ei V1:ssä. Myöhemmin erillinen feature.
 
-- [ ] **Sessio-segmentointi** — `sessions/*.jsonl` lukeminen
-  - [ ] JSONL-parsinta: user/assistant-vuorojen erottelu
-  - [ ] Vuorojen pilkkominen keskusteluikkunoiksi
-  - [ ] Suodatus: poistetaan low-value-vuorot (lyhyet, rutiinivastaukset)
-  - [ ] PII-varoitukset (API-avaimet, salasanat, henkilötiedot)
-- [ ] **Lisää sessio-segmentit `import-segments.json`:iin** — erillinen source-tyyppi
-- [ ] **Skilli-laajennus** — `/memory import` -promptiin sessioiden käsittelyohjeet
-- [ ] **Testit** — sessio-parsinta, suodatus, PII-tunnistus
+## 6.4 Myöhemmin (ei V1)
 
-## 6.5 Myöhemmin (ei V1)
-
-- [ ] Automaattinen tunnistus plugin-aktivoinnissa (V2) — ehdota migraatiota agentin kautta
 - [ ] Provenance-tallennus ja reconciliation
 - [ ] Ghost deletion / tombstoning

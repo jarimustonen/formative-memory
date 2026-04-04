@@ -1,8 +1,8 @@
 # Plan: Memory-core → Associative Memory Importer
 
-> **Tila:** Draft v2
-> **Päivätty:** 3.4.2026
-> **Riippuvuudet:** cli.ts, index.ts (plugin registration), types.ts
+> **Tila:** Draft v3
+> **Päivätty:** 4.4.2026
+> **Riippuvuudet:** index.ts (plugin registration), types.ts, memory-manager.ts
 
 ---
 
@@ -10,65 +10,57 @@
 
 Importoida OpenClaw:n memory-core-muistijärjestelmän sisältö assosiatiiviseen muistijärjestelmään. Memory-coren muistot ovat tavallisia markdown-tiedostoja (`MEMORY.md`, `memory.md`, `memory/*.md`), jotka ovat totuuden lähde.
 
-Importin tulee olla mahdollisimman vaivatonta: ihanteessa käyttäjä asentaa pluginin ja migraatio on yksi komento.
+Import tapahtuu automaattisesti kun plugin käynnistyy ja havaitsee vanhat muistot. Käyttäjän ei tarvitse tehdä mitään.
 
 ---
 
 ## Arkkitehtuuri
 
-### Kaksi toteutuspolkua
-
-**V1 (tämä suunnitelma): `openclaw memory migrate`**
-CLI-komento joka tekee esiprosessoinnin, tuottaa erät ja ohjaa agentin tekemään LLM-rikastuksen.
-
-**V2 (myöhemmin): Automaattinen tunnistus**
-Plugin huomaa aktivoituessaan vanhat muistot ja ehdottaa migraatiota agentin kautta. V1:n komponentit suunnitellaan niin, että ne ovat uudelleenkäytettäviä V2:ssa.
-
-### Pipeline
+### Automaattinen migraatio käynnistyksessä
 
 ```
-openclaw memory migrate
+Plugin käynnistyy
          │
          ▼
 ┌────────────────────────────────────────────┐
-│  Vaihe 1: Esiprosessointi (registerCli)    │
-│  Deterministinen, ei LLM:ää               │
+│  registerService("memory-migration")       │
+│  start():                                  │
 │                                            │
-│  • api.config → memory-coren polut         │
-│  • Skannaa MEMORY.md, memory/*.md, extras  │
-│  • Segmentoi otsikkotasolla                │
-│  • Pura metadata (date, evergreen, heading)│
-│  • Tallenna segmentit plugin-tilaan        │
-│  • Tulosta yhteenveto                      │
-└──────────────────┬─────────────────────────┘
-                   │
-                   ▼
-┌────────────────────────────────────────────┐
-│  Vaihe 2: LLM-rikastus (agentti)          │
-│  OpenClaw:n oma LLM tekee työn            │
+│  1. Tarkista db-state: "migrated"?         │
+│     → Jos kyllä: lopeta                    │
 │                                            │
-│  Agentti saa ohjeen:                       │
-│  • Kutsu memory_import_batch               │
-│  • Rikasta: type, temporal_state, pilko    │
-│  • Tallenna memory_store:lla               │
-│  • Toista kunnes done: true                │
+│  2. Skannaa memory-core-tiedostot          │
+│     → MEMORY.md, memory.md, memory/*.md    │
+│     → Jos ei löydy: merkitse migrated,     │
+│       lopeta                               │
+│                                            │
+│  3. Segmentoi markdown-it:llä              │
+│     → Otsikkotasolla (H1/H2/H3)           │
+│     → Iso segmentti → pilko kappaleittain  │
+│     → Pieni segmentti → yhdistä            │
+│                                            │
+│  4. Rikasta erissä (runEmbeddedPiAgent)    │
+│     → type, temporal_state, temporal_anchor│
+│     → 3–5 segmenttiä per LLM-kutsu        │
+│                                            │
+│  5. Tallenna MemoryManager.store():lla     │
+│     → Content-hash-dedupe estää duplikaatit│
+│                                            │
+│  6. Merkitse db-state: "migrated"          │
+│     → Uudelleenkäynnistys ei aja uudelleen│
 └────────────────────────────────────────────┘
 ```
 
 ### Miksi tämä arkkitehtuuri
 
-1. **Ei omaa LLM-integraatiota** — käytetään OpenClaw:n konfiguroitua mallia agentin kautta
-2. **Muistipolut tulevat automaattisesti** — `api.config` tietää memory-coren polut ja extra paths
-3. **Konteksti-ikkuna ei täyty** — erät pitävät sen pienenä
-4. **Käyttäjä voi ohjata** — agentti on keskustelussa, käyttäjä voi tarkentaa
+1. **Nolla käyttäjätoimia** — plugin hoitaa migraation itse käynnistyksessä
+2. **LLM-rikastus suoraan** — `api.runtime.agent.runEmbeddedPiAgent()` antaa LLM-kutsut
+3. **Idempotenssi** — db-state-lippu estää uudelleenajon, content-hash estää duplikaatit
+4. **Ei välivaiheen tilaa** — ei JSON-tiedostoja, ei batch-koneistoa
 
 ---
 
-## Vaihe 1: Esiprosessointi
-
-### Tiedostojen löytäminen
-
-`registerCli`-kontekstissa `api.config` antaa pääsyn memory-coren konfiguraatioon:
+## Tiedostojen löytäminen
 
 | Polku | Lähde | Luonne |
 |-------|-------|--------|
@@ -78,231 +70,158 @@ openclaw memory migrate
 
 Tiedostojen löytäminen noudattaa samaa logiikkaa kuin memory-core:
 1. Tarkista `MEMORY.md` ja `memory.md` (workspace root)
-2. Kävele `memory/`-kansio rekursiivisesti (vain `.md`)
+2. Kävele `memory/`-kansio rekursiivisesti (vain `.md`, ei symlinkkejä)
 3. Lisää konfiguraation `extraPaths`-polut
-4. Deduplikoi `realpath`:illa
+4. Deduplikoi `realpathSync`:llä
+5. **Järjestä deterministisesti** (root-tiedostot ensin, sitten leksikaalinen polkujärjestys)
+
+---
+
+## Segmentointi
+
+Käytetään **markdown-it**-parseria (jo riippuvuutena openclaw:n kautta). Tämä ratkaisee:
+- Koodilohkojen sisällä olevat `#`-rivit eivät aiheuta vääriä jakoja
+- YAML-frontmatter tunnistetaan oikein
+- CRLF/BOM käsitellään automaattisesti
 
 ### Segmentointilogiikka
 
-1. Pilko otsikkotasolla (H1/H2/H3-rajat)
-2. Jos segmentti > ~2000 merkkiä → pilko kappaleittain
-3. Jos segmentti < ~200 merkkiä → yhdistä seuraavan kanssa
-4. Pura metadata per segmentti
+1. Parsitaan markdown-it:llä token-listaksi
+2. Pilkotaan `heading_open`-tokenien kohdalla (H1/H2/H3)
+3. Jos segmentti > ~2000 merkkiä → pilko kappaleittain, fallback: sana-/merkkijako
+4. Jos segmentti < ~200 merkkiä → yhdistä seuraavan kanssa (vain saman tason sisällä)
+5. Pura metadata per segmentti:
+   - `heading` (parsittu teksti, ei `#`-syntaksia) + `heading_level`
+   - `date` (tiedostonimestä)
+   - `evergreen` (MEMORY.md/memory.md = true)
 
 ### Segmentin rakenne
 
 ```typescript
 type ImportSegment = {
-  id: number;                  // Juokseva numero
-  source_file: string;         // Suhteellinen polku workspacesta
-  heading: string | null;      // Otsikko (jos on)
-  date: string | null;         // ISO-päivä tiedostonimestä tai null
-  evergreen: boolean;          // MEMORY.md/memory.md = true
-  content: string;             // Segmentin teksti
+  id: number;
+  source_file: string;       // Suhteellinen polku workspacesta
+  heading: string | null;     // Otsikkoteksti (ei #-syntaksia)
+  heading_level: number | null;
+  date: string | null;        // ISO-päivä tiedostonimestä
+  evergreen: boolean;
+  content: string;
   char_count: number;
 };
 ```
 
-### Tilan tallennus
+---
 
-Esiprosessoinnin tulos tallennetaan plugin-hakemistoon:
+## LLM-rikastus
+
+Käytetään `api.runtime.agent.runEmbeddedPiAgent()` segmenttien rikastamiseen erissä (3–5 segmenttiä per kutsu).
+
+### Prompt-rakenne
+
 ```
-~/.openclaw/memory/associative/import-segments.json
-```
+Analysoi nämä muistisegmentit ja palauta JSON-taulukko:
 
-Tämä mahdollistaa:
-- CLI-komennon ja agentin välisen tiedonsiirron
-- Käyttäjä voi halutessaan tarkistaa segmentit ennen jatkamista
-- Myöhemmin V2 voi lukea saman tiedoston
+Jokaiselle segmentille päättele:
+- type: fact | decision | preference | observation | plan | narrative
+- temporal_state: none (ajaton) | past | present | future
+- temporal_anchor: ISO-päivämäärä (jos tunnistettavissa)
+- Jos segmentti sisältää useita erillisiä asioita, pilko ne erillisiksi muistiyksiköiksi
+  (palauta useampi rivi samalla id:llä)
 
-### CLI-komento
+Segmentit:
+[segmentit tähän]
 
-```bash
-$ openclaw memory migrate
-
-Skannataan workspace muisteja...
-  MEMORY.md (12 segmenttiä, evergreen)
-  memory/2026-03-15.md (4 segmenttiä)
-  memory/2026-03-20.md (6 segmenttiä)
-  memory/2026-04-01.md (3 segmenttiä)
-
-Yhteensä: 25 segmenttiä, 4 tiedostoa
-
-Segmentit tallennettu. Avaa OpenClaw-keskustelu ja kirjoita:
-  /memory import
-
-Tai anna agentille ohje:
-  "Importoi vanhat memory-core-muistit"
+Palauta JSON: [{ id, type, temporal_state, temporal_anchor }]
 ```
 
-### Toteutus
+### Virhetilanteet
 
-- Uusi tiedosto: `src/import-preprocess.ts` — segmentointilogiikka
-- Rekisteröinti: `api.registerCli()` — `openclaw memory migrate` -komento
-- Ei ulkoisia riippuvuuksia — pelkkää tiedostojen lukua ja markdown-parsintaa
+- LLM-kutsu epäonnistuu → käytä oletusarvoja (type: "observation", temporal_state: "none")
+- Yksittäinen segmentti epäonnistuu → jatka seuraavaan
+- Kaikki kutsut epäonnistuvat → logita varoitus, merkitse silti migrated (voidaan ajaa manuaalisesti uudelleen)
 
 ---
 
-## Vaihe 2: LLM-rikastus (agentti)
+## Tilan hallinta
 
-### Työkalu: `memory_import_batch`
+Migraation tila tallennetaan `MemoryDatabase.setState()`:lla:
 
-Rekisteröidään `api.registerTool()`:lla. Agentti kutsuu tätä erissä.
+| Avain | Arvo | Tarkoitus |
+|-------|------|-----------|
+| `migration_completed_at` | ISO-timestamp | Estää uudelleenajon |
+| `migration_source_count` | numero | Montako tiedostoa löydettiin |
+| `migration_segment_count` | numero | Montako segmenttiä importoitiin |
 
-```typescript
-// Parametrit
-{
-  action: "next"  // tai "status" tai "skip"
-}
-
-// Vastaus (erä)
-{
-  batch: 3,
-  total_batches: 9,
-  segments: [
-    {
-      id: 7,
-      source_file: "MEMORY.md",
-      heading: "## Tietokanta",
-      date: null,
-      evergreen: true,
-      content: "Projekti käyttää SQLite:ä WAL-moodissa..."
-    },
-    // ... 2-4 lisää
-  ],
-  remaining: 15,
-  done: false
-}
-
-// Vastaus (valmis)
-{
-  done: true,
-  summary: {
-    total_segments: 25,
-    batches_processed: 9,
-    skipped: 2
-  }
-}
-```
-
-**Eräkoko:** 3–5 segmenttiä. Riittävän pieni konteksti-ikkunalle, riittävän iso että agentti näkee kontekstia.
-
-**Tilan hallinta:** Työkalu pitää kirjaa käsitellyistä eristä plugin-muistissa (tai `import-segments.json`:n metadata-kentässä).
-
-### Skilli: `/memory import`
-
-Rekisteröidään plugin-manifestissa. Injektoidaan agentille prompt-template kun käyttäjä kirjoittaa `/memory import`.
-
-```markdown
-## Memory Import
-
-Importoi memory-core-muistit assosiatiiviseen muistijärjestelmään erissä.
-
-### Prosessi
-
-1. Kutsu `memory_import_batch` (action: "status") nähdäksesi tilanne
-2. Jos segmenttejä odottaa, näytä yhteenveto ja kysy käyttäjältä lupa jatkaa
-3. Kutsu `memory_import_batch` (action: "next") saadaksesi erä
-4. Jokaiselle segmentille erässä:
-   - Analysoi sisältö
-   - Päättele sopiva `type`: fact | decision | preference | observation | plan | narrative
-   - Päättele `temporal_state`: none (ajaton), past (tapahtunut), present (meneillään), future (tuleva)
-   - Jos segmentissä on selkeä päivämäärä, aseta `temporal_anchor`
-   - Jos segmentti sisältää useita erillisiä asioita, pilko erillisiksi muistiyksiköiksi
-   - Kutsu `memory_store` jokaiselle muistiyksikölle
-5. Toista vaiheet 3–4 kunnes `done: true`
-6. Näytä loppuyhteenveto
-
-### Ohjeita
-
-- Älä tiivistä liikaa — säilytä substanssi
-- Korvaa suhteelliset viittaukset absoluuttisilla ("eilen" → "2.4.2026")
-- Käytä segmentin `date`-kenttää aikakontekstin päättelyyn
-- Evergreen-segmentit ovat usein type: fact tai preference
-- Päivätyt segmentit ovat usein type: observation tai decision
-```
-
-### `memory_store`-kutsut
-
-Agentti kutsuu olemassa olevaa `memory_store`-työkalua jokaiselle muistiyksikölle:
-
-```json
-{
-  "content": "Projektin tietokantana käytetään SQLite:ä WAL-moodissa...",
-  "type": "decision",
-  "temporal_state": "none"
-}
-```
-
-Muistin `source` on "agent_tool" (normaali store-polku). Provenance-tieto tallennetaan erikseen (ks. alla).
-
----
-
-## Päätökset (brainstorm-tulokset)
-
-### Q1: LLM-provider → Ratkaistu
-Käytetään OpenClaw:n omaa agenttia. Ei tarvita erillistä LLM-integraatiota tai konfiguraatiota.
-
-### Q2: Sessiotranskriptit → Kyllä, toisessa vaiheessa
-Ensin importoidaan markdown-muistitiedostot, sen jälkeen sessiotranskriptit (`sessions/*.jsonl`). CLI-flagi: `--scope full` (molemmat) vs `--scope memories` (vain markdownit, oletus). Sessioiden käsittely vaatii eri segmentointilogiikan (keskusteluvuorojen pilkkominen, suodatus).
-
-### Q3: Extra paths → Automaattisesti
-`api.config` antaa pääsyn memory-coren konfiguraatioon, joten extra paths tulevat mukaan automaattisesti.
-
-### Q4: Interaktiivinen tarkistus → Agentti toimii itsenäisesti
-Agentti ei pyydä lupaa joka erälle vaan etenee itsenäisesti. Epäselvissä tilanteissa (esim. ambivalentti sisältö, mahdollinen PII) voi konsultoida käyttäjää. Keskustelu itsessään toimii review-mekanismina — käyttäjä näkee mitä tapahtuu ja voi puuttua.
-
-### Q5: Idempotenssi → Content-hash-dedupe riittää
-- Memory ID on sisällön SHA-256-hash → sama sisältö = sama ID = ohitetaan
-- Uudelleenajo on turvallista: duplikaatteja ei synny
-- Jos lähdetiedostoa on muokattu, syntyy uusi muisti vanhan rinnalle — vanha rapautuu luonnollisesti decayn kautta
-- Ei tarvita provenance-tallennusta, reconciliation-logiikkaa tai ghost deletion -mekanismia V1:ssä
+Uudelleenajo: ei manuaalista triggeriä V1:ssä. Jos käyttäjä haluaa ajaa uudelleen, voi nollata db-staten CLI:n kautta.
 
 ---
 
 ## Toteutussuunnitelma
 
-### Vaihe A: Esiprosessointi
+### Vaihe 1: Segmentointi (markdown-it)
 
-1. **`src/import-preprocess.ts`** — Tiedostojen skannaus, segmentointi, provenance
-   - `discoverMemoryFiles(workspaceDir, config)` → tiedostolista
-   - `segmentMarkdown(content, filePath)` → segmentit
-   - `prepareImport(workspaceDir, config)` → koko pipeline
+Päivitä `src/import-preprocess.ts`:
+- Vaihda regex-parsinta markdown-it:iin
+- Korjaa cross-platform-polut — katso OpenClaw:n omasta koodista miten polkuja käsitellään (`path.isAbsolute()`, `dirname(rel) === "."`, polkujen normalisointi)
+- Lisää symlink-suojaus ja per-tiedosto-virheenkäsittely
+- Järjestä löydetyt tiedostot deterministisesti
+- Lisää fallback-jako ylisuurille kappaleille (sana-/merkkitaso kun kappale > MAX_SEGMENT_CHARS)
+- Poista batch-koneisto (`getNextBatch`, `skipBatch`, `ImportState`, jne.)
 
-2. **CLI-rekisteröinti** `index.ts`:ssä — `api.registerCli()` lisää `openclaw memory migrate`
+### Vaihe 2: Testit segmentoinnille
 
-3. **Testit** — segmentointilogiikalle yksikötestitestit eri markdown-rakenteilla
+Päivitä `src/import-preprocess.test.ts`:
+- Lisää testit: koodilohkojen sisällä olevat headingit
+- Lisää testit: CRLF, BOM, frontmatter-reunatapaukset
+- Lisää testit: ylisuuret kappaleet (fallback-split)
+- Lisää testit: per-tiedosto-virheenkäsittely
+- Poista batch-testit
 
-### Vaihe B: Agenttityökalu + Skilli
+### Vaihe 3: Migraatiopalvelu
 
-1. **`memory_import_batch`-työkalu** `index.ts`:ssä — `api.registerTool()`
-   - Lukee `import-segments.json`
-   - Palauttaa erän, pitää kirjaa tilasta
-   - `action: "status" | "next" | "skip"`
+Lisää `src/index.ts`:iin:
+- `api.registerService("memory-migration", { start, stop })`
+- `start()`: tarkista state → discover → segment → enrich → store → mark done
+- LLM-rikastus `runEmbeddedPiAgent()`:lla erissä
+- Virheenkäsittely ja logging
 
-2. **Skilli** — prompt-template `/memory import` -komennolle
-   - Rekisteröidään plugin-manifestissa tai erillisessä tiedostossa
+### Vaihe 4: Testit migraatiopalvelulle
 
-3. **Testit** — batch-logiikalle, tilan hallinnalle
+- Service start: ei memory-core-tiedostoja → ei mitään
+- Service start: tiedostoja löytyy → importoi
+- Service start: jo migratoitu → ohita
+- LLM-virhe → fallback-arvot
+- Idempotenssi: uudelleenajo ei luo duplikaatteja
 
-### Vaihe C: Sessiotranskriptit
+---
 
-1. **Sessio-segmentointi** — `sessions/*.jsonl` lukeminen, keskusteluvuorojen parsinta
-2. **Suodatus** — poistetaan low-value-vuorot (lyhyet, rutiinivastaukset), PII-varoitukset
-3. **CLI-flagi** — `openclaw memory migrate --scope full` aktivoi sessioiden importin
-4. **Skilli-laajennus** — `/memory import` -promptiin sessioiden käsittelyohjeet
+## Päätökset
 
-### Vaihe D: Myöhemmin (ei V1)
+### Q1: LLM-provider → `runEmbeddedPiAgent()`
+Käytetään OpenClaw:n omaa runtime-API:a. Ei tarvita erillistä konfiguraatiota.
 
-- Automaattinen tunnistus plugin-aktivoinnissa (V2)
-- Provenance-tallennus ja reconciliation
-- Ghost deletion / tombstoning
+### Q2: Sessiotranskriptit → Ei V1:ssä
+Ei `--scope`-flagia, ei session-parsintaa. Myöhemmin erillinen feature.
+
+### Q3: Extra paths → Automaattisesti
+`api.config` antaa pääsyn memory-coren konfiguraatioon.
+
+### Q4: Idempotenssi → Content-hash + db-state
+- Memory ID on sisällön SHA-256-hash → sama sisältö = sama ID = ohitetaan
+- `migration_completed_at` db-state estää uudelleenajon
+
+### Q5: Markdown-parseri → markdown-it
+Jo riippuvuutena. Ratkaisee koodilohko-, frontmatter- ja CRLF-ongelmat.
+
+### Q6: Käyttäjäinteraktio → Ei mitään
+Migraatio on täysin automaattinen. Ei CLI-komentoja, ei skill-prompteja.
 
 ---
 
 ## Suunnitteluperiaatteet
 
-1. **Olemassa olevan infran hyödyntäminen** — `memory_store`, `api.config`, agentin LLM
-2. **Erillinen esiprosessointi ja rikastus** — deterministinen osa CLI:ssä, älykäs osa agentissa
-3. **Yksinkertaisin ratkaisu ensin** — content-hash-dedupe riittää, provenance ja reconciliation lisätään tarvittaessa
-4. **V2-yhteensopivuus** — komponentit (segmentointi, batch) suunnitellaan uudelleenkäytettäviksi automaattisessa migraatiossa
+1. **Nolla käyttäjätoimia** — migraatio tapahtuu automaattisesti
+2. **Olemassa olevan infran hyödyntäminen** — markdown-it, runEmbeddedPiAgent, MemoryManager.store()
+3. **Yksinkertaisin ratkaisu** — ei välitilaa, ei batch-koneistoa, ei state-tiedostoja
+4. **Luotettava segmentointi** — markdown-it parseri regexin sijaan
+5. **Graceful degradation** — virheet eivät estä migraatiota, fallback-arvot käytössä
