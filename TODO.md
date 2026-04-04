@@ -253,6 +253,14 @@ Tiivistelmä: content hash (SHA-256), SQLite backend, working.md + consolidated.
 
 ---
 
+## Phase 6.5: OpenClaw embedding provider -integraatio ❌
+
+> Suunnitelma: `history/plan-embedding-provider-integration.md`
+
+- [ ] Korvaa oma `createEmbedder()` (hardkoodattu OpenAI fetch) OpenClaw:n `getMemoryEmbeddingProvider()` -rajapinnalla
+- [ ] Poista `embedding.apiKey` plugin-configista — avaimet resolvataan auth-profileista / models.providers -konfiguraatiosta
+- [ ] Päivitä testit
+
 ## Phase 7: Jatkokehitys ❌
 
 - [ ] **Async signal analysis** (afterTurn, fire-and-forget, fast model)
