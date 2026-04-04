@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -26,7 +26,6 @@ describe("discoverMemoryFiles", () => {
   it("finds MEMORY.md at workspace root", () => {
     writeFileSync(join(tmpDir, "MEMORY.md"), "# Memories");
     const files = discoverMemoryFiles(tmpDir);
-    // On case-insensitive FS (macOS), MEMORY.md and memory.md are the same file
     expect(files.length).toBeGreaterThanOrEqual(1);
     expect(files.some((f) => f.toLowerCase().includes("memory.md"))).toBe(true);
   });
@@ -76,10 +75,9 @@ describe("discoverMemoryFiles", () => {
     expect(files).toHaveLength(2);
   });
 
-  it("deduplicates by inode", () => {
+  it("deduplicates files found via multiple paths", () => {
     mkdirSync(join(tmpDir, "memory"));
     writeFileSync(join(tmpDir, "memory", "note.md"), "# Note");
-    // Same directory listed via extra paths — should not duplicate
     const files = discoverMemoryFiles(tmpDir, ["memory"]);
     expect(files).toHaveLength(1);
   });
@@ -100,14 +98,42 @@ describe("discoverMemoryFiles", () => {
     const files = discoverMemoryFiles(tmpDir, [join(tmpDir, "external", "note.md")]);
     expect(files).toHaveLength(1);
   });
+
+  it("returns files in deterministic order (root first, then lexical)", () => {
+    writeFileSync(join(tmpDir, "MEMORY.md"), "# Root");
+    mkdirSync(join(tmpDir, "memory"));
+    writeFileSync(join(tmpDir, "memory", "b.md"), "# B");
+    writeFileSync(join(tmpDir, "memory", "a.md"), "# A");
+    const files = discoverMemoryFiles(tmpDir);
+
+    // Root memory file should be first
+    expect(files[0].toLowerCase()).toContain("memory.md");
+    expect(files[0]).not.toContain("memory/");
+    // Then lexical order for non-root files
+    const nonRoot = files.filter((f) => f.includes("memory/") || f.includes("memory\\"));
+    expect(nonRoot[0]).toContain("a.md");
+    expect(nonRoot[1]).toContain("b.md");
+  });
+
+  it("skips symlinks in memory/ directory", () => {
+    mkdirSync(join(tmpDir, "memory"));
+    mkdirSync(join(tmpDir, "other"));
+    writeFileSync(join(tmpDir, "other", "note.md"), "# Other");
+    writeFileSync(join(tmpDir, "memory", "real.md"), "# Real");
+    symlinkSync(join(tmpDir, "other", "note.md"), join(tmpDir, "memory", "linked.md"));
+
+    const files = discoverMemoryFiles(tmpDir);
+    expect(files).toHaveLength(1);
+    expect(files[0]).toContain("real.md");
+  });
 });
 
 // -- segmentMarkdown --
 
 describe("segmentMarkdown", () => {
+  const pad = " This is additional text to ensure the segment exceeds the minimum character threshold of two hundred characters for standalone segments in the import preprocessor.";
+
   it("segments by H1/H2/H3 headings", () => {
-    // Each section must be >= 200 chars to avoid merging
-    const pad = " This is additional text to ensure the segment exceeds the minimum character threshold of two hundred characters for standalone segments in the import preprocessor.";
     const content = `# Section One
 
 Content of section one.${pad}
@@ -123,9 +149,12 @@ Content of section three.${pad}`;
     const segments = segmentMarkdown(content, join(tmpDir, "MEMORY.md"), tmpDir);
     expect(segments).toHaveLength(3);
     expect(segments[0].heading).toBe("# Section One");
+    expect(segments[0].heading_level).toBe(1);
     expect(segments[0].content).toContain("Content of section one");
     expect(segments[1].heading).toBe("## Section Two");
+    expect(segments[1].heading_level).toBe(2);
     expect(segments[2].heading).toBe("### Section Three");
+    expect(segments[2].heading_level).toBe(3);
   });
 
   it("handles content before any heading", () => {
@@ -140,10 +169,10 @@ Section content here.`;
     const segments = segmentMarkdown(content, join(tmpDir, "MEMORY.md"), tmpDir);
     expect(segments.length).toBeGreaterThanOrEqual(1);
     expect(segments[0].heading).toBeNull();
+    expect(segments[0].heading_level).toBeNull();
   });
 
   it("splits large segments by paragraph", () => {
-    // Create a segment larger than 2000 chars
     const paragraphs = Array.from({ length: 10 }, (_, i) =>
       `Paragraph ${i + 1}: ${"Lorem ipsum dolor sit amet, consectetur adipiscing elit. ".repeat(5)}`,
     );
@@ -151,13 +180,25 @@ Section content here.`;
 
     const segments = segmentMarkdown(content, join(tmpDir, "MEMORY.md"), tmpDir);
     expect(segments.length).toBeGreaterThan(1);
-    // Each should be <= 2000 chars (approximately, due to paragraph boundaries)
     for (const seg of segments) {
-      expect(seg.char_count).toBeLessThanOrEqual(2500); // Allow some flexibility at paragraph boundaries
+      expect(seg.char_count).toBeLessThanOrEqual(2500);
     }
   });
 
-  it("merges small segments with next", () => {
+  it("splits oversized single paragraphs at word boundaries", () => {
+    // Single paragraph with no blank lines, > 2000 chars
+    const longParagraph = "word ".repeat(500); // ~2500 chars
+    const content = `# Big\n\n${longParagraph}`;
+
+    const segments = segmentMarkdown(content, join(tmpDir, "MEMORY.md"), tmpDir);
+    expect(segments.length).toBeGreaterThan(1);
+    // All segments should respect max size
+    for (const seg of segments) {
+      expect(seg.char_count).toBeLessThanOrEqual(2100); // Small tolerance for heading
+    }
+  });
+
+  it("merges small segments with previous (accumulator pattern)", () => {
     const content = `# Tiny
 
 Hi.
@@ -167,7 +208,6 @@ Hi.
 This is a normal section with enough content to meet the minimum size requirement and avoid being merged itself. It contains multiple sentences and provides meaningful information.`;
 
     const segments = segmentMarkdown(content, join(tmpDir, "MEMORY.md"), tmpDir);
-    // "Tiny" + "Hi." is < 200 chars, should be merged with Normal Section
     expect(segments).toHaveLength(1);
     expect(segments[0].content).toContain("Hi.");
     expect(segments[0].content).toContain("Normal Section");
@@ -186,7 +226,6 @@ This is a normal section with enough content to meet the minimum size requiremen
 # Heading Three`;
 
     const segments = segmentMarkdown(content, join(tmpDir, "MEMORY.md"), tmpDir);
-    // All headings are small, they get merged
     expect(segments.length).toBeGreaterThanOrEqual(1);
   });
 
@@ -204,6 +243,60 @@ This is the real content after frontmatter, and it should be parsed correctly wi
     expect(segments.length).toBeGreaterThanOrEqual(1);
     expect(segments[0].content).not.toContain("name: test");
     expect(segments[0].content).toContain("Actual Content");
+  });
+
+  it("strips frontmatter with CRLF line endings", () => {
+    const content = "---\r\nname: test\r\n---\r\n\r\n# Content\r\n\r\nBody text after CRLF frontmatter that is long enough to be a standalone segment.";
+
+    const segments = segmentMarkdown(content, join(tmpDir, "MEMORY.md"), tmpDir);
+    expect(segments.length).toBeGreaterThanOrEqual(1);
+    expect(segments[0].content).not.toContain("name: test");
+    expect(segments[0].content).toContain("Content");
+  });
+
+  it("strips frontmatter with BOM", () => {
+    const content = "\uFEFF---\nname: test\n---\n\n# Content\n\nBody text after BOM frontmatter that is long enough to be a standalone segment.";
+
+    const segments = segmentMarkdown(content, join(tmpDir, "MEMORY.md"), tmpDir);
+    expect(segments.length).toBeGreaterThanOrEqual(1);
+    expect(segments[0].content).not.toContain("name: test");
+  });
+
+  it("does not split on headings inside fenced code blocks", () => {
+    const content = `# Real Section
+
+Here is a code example:${pad}
+
+\`\`\`markdown
+## This is not a real heading
+
+Some code content here.
+\`\`\`
+
+More text after the code block.`;
+
+    const segments = segmentMarkdown(content, join(tmpDir, "MEMORY.md"), tmpDir);
+    // Should be ONE section — the ## inside the code block is not a heading
+    expect(segments).toHaveLength(1);
+    expect(segments[0].content).toContain("## This is not a real heading");
+    expect(segments[0].content).toContain("More text after");
+  });
+
+  it("does not split on headings inside tilde code blocks", () => {
+    const content = `# Main Section
+
+Some content before:${pad}
+
+~~~
+# Comment in code
+## Another comment
+~~~
+
+Text after code.`;
+
+    const segments = segmentMarkdown(content, join(tmpDir, "MEMORY.md"), tmpDir);
+    expect(segments).toHaveLength(1);
+    expect(segments[0].content).toContain("# Comment in code");
   });
 
   it("preserves code blocks within segments", () => {
@@ -287,12 +380,14 @@ Tämä on suomenkielinen muistiinpano joka sisältää ääkkösiä: ä, ö, å.
     expect(segments[0].date).toBeNull();
   });
 
-  it("sets relative source_file path", () => {
+  it("uses POSIX-style source_file path", () => {
     mkdirSync(join(tmpDir, "memory"));
     const filePath = join(tmpDir, "memory", "note.md");
     const content = `# Note\n\nContent that is long enough to not be merged with another segment in this test.`;
     const segments = segmentMarkdown(content, filePath, tmpDir);
+    // Should always use forward slashes regardless of platform
     expect(segments[0].source_file).toBe("memory/note.md");
+    expect(segments[0].source_file).not.toContain("\\");
   });
 
   it("computes char_count correctly", () => {
@@ -302,7 +397,6 @@ Tämä on suomenkielinen muistiinpano joka sisältää ääkkösiä: ä, ö, å.
   });
 
   it("handles mixed heading levels", () => {
-    const pad = " This is additional padding text to ensure each section exceeds the two hundred character minimum threshold for standalone segments in the preprocessor module.";
     const content = `# H1 Top Level
 
 Top level content that is sufficient in length to avoid merging behavior.${pad}
@@ -329,7 +423,6 @@ Some content here.
 More content after a deep heading that should not cause a split because we only split on H1-H3 level headings in the segmentation logic.`;
 
     const segments = segmentMarkdown(content, join(tmpDir, "MEMORY.md"), tmpDir);
-    // H4 should NOT cause a split
     const allContent = segments.map((s) => s.content).join("\n");
     expect(allContent).toContain("#### Sub-sub heading");
   });
@@ -400,6 +493,7 @@ Today we discussed the migration plan and decided to use a two-phase approach fo
 
     expect(result.totalSegments).toBeGreaterThan(0);
     expect(result.files.length).toBeGreaterThanOrEqual(2);
+    expect(result.errors).toHaveLength(0);
   });
 
   it("assigns globally unique segment IDs", () => {
@@ -412,7 +506,6 @@ Today we discussed the migration plan and decided to use a two-phase approach fo
     const ids = result.segments.map((s) => s.id);
     const uniqueIds = new Set(ids);
     expect(uniqueIds.size).toBe(ids.length);
-    // IDs should be sequential
     for (let i = 0; i < ids.length; i++) {
       expect(ids[i]).toBe(i);
     }
@@ -424,6 +517,7 @@ Today we discussed the migration plan and decided to use a two-phase approach fo
     expect(result.totalSegments).toBe(0);
     expect(result.files).toHaveLength(0);
     expect(result.segments).toHaveLength(0);
+    expect(result.errors).toHaveLength(0);
   });
 
   it("includes correct file metadata", () => {
@@ -442,5 +536,35 @@ Today we discussed the migration plan and decided to use a two-phase approach fo
     expect(datedFile).toBeDefined();
     expect(datedFile!.evergreen).toBe(false);
     expect(datedFile!.date).toBe("2026-04-01");
+  });
+
+  it("continues on unreadable files and collects errors", () => {
+    writeFileSync(join(tmpDir, "MEMORY.md"), "# Good\n\nThis file is readable and should be processed successfully.");
+    mkdirSync(join(tmpDir, "memory"));
+    const badFile = join(tmpDir, "memory", "bad.md");
+    writeFileSync(badFile, "# Bad");
+    chmodSync(badFile, 0o000);
+
+    const result = prepareImport(tmpDir);
+
+    // Good file should still be processed
+    expect(result.totalSegments).toBeGreaterThan(0);
+    // Bad file should be in errors
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].path).toContain("bad.md");
+
+    // Restore permissions for cleanup
+    chmodSync(badFile, 0o644);
+  });
+
+  it("uses POSIX paths in file metadata", () => {
+    mkdirSync(join(tmpDir, "memory"));
+    writeFileSync(join(tmpDir, "memory", "note.md"), "# Note\n\nContent here.");
+
+    const result = prepareImport(tmpDir);
+
+    for (const f of result.files) {
+      expect(f.path).not.toContain("\\");
+    }
   });
 });

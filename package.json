@@ -24,10 +24,12 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@sinclair/typebox": "0.34.48"
+    "@sinclair/typebox": "0.34.48",
+    "markdown-it": "^14.1.1"
   },
   "devDependencies": {
     "@rolldown/binding-darwin-arm64": "1.0.0-rc.12",
+    "@types/markdown-it": "^14.1.2",
     "@types/node": "^22.10.0",
     "@vitest/coverage-v8": "^4.0.18",
     "openclaw": "^2026.3.24",
