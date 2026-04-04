@@ -2,11 +2,11 @@
 
 > Plugin OpenClaw:lle. Arkkitehtuuri: `history/plan-context-engine-architecture-v2.md`
 
-## Tilanne (2026-04-03)
+## Tilanne (2026-04-04)
 
 **Valmista:** Infrastruktuuri, MemoryManager, context engine (Phase 3), konsolidaatio (Phase 4), `/memory sleep` komento, CLI-työkalu (Phase 5: stats, list, inspect, search, history, graph, export, import). 399 testiä läpi.
 
-**Seuraava:** Phase 5 TUI (interaktiivinen versio) tai Phase 6 (jatkokehitys).
+**Seuraava:** Phase 6 (memory-core-migraatio) — `openclaw memory migrate` + agentti-pohjainen LLM-rikastus.
 
 **V1-periaate:** Yksinkertainen ja laajennettava. Minimoi hot path -kirjoitukset, mutta salli append-only sidecar-kirjoitukset normaalikäytössä (retrieval.log, provenance). Kanoniset muistomutaatiot (strength, assosiaatiot, pruning, merget, temporaaliset siirtymät) vain konsolidaatiossa.
 
@@ -246,7 +246,14 @@ Tiivistelmä: content hash (SHA-256), SQLite backend, working.md + consolidated.
 - [ ] Interaktiivinen terminaali-UI (Ink tai vastaava)
 - [ ] Muistojen selaus, haku, graafin navigointi
 
-## Phase 6: Jatkokehitys ❌
+## Phase 6: Memory-core-migraatio ❌
+
+> Erillinen TODO: `history/todo-memory-core-migration.md`
+> Suunnitelma: `history/plan-memory-core-importer.md`, sanasto: `docs/glossary.md`
+
+---
+
+## Phase 7: Jatkokehitys ❌
 
 - [ ] **Async signal analysis** (afterTurn, fire-and-forget, fast model)
   - Prompt design: konteksti, signaalityypit, false positive -hallinta, output-skeema, trigger-policy
