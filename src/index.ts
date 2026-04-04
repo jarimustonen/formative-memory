@@ -16,14 +16,13 @@ import {
   getMemoryEmbeddingProvider,
   listMemoryEmbeddingProviders,
   type MemoryEmbeddingProvider,
-  type MemoryEmbeddingProviderCreateOptions,
 } from "openclaw/plugin-sdk/memory-core-host-engine-embeddings";
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
 import type { AssociativeMemoryConfig } from "./config.ts";
 import { memoryConfigSchema } from "./config.ts";
 import { runConsolidation } from "./consolidation.ts";
 import { CONTEXT_ENGINE_ID, createAssociativeMemoryContextEngine } from "./context-engine.ts";
-import { EmbeddingCircuitBreaker, ProviderUnavailableError } from "./embedding-circuit-breaker.ts";
+import { EmbeddingCircuitBreaker } from "./embedding-circuit-breaker.ts";
 import { MemoryManager } from "./memory-manager.ts";
 import { appendFeedbackEvent } from "./retrieval-log.ts";
 import { TurnMemoryLedger } from "./turn-memory-ledger.ts";
@@ -50,21 +49,23 @@ function resolveMemoryDir(config: AssociativeMemoryConfig, workspaceDir: string)
 /**
  * Resolve an embedding provider from the OpenClaw provider registry.
  *
- * Uses the "auto" selection path when `providerId` is "auto", trying each
- * registered adapter in priority order. Returns `null` when no provider is
- * available (e.g. no API keys configured) — the caller degrades to BM25-only.
+ * For "auto": tries each registered adapter in priority order.
+ * For explicit IDs: creates the specific provider or throws.
+ *
+ * Throws on failure — the plugin requires a working embedding provider.
  */
 async function resolveEmbeddingProvider(
   providerId: string,
   openclawConfig: OpenClawConfig,
   agentDir?: string,
   model?: string,
-): Promise<MemoryEmbeddingProvider | null> {
+): Promise<MemoryEmbeddingProvider> {
   if (providerId === "auto") {
     const adapters = listMemoryEmbeddingProviders()
       .filter((a) => typeof a.autoSelectPriority === "number")
       .toSorted((a, b) => (a.autoSelectPriority ?? Infinity) - (b.autoSelectPriority ?? Infinity));
 
+    const errors: string[] = [];
     for (const adapter of adapters) {
       try {
         const result = await adapter.create({
@@ -73,102 +74,92 @@ async function resolveEmbeddingProvider(
           model: model ?? adapter.defaultModel ?? "",
         });
         if (result.provider) return result.provider;
-      } catch {
-        // Auto-selection: silently try the next adapter.
+      } catch (err) {
+        errors.push(`${adapter.id}: ${err instanceof Error ? err.message : String(err)}`);
         continue;
       }
     }
-    return null;
+    throw new Error(
+      `No embedding provider available (tried auto-selection).\n${errors.join("\n") || "No adapters registered."}`,
+    );
   }
 
   const adapter = getMemoryEmbeddingProvider(providerId);
-  if (!adapter) return null;
+  if (!adapter) {
+    throw new Error(`Unknown embedding provider: "${providerId}"`);
+  }
 
   const result = await adapter.create({
     config: openclawConfig,
     agentDir,
     model: model ?? adapter.defaultModel ?? "",
   });
+  if (!result.provider) {
+    throw new Error(`Embedding provider "${providerId}" returned no provider instance`);
+  }
   return result.provider;
 }
 
-// Per-workspace cache: manager + circuit breaker scoped together.
-// Tracks the most recently created entry for the context engine.
-type ManagedWorkspace = { manager: MemoryManager; circuitBreaker: EmbeddingCircuitBreaker };
-const workspaces = new Map<string, ManagedWorkspace>();
-let lastWorkspace: ManagedWorkspace | null = null;
+// -- Workspace --
+
+type ManagedWorkspace = {
+  manager: MemoryManager;
+  circuitBreaker: EmbeddingCircuitBreaker;
+  memoryDir: string;
+};
 
 /**
- * Get or create a workspace. Provider resolution is deferred to first embed
- * call via the circuit breaker wrapper — workspace creation itself is sync.
+ * Create the single workspace instance for this plugin registration.
+ * Provider resolution is lazy — deferred to first embed call via a cached promise.
  */
-function getWorkspace(
+function createWorkspace(
   config: AssociativeMemoryConfig,
   workspaceDir: string,
   openclawConfig: OpenClawConfig,
   agentDir?: string,
 ): ManagedWorkspace {
   const memoryDir = resolveMemoryDir(config, workspaceDir);
-  const cacheKey = `${memoryDir}:${config.embedding.provider}:${config.embedding.model ?? ""}`;
-  let ws = workspaces.get(cacheKey);
-  if (!ws) {
-    const circuitBreaker = new EmbeddingCircuitBreaker();
+  const circuitBreaker = new EmbeddingCircuitBreaker();
 
-    // Lazy provider: resolved on first embed call, then cached.
-    let resolvedProvider: MemoryEmbeddingProvider | null | undefined;
-    const getProvider = async (): Promise<MemoryEmbeddingProvider | null> => {
-      if (resolvedProvider !== undefined) return resolvedProvider;
-      resolvedProvider = await resolveEmbeddingProvider(
+  // Lazy provider: resolved on first embed call, cached as promise for
+  // concurrency safety — concurrent callers await the same resolution.
+  let providerPromise: Promise<MemoryEmbeddingProvider> | null = null;
+
+  const getProvider = (): Promise<MemoryEmbeddingProvider> => {
+    if (!providerPromise) {
+      providerPromise = resolveEmbeddingProvider(
         config.embedding.provider,
         openclawConfig,
         agentDir,
         config.embedding.model,
       );
-      return resolvedProvider;
-    };
+    }
+    return providerPromise;
+  };
 
-    const embedder = {
-      async embed(text: string): Promise<number[]> {
-        return circuitBreaker.call(async (signal) => {
-          const provider = await getProvider();
-          if (!provider) {
-            throw new ProviderUnavailableError();
-          }
-          // AbortSignal: the circuit breaker manages timeout via its own
-          // AbortController. The provider's embedQuery doesn't accept a signal
-          // directly — if the breaker aborts, the promise rejection propagates.
-          void signal;
-          return provider.embedQuery(text);
-        });
-      },
-    };
-    ws = { manager: new MemoryManager(memoryDir, embedder), circuitBreaker };
-    workspaces.set(cacheKey, ws);
-  }
-  lastWorkspace = ws;
-  return ws;
+  const embedder = {
+    async embed(text: string): Promise<number[]> {
+      return circuitBreaker.call(async (signal) => {
+        const provider = await getProvider();
+        // AbortSignal: the circuit breaker manages timeout via its own
+        // AbortController. The provider's embedQuery doesn't accept a signal
+        // directly — if the breaker aborts, the promise rejection propagates.
+        void signal;
+        return provider.embedQuery(text);
+      });
+    },
+  };
+
+  return { manager: new MemoryManager(memoryDir, embedder), circuitBreaker, memoryDir };
 }
 
-/** Return the most recently created/accessed workspace (for context engine). */
-function getLastWorkspace(
-  config: AssociativeMemoryConfig,
-  fallbackDir: string,
-  openclawConfig: OpenClawConfig,
-  agentDir?: string,
-): ManagedWorkspace {
-  return lastWorkspace ?? getWorkspace(config, fallbackDir, openclawConfig, agentDir);
-}
+// -- Tools --
 
 function createMemoryTools(
-  config: AssociativeMemoryConfig,
-  workspaceDir: string,
-  openclawConfig: OpenClawConfig,
-  agentDir?: string,
+  getManager: () => MemoryManager,
+  getLogPath: () => string,
   ledger?: TurnMemoryLedger,
 ): AnyAgentTool[] {
-  const manager = () => getWorkspace(config, workspaceDir, openclawConfig, agentDir).manager;
-  const logPath = () => join(resolveMemoryDir(config, workspaceDir), "retrieval.log");
-
   const storeTool: AnyAgentTool = {
     name: "memory_store",
     description:
@@ -205,7 +196,7 @@ function createMemoryTools(
       ),
     }),
     async execute(_toolCallId, params) {
-      const memory = await manager().store({
+      const memory = await getManager().store({
         content: params.content,
         type: params.type,
         source: "agent_tool",
@@ -234,7 +225,7 @@ function createMemoryTools(
       limit: Type.Optional(Type.Number({ description: "Max results to return (default: 5)" })),
     }),
     async execute(_toolCallId, params) {
-      const results = await manager().search(params.query, params.limit);
+      const results = await getManager().search(params.query, params.limit);
       ledger?.addSearchResults(
         results.map((r) => ({ id: r.memory.id, score: r.score, query: params.query })),
       );
@@ -261,7 +252,7 @@ function createMemoryTools(
       id: Type.String({ description: "Memory ID (full SHA-256 hash or 8-char prefix)" }),
     }),
     async execute(_toolCallId, params) {
-      const memory = manager().getMemory(params.id);
+      const memory = getManager().getMemory(params.id);
       if (!memory) {
         return jsonResult({ error: "Memory not found", id: params.id });
       }
@@ -293,13 +284,15 @@ function createMemoryTools(
       ),
     }),
     async execute(_toolCallId, params) {
-      appendFeedbackEvent(logPath(), { [params.memory_id]: params.rating }, params.comment);
+      appendFeedbackEvent(getLogPath(), { [params.memory_id]: params.rating }, params.comment);
       return jsonResult({ ok: true, memory_id: params.memory_id, rating: params.rating });
     },
   };
 
   return [storeTool, searchTool, getTool, feedbackTool];
 }
+
+// -- Plugin --
 
 const associativeMemoryPlugin = {
   id: "memory-associative",
@@ -313,11 +306,26 @@ const associativeMemoryPlugin = {
     const openclawConfig = api.config;
     const ledger = new TurnMemoryLedger();
 
+    // Single lazy workspace — created on first tool call, shared by all
+    // consumers (tools, context engine, commands) within this registration.
+    let workspace: ManagedWorkspace | null = null;
+
+    const getWorkspace = (workspaceDir: string, agentDir?: string): ManagedWorkspace => {
+      if (!workspace) {
+        workspace = createWorkspace(config, workspaceDir, openclawConfig, agentDir);
+      }
+      return workspace;
+    };
+
     api.registerTool(
       (ctx) => {
         const workspaceDir = ctx.workspaceDir ?? ctx.agentDir ?? ".";
-        const agentDir = ctx.agentDir;
-        return createMemoryTools(config, workspaceDir, ctx.config ?? openclawConfig, agentDir, ledger);
+        const ws = getWorkspace(workspaceDir, ctx.agentDir);
+        return createMemoryTools(
+          () => ws.manager,
+          () => join(ws.memoryDir, "retrieval.log"),
+          ledger,
+        );
       },
       { names: ["memory_store", "memory_search", "memory_get", "memory_feedback"] },
     );
@@ -352,30 +360,28 @@ const associativeMemoryPlugin = {
       ];
     });
 
-    // Register context engine (claims contextEngine slot alongside the memory slot).
-    // Resolves workspace dynamically on each call — never captures a stale reference.
+    // Context engine and commands use the same workspace as tools.
+    // Workspace is created lazily on first access (tool call or engine use).
     api.registerContextEngine(CONTEXT_ENGINE_ID, () =>
       createAssociativeMemoryContextEngine({
-        getManager: () => getLastWorkspace(config, ".", openclawConfig).manager,
-        isBm25Only: () => getLastWorkspace(config, ".", openclawConfig).circuitBreaker.isBm25Only(),
+        getManager: () => getWorkspace(".").manager,
+        isBm25Only: () => getWorkspace(".").circuitBreaker.isBm25Only(),
         ledger,
-        getDb: () => getLastWorkspace(config, ".", openclawConfig).manager.getDatabase(),
-        getLogPath: () => join(resolveMemoryDir(config, "."), "retrieval.log"),
+        getDb: () => getWorkspace(".").manager.getDatabase(),
+        getLogPath: () => join(getWorkspace(".").memoryDir, "retrieval.log"),
       }),
     );
 
-    // Register /memory sleep command for manual consolidation trigger
     api.registerCommand({
       name: "memory sleep",
       description: "Run memory consolidation (strengthens associations, merges duplicates, cleans up)",
       async handler() {
-        const ws = getLastWorkspace(config, ".", openclawConfig);
-        const memoryDir = resolveMemoryDir(config, ".");
+        const ws = getWorkspace(".");
 
         const result = await runConsolidation({
           db: ws.manager.getDatabase(),
-          workingPath: join(memoryDir, "working.md"),
-          consolidatedPath: join(memoryDir, "consolidated.md"),
+          workingPath: join(ws.memoryDir, "working.md"),
+          consolidatedPath: join(ws.memoryDir, "consolidated.md"),
         });
 
         const s = result.summary;

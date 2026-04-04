@@ -5,7 +5,6 @@ import { MemoryDatabase, type MemoryRow } from "./db.ts";
 import {
   EmbeddingCircuitOpenError,
   EmbeddingTimeoutError,
-  ProviderUnavailableError,
 } from "./embedding-circuit-breaker.ts";
 import { contentHash } from "./hash.ts";
 import { appendRecallEvent, appendSearchEvent, appendStoreEvent } from "./retrieval-log.ts";
@@ -104,8 +103,7 @@ export class MemoryManager {
       // Unexpected errors (auth, config, bugs) → rethrow.
       if (
         !(error instanceof EmbeddingCircuitOpenError) &&
-        !(error instanceof EmbeddingTimeoutError) &&
-        !(error instanceof ProviderUnavailableError)
+        !(error instanceof EmbeddingTimeoutError)
       ) {
         throw error;
       }
@@ -172,8 +170,7 @@ export class MemoryManager {
       // Unexpected errors (auth, config, bugs) → rethrow so callers notice.
       if (
         !(error instanceof EmbeddingCircuitOpenError) &&
-        !(error instanceof EmbeddingTimeoutError) &&
-        !(error instanceof ProviderUnavailableError)
+        !(error instanceof EmbeddingTimeoutError)
       ) {
         throw error;
       }
