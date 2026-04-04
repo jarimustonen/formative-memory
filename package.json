@@ -8,7 +8,7 @@
     ".": "./dist/index.js"
   },
   "bin": {
-    "memory": "./src/cli.ts"
+    "memory": "./dist/cli.js"
   },
   "scripts": {
     "build": "tsdown",
@@ -52,7 +52,7 @@
   },
   "openclaw": {
     "extensions": [
-      "./index.ts"
+      "./dist/index.js"
     ]
   }
 }
