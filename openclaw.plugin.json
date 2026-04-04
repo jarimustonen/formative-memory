@@ -13,7 +13,6 @@
         "properties": {
           "provider": {
             "type": "string",
-            "enum": ["auto", "openai", "gemini", "voyage", "mistral", "ollama", "local"],
             "default": "auto"
           },
           "model": {
