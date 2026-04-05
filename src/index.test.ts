@@ -433,6 +433,84 @@ describe("lazy initialization", () => {
 });
 
 // ===========================================================================
+// Provider init vs circuit breaker separation
+// ===========================================================================
+
+describe("provider init errors are not circuit breaker failures", () => {
+  it("adapter.create() failure does not open the circuit breaker", async () => {
+    let callCount = 0;
+    mockCreate.mockImplementation(async () => {
+      callCount++;
+      if (callCount <= 2) throw new Error("transient init failure");
+      return {
+        provider: {
+          id: "openai",
+          model: "m",
+          embedQuery: mockEmbedQuery,
+          embedBatch: vi.fn(),
+        },
+      };
+    });
+
+    const api = fakeApi({ embedding: { provider: "openai" } });
+    plugin.register(api as any);
+    const tools = getTools(api);
+    const storeTool = tools.find((t: any) => t.name === "memory_store")!;
+
+    // First two calls fail with init error (not circuit breaker error)
+    await expect(
+      storeTool.execute("c1", { content: "a", type: "fact" }),
+    ).rejects.toThrow("transient init failure");
+    await expect(
+      storeTool.execute("c2", { content: "b", type: "fact" }),
+    ).rejects.toThrow("transient init failure");
+
+    // Third call succeeds — breaker is NOT open, init retried
+    const result = await storeTool.execute("c3", { content: "c", type: "fact" });
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.type).toBe("fact");
+  });
+});
+
+// ===========================================================================
+// Provider promise retry after failure
+// ===========================================================================
+
+describe("provider promise retry after failure", () => {
+  it("retries provider resolution after transient failure", async () => {
+    let callCount = 0;
+    mockCreate.mockImplementation(async () => {
+      callCount++;
+      if (callCount === 1) throw new Error("first attempt fails");
+      return {
+        provider: {
+          id: "openai",
+          model: "m",
+          embedQuery: mockEmbedQuery,
+          embedBatch: vi.fn(),
+        },
+      };
+    });
+
+    const api = fakeApi({ embedding: { provider: "openai" } });
+    plugin.register(api as any);
+    const tools = getTools(api);
+    const storeTool = tools.find((t: any) => t.name === "memory_store")!;
+
+    // First call fails
+    await expect(
+      storeTool.execute("c1", { content: "a", type: "fact" }),
+    ).rejects.toThrow("first attempt fails");
+
+    // Second call retries and succeeds
+    const result = await storeTool.execute("c2", { content: "b", type: "fact" });
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.type).toBe("fact");
+    expect(mockCreate).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ===========================================================================
 // Turn cycle integration
 // ===========================================================================
 

@@ -117,12 +117,21 @@ function createWorkspace(
   workspaceDir: string,
   openclawConfig: OpenClawConfig,
   agentDir?: string,
+  logger?: { warn: (...args: unknown[]) => void },
 ): ManagedWorkspace {
   const memoryDir = resolveMemoryDir(config, workspaceDir);
-  const circuitBreaker = new EmbeddingCircuitBreaker();
+  const circuitBreaker = new EmbeddingCircuitBreaker({
+    onLateSettlement: (outcome, err) => {
+      logger?.warn(
+        `Embedding call settled after timeout (${outcome}) — consider increasing timeoutMs`,
+        err,
+      );
+    },
+  });
 
   // Lazy provider: resolved on first embed call, cached as promise for
   // concurrency safety — concurrent callers await the same resolution.
+  // On rejection the cache is cleared so subsequent calls can retry.
   let providerPromise: Promise<MemoryEmbeddingProvider> | null = null;
 
   const getProvider = (): Promise<MemoryEmbeddingProvider> => {
@@ -132,17 +141,21 @@ function createWorkspace(
         openclawConfig,
         agentDir,
         config.embedding.model,
-      );
+      ).catch((err) => {
+        providerPromise = null;
+        throw err;
+      });
     }
     return providerPromise;
   };
 
+  // Provider init is outside the circuit breaker — config/auth errors
+  // are hard failures, not transient network issues. Only the actual
+  // embedQuery() call is protected by the breaker.
   const embedder = {
     async embed(text: string): Promise<number[]> {
-      return circuitBreaker.call(async () => {
-        const provider = await getProvider();
-        return provider.embedQuery(text);
-      });
+      const provider = await getProvider();
+      return circuitBreaker.call(() => provider.embedQuery(text));
     },
   };
 
@@ -300,6 +313,7 @@ const associativeMemoryPlugin = {
   register(api: OpenClawPluginApi) {
     const config = memoryConfigSchema.parse(api.pluginConfig);
     const openclawConfig = api.config;
+    const logger = api.logger;
     const ledger = new TurnMemoryLedger();
 
     // Single lazy workspace — created on first tool call, shared by all
@@ -308,7 +322,7 @@ const associativeMemoryPlugin = {
 
     const getWorkspace = (workspaceDir: string, agentDir?: string): ManagedWorkspace => {
       if (!workspace) {
-        workspace = createWorkspace(config, workspaceDir, openclawConfig, agentDir);
+        workspace = createWorkspace(config, workspaceDir, openclawConfig, agentDir, logger);
       }
       return workspace;
     };

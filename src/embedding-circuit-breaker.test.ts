@@ -233,6 +233,49 @@ describe("EmbeddingCircuitBreaker", () => {
       const neverResolve = () => new Promise<number[]>(() => {});
       await expect(breaker.call(neverResolve)).rejects.toThrow(EmbeddingTimeoutError);
     });
+
+    it("calls onLateSettlement when orphaned promise rejects after timeout", async () => {
+      const settlements: Array<{ outcome: string; error?: unknown }> = [];
+      const breaker = createBreaker({
+        timeoutMs: 20,
+        onLateSettlement: (outcome, error) => settlements.push({ outcome, error }),
+      });
+
+      // fn resolves slowly after timeout, then rejects
+      let rejectFn: (err: Error) => void;
+      const slowFn = () => new Promise<number[]>((_, reject) => { rejectFn = reject; });
+
+      await expect(breaker.call(slowFn)).rejects.toThrow(EmbeddingTimeoutError);
+
+      // Now the orphaned promise rejects
+      rejectFn!(new Error("late network error"));
+      // Allow microtask to process
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(settlements).toHaveLength(1);
+      expect(settlements[0].outcome).toBe("rejected");
+      expect((settlements[0].error as Error).message).toBe("late network error");
+    });
+
+    it("calls onLateSettlement when orphaned promise resolves after timeout", async () => {
+      const settlements: Array<{ outcome: string }> = [];
+      const breaker = createBreaker({
+        timeoutMs: 20,
+        onLateSettlement: (outcome) => settlements.push({ outcome }),
+      });
+
+      let resolveFn: (v: number[]) => void;
+      const slowFn = () => new Promise<number[]>((resolve) => { resolveFn = resolve; });
+
+      await expect(breaker.call(slowFn)).rejects.toThrow(EmbeddingTimeoutError);
+
+      // Orphaned promise resolves late
+      resolveFn!([1, 2, 3]);
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(settlements).toHaveLength(1);
+      expect(settlements[0].outcome).toBe("resolved");
+    });
   });
 
   describe("custom failure threshold", () => {

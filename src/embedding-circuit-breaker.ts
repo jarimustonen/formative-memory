@@ -30,6 +30,8 @@ export type EmbeddingCircuitBreakerOptions = {
   jitterFactor?: number;
   /** Called on state transitions for logging/metrics. */
   onStateChange?: (from: CircuitState, to: CircuitState) => void;
+  /** Called when a timed-out call settles after the timeout. Indicates the timeout may be too tight. */
+  onLateSettlement?: (outcome: "resolved" | "rejected", error?: unknown) => void;
 };
 
 export class EmbeddingCircuitBreaker {
@@ -45,6 +47,7 @@ export class EmbeddingCircuitBreaker {
   private readonly now: () => number;
   private readonly jitterFactor: number;
   private readonly onStateChange?: (from: CircuitState, to: CircuitState) => void;
+  private readonly onLateSettlement?: (outcome: "resolved" | "rejected", error?: unknown) => void;
 
   constructor(options: EmbeddingCircuitBreakerOptions = {}) {
     this.failureThreshold = options.failureThreshold ?? 2;
@@ -53,6 +56,7 @@ export class EmbeddingCircuitBreaker {
     this.now = options.now ?? Date.now;
     this.jitterFactor = options.jitterFactor ?? 0.2;
     this.onStateChange = options.onStateChange;
+    this.onLateSettlement = options.onLateSettlement;
 
     if (this.failureThreshold < 1) {
       throw new Error("failureThreshold must be >= 1");
@@ -110,15 +114,25 @@ export class EmbeddingCircuitBreaker {
     }
 
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let timedOut = false;
     const timeoutPromise = new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new EmbeddingTimeoutError(this.timeoutMs)),
-        this.timeoutMs,
-      );
+      timer = setTimeout(() => {
+        timedOut = true;
+        reject(new EmbeddingTimeoutError(this.timeoutMs));
+      }, this.timeoutMs);
     });
 
+    // Start the operation and attach a handler for late settlement.
+    // If timeout wins the race, the orphaned promise must not cause an
+    // UnhandledPromiseRejection (which crashes Node.js by default).
+    const op = fn();
+    op.then(
+      () => { if (timedOut) this.onLateSettlement?.("resolved"); },
+      (err) => { if (timedOut) this.onLateSettlement?.("rejected", err); },
+    );
+
     try {
-      const result = await Promise.race([fn(), timeoutPromise]);
+      const result = await Promise.race([op, timeoutPromise]);
       this.onSuccess();
       return result;
     } catch (error) {
