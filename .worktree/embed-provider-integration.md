@@ -2,6 +2,24 @@
 created: 2026-04-04T10:15:00+03:00
 source_branch: main
 task: Replace hardcoded OpenAI embedder with OpenClaw embedding provider API
+merged: 2026-04-05T07:47:26+03:00
+commits:
+  - hash: 2fe1d2b
+    message: "docs: proposal for ContextEngineFactory context parameter"
+  - hash: 71ab1ac
+    message: "fix: separate provider init from circuit breaker, fix promise cache and orphan rejection"
+  - hash: 88a116a
+    message: "test: comprehensive provider resolution and config validation tests"
+  - hash: 76c1a5f
+    message: "fix: remove provider enum from JSON schema, allow extensible registry"
+  - hash: 7d0f9fd
+    message: "refactor: replace cooperative AbortSignal timeout with Promise.race"
+  - hash: dba3656
+    message: "refactor: single lazy workspace per register(), remove global state"
+  - hash: 6ed173c
+    message: "feat: replace hardcoded OpenAI fetch with OpenClaw embedding provider API"
+  - hash: df72817
+    message: "docs: add worktree prompt for embed-provider-integration"
 ---
 
 # Task: Integrate OpenClaw Embedding Provider API
