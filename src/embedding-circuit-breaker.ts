@@ -122,10 +122,24 @@ export class EmbeddingCircuitBreaker {
       }, this.timeoutMs);
     });
 
-    // Start the operation and attach a handler for late settlement.
+    // Start the operation. If fn() throws synchronously (e.g. provider
+    // misconfiguration), we must still clean up the timer to prevent an
+    // orphaned unhandled rejection from the timeout promise.
+    let op: Promise<T>;
+    try {
+      op = fn();
+    } catch (syncError) {
+      if (timer) clearTimeout(timer);
+      if (currentState === "HALF_OPEN") {
+        this.halfOpenProbeInFlight = false;
+      }
+      this.onFailure();
+      throw syncError;
+    }
+
+    // Attach a handler for late settlement.
     // If timeout wins the race, the orphaned promise must not cause an
     // UnhandledPromiseRejection (which crashes Node.js by default).
-    const op = fn();
     op.then(
       () => { if (timedOut) this.onLateSettlement?.("resolved"); },
       (err) => { if (timedOut) this.onLateSettlement?.("rejected", err); },
