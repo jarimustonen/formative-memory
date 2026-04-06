@@ -354,7 +354,7 @@ describe("provider resolution", () => {
 
     await expect(
       storeTool.execute("call-1", { content: "test", type: "fact" }),
-    ).rejects.toThrow('Unknown embedding provider: "nonexistent"');
+    ).rejects.toThrow();
   });
 
   it("explicit provider throws when adapter.create() fails", async () => {

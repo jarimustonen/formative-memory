@@ -13,6 +13,8 @@ import { join } from "node:path";
 import { Type } from "@sinclair/typebox";
 import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk";
 import {
+  createGeminiEmbeddingProvider,
+  createOpenAiEmbeddingProvider,
   getMemoryEmbeddingProvider,
   listMemoryEmbeddingProviders,
   type MemoryEmbeddingProvider,
@@ -79,25 +81,61 @@ async function resolveEmbeddingProvider(
         continue;
       }
     }
+    // Fallback: when no adapters are registered (memory-core disabled),
+    // try creating providers directly via SDK factory functions.
+    if (adapters.length === 0) {
+      const directProviders = [
+        { id: "gemini", create: createGeminiEmbeddingProvider },
+        { id: "openai", create: createOpenAiEmbeddingProvider },
+      ];
+      for (const dp of directProviders) {
+        try {
+          const result = await dp.create({
+            config: openclawConfig,
+            agentDir,
+            model: model ?? "",
+          });
+          // Factory returns { provider, client } — extract the provider.
+          const provider = result?.provider ?? result;
+          if (provider?.embedQuery) return provider;
+        } catch (err) {
+          errors.push(`${dp.id} (direct): ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    }
+
     throw new Error(
       `No embedding provider available (tried auto-selection).\n${errors.join("\n") || "No adapters registered."}`,
     );
   }
 
+  // Try registry first, then fall back to direct factory creation.
   const adapter = getMemoryEmbeddingProvider(providerId);
-  if (!adapter) {
-    throw new Error(`Unknown embedding provider: "${providerId}"`);
-  }
-
-  const result = await adapter.create({
-    config: openclawConfig,
-    agentDir,
-    model: model ?? adapter.defaultModel ?? "",
-  });
-  if (!result.provider) {
+  if (adapter) {
+    const result = await adapter.create({
+      config: openclawConfig,
+      agentDir,
+      model: model ?? adapter.defaultModel ?? "",
+    });
+    if (result.provider) return result.provider;
     throw new Error(`Embedding provider "${providerId}" returned no provider instance`);
   }
-  return result.provider;
+
+  // Registry empty (memory-core disabled) — create directly via SDK factories.
+  const factories: Record<string, (opts: any) => Promise<any>> = {
+    openai: createOpenAiEmbeddingProvider,
+    gemini: createGeminiEmbeddingProvider,
+  };
+  const factory = factories[providerId];
+  if (!factory) {
+    throw new Error(`Unknown embedding provider: "${providerId}"`);
+  }
+  const result = await factory({ config: openclawConfig, agentDir, model: model ?? "" });
+  const provider = result?.provider ?? result;
+  if (!provider?.embedQuery) {
+    throw new Error(`Embedding provider "${providerId}" returned no usable provider`);
+  }
+  return provider;
 }
 
 // -- Workspace --
@@ -359,9 +397,13 @@ const associativeMemoryPlugin = {
       return [
         "## Associative Memory",
         "",
-        `You have a persistent associative memory. Tools: ${tools.join(", ")}.`,
+        `You have a persistent associative memory system. Tools: ${tools.join(", ")}.`,
         "",
-        "**When to store:** key decisions, user preferences, project facts, plans, corrections, anything worth remembering.",
+        hasStore
+          ? "**IMPORTANT: Use `memory_store` to save memories.** Do NOT write to workspace files (MEMORY.md, USER.md, etc.) for memory persistence — use the memory tools instead. The associative memory system handles storage, retrieval, and consolidation automatically."
+          : "",
+        "",
+        "**When to store:** key decisions, user preferences, project facts, plans, corrections, anything worth remembering. When the user says \"remember this\" or similar, ALWAYS use `memory_store`.",
         "**When to search:** start of a task, when context seems missing, when the user references past work.",
         hasFeedback
           ? "**When to give feedback:** after using a retrieved memory — rate how useful it was."
