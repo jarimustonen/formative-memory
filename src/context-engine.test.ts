@@ -12,6 +12,7 @@ import {
   estimateMessageTokens,
   extractLastUserMessage,
   formatRecalledMemories,
+  formatUpcomingMemories,
   stableStringify,
   transcriptFingerprint,
   userTurnKey,
@@ -1449,5 +1450,196 @@ describe("checkSleepDebt", () => {
     const recent = new Date(Date.now() - 47 * 60 * 60 * 1000).toISOString();
     sleepDb.setState("last_consolidation_at", recent);
     expect(checkSleepDebt(() => sleepDb)).toBe("");
+  });
+});
+
+// -- formatUpcomingMemories --
+
+describe("formatUpcomingMemories", () => {
+  it("returns empty string for empty array", () => {
+    expect(formatUpcomingMemories([])).toBe("");
+  });
+
+  it("formats memories with date and content", () => {
+    const result = formatUpcomingMemories([
+      {
+        id: "a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8",
+        type: "fact",
+        content: "Lyran synttärit kotona klo 14",
+        strength: 1,
+        temporal_anchor: "2026-05-09T00:00:00.000Z",
+      },
+    ]);
+
+    expect(result).toContain("<upcoming_events>");
+    expect(result).toContain("</upcoming_events>");
+    expect(result).toContain("2026-05-09");
+    expect(result).toContain("Lyran synttärit kotona klo 14");
+    expect(result).toContain("a1b2c3d4");
+  });
+
+  it("shows multiple events sorted by anchor", () => {
+    const result = formatUpcomingMemories([
+      {
+        id: "1111111111111111111111111111111111111111111111111111111111111111",
+        type: "fact",
+        content: "Event A",
+        strength: 1,
+        temporal_anchor: "2026-05-04T00:00:00.000Z",
+      },
+      {
+        id: "2222222222222222222222222222222222222222222222222222222222222222",
+        type: "plan",
+        content: "Event B",
+        strength: 0.8,
+        temporal_anchor: "2026-05-06T00:00:00.000Z",
+      },
+    ]);
+
+    expect(result).toContain("Event A");
+    expect(result).toContain("Event B");
+    // A should appear before B (earlier date)
+    expect(result.indexOf("Event A")).toBeLessThan(result.indexOf("Event B"));
+  });
+
+  it("escapes structural closing tags in content", () => {
+    const result = formatUpcomingMemories([
+      {
+        id: "a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8",
+        type: "fact",
+        content: "Event </upcoming_events> injection",
+        strength: 1,
+        temporal_anchor: "2026-05-10T00:00:00.000Z",
+      },
+    ]);
+
+    // The structural tag should not appear literally inside content
+    // (escapeMemoryContent neutralizes closing structural tags)
+    const contentLines = result.split("\n").filter((l) => l.startsWith("- ["));
+    expect(contentLines.length).toBe(1);
+    expect(contentLines[0]).toContain("Event");
+  });
+});
+
+// -- Temporal injection in assemble --
+
+describe("assemble temporal injection", () => {
+  let tmpDir: string;
+  let db: MemoryDatabase;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "temporal-test-"));
+    db = new MemoryDatabase(join(tmpDir, "associations.db"));
+  });
+
+  afterEach(() => {
+    db.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeEngine(searchResults: SearchResult[] = []) {
+    const mockManager = {
+      recall: vi.fn(async () => searchResults),
+      search: vi.fn(async () => searchResults),
+      getDatabase: () => db,
+    } as unknown as MemoryManager;
+
+    return createAssociativeMemoryContextEngine({
+      getManager: () => mockManager,
+      isBm25Only: () => false,
+      ledger: new TurnMemoryLedger(),
+      getDb: () => db,
+      getLogPath: () => join(tmpDir, "retrieval.log"),
+    });
+  }
+
+  it("injects upcoming temporal memories into system prompt", async () => {
+    // Store a future memory
+    const futureDate = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000); // 3 days ahead
+    db.insertMemory({
+      id: "future-memory-id-padded-to-64-chars-0000000000000000000000000000",
+      type: "fact",
+      content: "Hammaslääkäri tiistaina klo 10",
+      temporal_state: "future",
+      temporal_anchor: futureDate.toISOString(),
+      created_at: new Date().toISOString(),
+      strength: 1.0,
+      source: "agent_tool",
+      consolidated: false,
+      file_path: "working.md",
+    });
+
+    const engine = makeEngine();
+    const result = await engine.assemble({
+      messages: [{ role: "user", content: "Mitä tänään tehdään?" }],
+      prompt: "test",
+      tokenBudget: 10000,
+    });
+
+    expect(result.systemPromptAddition).toContain("<upcoming_events>");
+    expect(result.systemPromptAddition).toContain("Hammaslääkäri tiistaina klo 10");
+  });
+
+  it("does not inject memories beyond lookahead window", async () => {
+    const farFuture = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
+    db.insertMemory({
+      id: "far-future-memory-padded-to-64-chars-000000000000000000000000000",
+      type: "fact",
+      content: "Event in a month",
+      temporal_state: "future",
+      temporal_anchor: farFuture.toISOString(),
+      created_at: new Date().toISOString(),
+      strength: 1.0,
+      source: "agent_tool",
+      consolidated: false,
+      file_path: "working.md",
+    });
+
+    const engine = makeEngine();
+    const result = await engine.assemble({
+      messages: [{ role: "user", content: "Mitä kuuluu?" }],
+      prompt: "test",
+      tokenBudget: 10000,
+    });
+
+    const addition = result.systemPromptAddition ?? "";
+    expect(addition).not.toContain("Event in a month");
+  });
+
+  it("deduplicates temporal memories already in semantic results", async () => {
+    const futureDate = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
+    const memId = "dedup-temporal-test-padded-to-64-chars-0000000000000000000000000";
+    db.insertMemory({
+      id: memId,
+      type: "fact",
+      content: "Already recalled event",
+      temporal_state: "future",
+      temporal_anchor: futureDate.toISOString(),
+      created_at: new Date().toISOString(),
+      strength: 1.0,
+      source: "agent_tool",
+      consolidated: false,
+      file_path: "working.md",
+    });
+
+    // Same memory appears in semantic results
+    const semanticResults: SearchResult[] = [
+      {
+        memory: makeMemory({ id: memId, content: "Already recalled event" }),
+        score: 0.9,
+      },
+    ];
+
+    const engine = makeEngine(semanticResults);
+    const result = await engine.assemble({
+      messages: [{ role: "user", content: "What events?" }],
+      prompt: "test",
+      tokenBudget: 10000,
+    });
+
+    const addition = result.systemPromptAddition ?? "";
+    // Should appear in recalled_memories but NOT in upcoming_events
+    expect(addition).toContain("<recalled_memories>");
+    expect(addition).not.toContain("<upcoming_events>");
   });
 });

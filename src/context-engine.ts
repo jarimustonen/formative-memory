@@ -79,6 +79,7 @@ function recallLimitForBudget(budgetClass: BudgetClass): number {
 export function escapeMemoryContent(content: string): string {
   return content
     .replace(/<\/recalled_memories>/gi, "&lt;/recalled_memories&gt;")
+    .replace(/<\/upcoming_events>/gi, "&lt;/upcoming_events&gt;")
     .replace(/<\/memory[\s>]/gi, (m) => `&lt;/memory${m.slice(8)}`);
 }
 
@@ -118,6 +119,42 @@ export function formatRecalledMemories(results: SearchResult[], budgetClass: Bud
     }
     lines.push("</recalled_memories>");
   }
+
+  return lines.join("\n");
+}
+
+// -- Temporal injection --
+
+export type TemporalMemory = {
+  id: string;
+  type: string;
+  content: string;
+  strength: number;
+  temporal_anchor: string;
+};
+
+/** Default lookahead window for upcoming events (days). */
+const TEMPORAL_LOOKAHEAD_DAYS = 7;
+
+/**
+ * Format upcoming temporal memories for injection into the system prompt.
+ * Separate from recalled_memories — these are time-driven, not query-driven.
+ */
+export function formatUpcomingMemories(memories: TemporalMemory[]): string {
+  if (memories.length === 0) return "";
+
+  const lines: string[] = [
+    "",
+    "<upcoming_events>",
+    "The following memories are upcoming events/plans. They are shown because their date is approaching, not because of the current topic.",
+  ];
+  for (const m of memories) {
+    const short = m.id.slice(0, 8);
+    const safeType = escapeMemoryContent(m.type);
+    const anchor = m.temporal_anchor.slice(0, 10); // YYYY-MM-DD
+    lines.push(`- [${short}|${safeType}|${anchor}] "${escapeMemoryContent(m.content)}"`);
+  }
+  lines.push("</upcoming_events>");
 
   return lines.join("\n");
 }
@@ -362,7 +399,45 @@ export function createAssociativeMemoryContextEngine(
       }
 
       const memoryBlock = formatRecalledMemories(results, budgetClass);
-      if (!memoryBlock) {
+
+      // Temporal injection: fetch upcoming events regardless of query relevance.
+      let upcomingBlock = "";
+      if (budgetClass !== "low" && options.getDb) {
+        try {
+          const now = new Date();
+          const horizon = new Date(now.getTime() + TEMPORAL_LOOKAHEAD_DAYS * 24 * 60 * 60 * 1000);
+          const fromStr = now.toISOString();
+          const toStr = horizon.toISOString();
+          const db = options.getDb();
+          const upcomingRows = db.getUpcomingMemories(fromStr, toStr);
+
+          // Exclude memories already in semantic results to avoid duplication
+          const recalledIds = new Set(results.map((r) => r.memory.id));
+          const filtered = upcomingRows.filter((row) => !recalledIds.has(row.id));
+
+          if (filtered.length > 0) {
+            // Track in ledger
+            if (options.ledger) {
+              for (const row of filtered) {
+                options.ledger.addAutoInjected(row.id, 0);
+              }
+            }
+            upcomingBlock = formatUpcomingMemories(
+              filtered.map((row) => ({
+                id: row.id,
+                type: row.type,
+                content: row.content,
+                strength: row.strength,
+                temporal_anchor: row.temporal_anchor!,
+              })),
+            );
+          }
+        } catch (error) {
+          options.logger?.warn("Temporal memory injection failed", error);
+        }
+      }
+
+      if (!memoryBlock && !upcomingBlock) {
         cachedEntry = { key: cacheKey, systemPromptAddition: undefined };
         return { messages: params.messages, estimatedTokens: 0 };
       }
@@ -372,7 +447,7 @@ export function createAssociativeMemoryContextEngine(
         : "";
 
       const sleepDebtNotice = checkSleepDebt(options.getDb);
-      const systemPromptAddition = memoryBlock + bm25Notice + sleepDebtNotice;
+      const systemPromptAddition = memoryBlock + upcomingBlock + bm25Notice + sleepDebtNotice;
       cachedEntry = { key: cacheKey, systemPromptAddition };
 
       return {

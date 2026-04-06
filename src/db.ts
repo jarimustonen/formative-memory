@@ -224,6 +224,26 @@ export class MemoryDatabase {
       .all() as MemoryRow[];
   }
 
+  /**
+   * Get memories with temporal_anchor within a date range.
+   * Used by assemble() to inject upcoming events regardless of query relevance.
+   * Only returns memories with strength > pruning threshold.
+   */
+  getUpcomingMemories(from: string, to: string, limit = 10): MemoryRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM memories
+         WHERE temporal_state IN ('future', 'present')
+           AND temporal_anchor IS NOT NULL
+           AND temporal_anchor >= ?
+           AND temporal_anchor <= ?
+           AND strength > 0.05
+         ORDER BY temporal_anchor ASC
+         LIMIT ?`,
+      )
+      .all(from, to, limit) as MemoryRow[];
+  }
+
   updateStrength(id: string, strength: number): void {
     this.db.prepare("UPDATE memories SET strength = ? WHERE id = ?").run(strength, id);
   }

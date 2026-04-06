@@ -400,7 +400,11 @@ const associativeMemoryPlugin = {
         `You have a persistent associative memory system. Tools: ${tools.join(", ")}.`,
         "",
         hasStore
-          ? "**IMPORTANT: Use `memory_store` to save memories.** Do NOT write to workspace files (MEMORY.md, USER.md, etc.) for memory persistence — use the memory tools instead. The associative memory system handles storage, retrieval, and consolidation automatically."
+          ? [
+              "**IMPORTANT: Use `memory_store` to save memories.** Do NOT write to workspace files (MEMORY.md, USER.md, etc.) for memory persistence — use the memory tools instead. The associative memory system handles storage, retrieval, and consolidation automatically.",
+              "",
+              "**One fact per memory.** Each `memory_store` call should contain exactly one atomic piece of information. If you learn multiple things, make multiple calls. For example, if the user says \"I'm traveling to Helsinki next week and Saturday is Lyra's birthday party\", store these as TWO separate memories: one about the trip, one about the party. The system discovers connections between memories automatically through co-retrieval patterns — do not combine them yourself.",
+            ].join("\n")
           : "",
         "",
         "**When to store:** key decisions, user preferences, project facts, plans, corrections, anything worth remembering. When the user says \"remember this\" or similar, ALWAYS use `memory_store`.",

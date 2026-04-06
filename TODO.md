@@ -276,6 +276,47 @@ Toimenpiteet löydösten perusteella (v2026.3.24 → v2026.4.5):
 - [ ] Poista `embedding.apiKey` plugin-configista — avaimet resolvataan auth-profileista / models.providers -konfiguraatiosta
 - [ ] Päivitä testit
 
+## Phase 6.6: Live-testauksen löydökset ❌
+
+> Löydökset ensimmäisestä tuotantotestistä (2026-04-06).
+
+### 6.6.1 Atomaariset muistot (prompt) ✅
+
+- [x] Päivitä `registerMemoryPromptSection()`: "One fact per memory" -ohje
+- [x] Ohjeista pilkkomaan moniosainen tieto erillisiksi kutsuiksi
+- [ ] Testaa: pyydä Sylviaa tallentamaan moniosainen tieto → tuleeko 2+ erillistä muistoa
+
+### 6.6.2 Temporaalinen injektio assemble():ssa ✅
+
+- [x] `db.getUpcomingMemories(from, to)` — temporaalinen DB-kysely
+- [x] `formatUpcomingMemories()` — `<upcoming_events>`-blokin formatointi
+- [x] Integraatio `assemble()`-funktioon: 7 päivän lookahead, dedup semantic-tulosten kanssa, ledger-tracking
+- [x] `escapeMemoryContent()`: `</upcoming_events>` escape lisätty
+- [x] Testit: 7 uutta testiä (formatointi, injektio, lookahead-raja, dedup)
+
+### 6.6.3 Workspace-ohjeiden LLM-siivous käynnistyksessä ❌
+
+> Koodi: `cleanupWorkspaceFiles()` migration-service.ts:ssä. Testit valmiina (499 läpi).
+
+- [x] `cleanupWorkspaceFiles()` logiikka ja testit
+- [x] `hasFileMemoryInstructions()` heuristiikka
+- [x] `buildWorkspaceCleanupPrompt()` LLM-prompt
+- [ ] Kytke `index.ts`:ään — aja osana migraatiopalvelua ensimmäisellä käynnistyksellä
+- [ ] Upstream-proposal: `history/proposal-decouple-memory-from-workspace-templates.md`
+
+### 6.6.4 Embedding provider -fallback ✅
+
+> memory-core:n disablointi tyhjentää embedding-registryn. Korjattu: plugin luo providerin suoraan SDK:n factory-funktioilla.
+
+- [x] Direct factory fallback `resolveEmbeddingProvider()`-funktiossa (gemini, openai)
+- [x] Circuit breaker: synkronisen virheen käsittely (timer cleanup)
+
+### 6.6.5 Deploy-infrastruktuuri ✅
+
+- [x] `deploy.sh` — build + scp + restart
+- [x] `tsdown.config.ts` — bundlaa @sinclair/typebox ja markdown-it, externalisoi openclaw
+- [x] Homebase AGENTS.md — plugin-dokumentaatio
+
 ## Phase 7: Jatkokehitys ❌
 
 - [ ] **Async signal analysis** (afterTurn, fire-and-forget, fast model)
@@ -325,6 +366,7 @@ Erillinen kuvaus: `history/openclaw-upstream-changes.md`
 12. Konsolidaation kesto jos tuhansia muistoja (cap merge candidates per run?)
 14. Temporal metadata merged muistoissa: pitäisikö periä temporal_state/anchor lähdemuistoilta? Nyt aina `none`. Konsolidoitu muisto on abstraktio, mutta aikasidonnaiset faktat (deadlinet, tapahtumat) voivat menettää kontekstinsa.
 15. Merge-logi (durable record of A+B→C): alias-taulu kertoo B→C mutta ei tallenna paria. Erillinen merge_history-taulu tarvittaessa auditointiin.
+16. Muistojen pilkkominen konsolidaatiossa (V2): jos tallennusvaiheessa syntyy moniatomaarisia muistoja (esim. "TypeScript + Python + Rust" yhdessä), konsolidaatio voisi tunnistaa ne ja pilkkoa erillisiksi. V1:ssä luotetaan prompttiohjaukseen atomaarisuudessa. Jos testaus osoittaa prompttiohjauksen riittämättömäksi, lisätään split-operaatio konsolidaatioon.
 13. Signal analysis prompt design (Phase 5)
 
 ---
