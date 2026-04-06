@@ -10,7 +10,7 @@
  */
 
 import { join } from "node:path";
-import { mkdirSync, existsSync } from "node:fs";
+import { mkdirSync, existsSync, readFileSync, writeFileSync, copyFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import type { ImportSegment, PrepareResult } from "./import-preprocess.ts";
 import { prepareImport } from "./import-preprocess.ts";
@@ -369,4 +369,147 @@ export function createLlmEnrichFn(opts: {
 
     return parseEnrichmentResponse(text);
   };
+}
+
+// -- Workspace file cleanup --
+
+/** Generic LLM call: prompt in, text out. */
+export type LlmCallFn = (prompt: string) => Promise<string>;
+
+export type WorkspaceCleanupDeps = {
+  workspaceDir: string;
+  dbState: DbStateFn;
+  llm: LlmCallFn;
+  logger: {
+    info: (msg: string) => void;
+    warn: (msg: string) => void;
+  };
+};
+
+export type WorkspaceCleanupResult = {
+  status: "skipped" | "clean" | "cleaned" | "error";
+  filesModified?: string[];
+};
+
+const STATE_KEY_WORKSPACE_CLEANED = "workspace_cleanup_completed_at";
+
+/** Patterns that indicate file-based memory instructions in workspace files. */
+const FILE_MEMORY_PATTERNS = [
+  /memory\/YYYY-MM-DD/,
+  /MEMORY\.md/,
+  /WRITE IT TO A FILE/i,
+  /tiedostot.*ovat.*muistisi/i,
+  /muistisi.*tiedosto/i,
+  /memory maintenance/i,
+  /daily.*notes.*memory\//i,
+  /memory\/\d{4}-\d{2}-\d{2}/,
+  /curated.*memor/i,
+  /update.*MEMORY\.md/i,
+];
+
+export function hasFileMemoryInstructions(content: string): boolean {
+  return FILE_MEMORY_PATTERNS.some((p) => p.test(content));
+}
+
+/**
+ * Clean file-based memory instructions from workspace files (AGENTS.md, SOUL.md).
+ *
+ * Runs once on first activation. Uses LLM to surgically remove memory-related
+ * instructions while preserving everything else. Backs up originals.
+ */
+export async function cleanupWorkspaceFiles(
+  deps: WorkspaceCleanupDeps,
+): Promise<WorkspaceCleanupResult> {
+  const { workspaceDir, dbState, llm, logger } = deps;
+
+  // Idempotent — skip if already done
+  if (dbState.get(STATE_KEY_WORKSPACE_CLEANED)) {
+    return { status: "skipped" };
+  }
+
+  const targets = ["AGENTS.md", "SOUL.md"];
+  const filesToClean: Array<{ name: string; path: string; content: string }> = [];
+
+  for (const name of targets) {
+    const filePath = join(workspaceDir, name);
+    if (!existsSync(filePath)) continue;
+
+    const content = readFileSync(filePath, "utf-8");
+    if (hasFileMemoryInstructions(content)) {
+      filesToClean.push({ name, path: filePath, content });
+    }
+  }
+
+  if (filesToClean.length === 0) {
+    logger.info("Workspace files have no file-based memory instructions. Skipping cleanup.");
+    dbState.set(STATE_KEY_WORKSPACE_CLEANED, new Date().toISOString());
+    return { status: "clean" };
+  }
+
+  logger.info(
+    `Found file-based memory instructions in: ${filesToClean.map((f) => f.name).join(", ")}. Cleaning...`,
+  );
+
+  const modified: string[] = [];
+
+  for (const file of filesToClean) {
+    try {
+      const cleaned = await llm(buildWorkspaceCleanupPrompt(file.name, file.content));
+
+      // Validate: LLM should return non-empty content shorter than original
+      if (!cleaned || cleaned.trim().length < 20) {
+        logger.warn(`LLM returned empty/too-short result for ${file.name}. Skipping.`);
+        continue;
+      }
+
+      // Backup original
+      const backupPath = `${file.path}.pre-associative-memory`;
+      if (!existsSync(backupPath)) {
+        copyFileSync(file.path, backupPath);
+      }
+
+      writeFileSync(file.path, cleaned, "utf-8");
+      modified.push(file.name);
+      logger.info(`Cleaned ${file.name} (backup: ${file.name}.pre-associative-memory)`);
+    } catch (err) {
+      logger.warn(
+        `Failed to clean ${file.name}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  dbState.set(STATE_KEY_WORKSPACE_CLEANED, new Date().toISOString());
+
+  return {
+    status: modified.length > 0 ? "cleaned" : "clean",
+    filesModified: modified.length > 0 ? modified : undefined,
+  };
+}
+
+function buildWorkspaceCleanupPrompt(fileName: string, content: string): string {
+  return `You are editing an OpenClaw workspace file (${fileName}). The user has installed an associative memory plugin that replaces the file-based memory system.
+
+Remove all instructions that tell the agent to use file-based memory persistence. This includes:
+- Instructions about writing to memory/YYYY-MM-DD.md files
+- Instructions about reading/updating MEMORY.md
+- "Write It Down" / "No Mental Notes" sections
+- Memory Maintenance sections (heartbeat-based MEMORY.md curation)
+- Boot sequence lines about reading memory files
+- Statements like "these files are your memory" or "tiedostot ovat muistisi"
+- References to session-memory or daily memory logs
+
+KEEP everything else intact:
+- Identity, personality, and behavior instructions
+- Tool instructions (email, calendar, weather, etc.)
+- Security rules and boundaries
+- Heartbeat instructions (minus memory maintenance parts)
+- Any personalized content the bot or user has added
+
+If a section mixes memory instructions with other content, remove only the memory parts.
+
+Return ONLY the cleaned file content. No explanations, no code blocks, no markdown wrapping.
+
+Here is the current content of ${fileName}:
+
+${content}`;
 }

@@ -1,17 +1,21 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildEnrichmentPrompt,
+  cleanupWorkspaceFiles,
   createLlmEnrichFn,
+  hasFileMemoryInstructions,
   parseEnrichmentResponse,
   runMigration,
   type DbStateFn,
   type EnrichedSegment,
   type EnrichFn,
+  type LlmCallFn,
   type MigrationDeps,
   type StoreMemoryFn,
+  type WorkspaceCleanupDeps,
 } from "./migration-service.ts";
 
 let tmpDir: string;
@@ -332,5 +336,173 @@ describe("parseEnrichmentResponse", () => {
     expect(result[0].type).toBe("observation");
     expect(result[0].temporal_state).toBe("none");
     expect(result[0].temporal_anchor).toBeNull();
+  });
+});
+
+// -- hasFileMemoryInstructions --
+
+describe("hasFileMemoryInstructions", () => {
+  it("detects memory/YYYY-MM-DD pattern", () => {
+    expect(hasFileMemoryInstructions("Write to memory/YYYY-MM-DD.md")).toBe(true);
+  });
+
+  it("detects MEMORY.md reference", () => {
+    expect(hasFileMemoryInstructions("Update MEMORY.md with learnings")).toBe(true);
+  });
+
+  it("detects WRITE IT TO A FILE", () => {
+    expect(hasFileMemoryInstructions("if you want to remember, WRITE IT TO A FILE")).toBe(true);
+  });
+
+  it("detects Finnish memory file instruction", () => {
+    expect(hasFileMemoryInstructions("Nämä tiedostot ovat muistisi")).toBe(true);
+  });
+
+  it("returns false for unrelated content", () => {
+    expect(hasFileMemoryInstructions("Use the weather tool to check forecasts")).toBe(false);
+    expect(hasFileMemoryInstructions("My favorite color is green")).toBe(false);
+  });
+});
+
+// -- cleanupWorkspaceFiles --
+
+describe("cleanupWorkspaceFiles", () => {
+  function createCleanupDeps(overrides?: Partial<WorkspaceCleanupDeps>): WorkspaceCleanupDeps {
+    const state = new Map<string, string>();
+    return {
+      workspaceDir: tmpDir,
+      dbState: {
+        get: (key) => state.get(key) ?? null,
+        set: (key, value) => state.set(key, value),
+      },
+      llm: vi.fn(async (prompt: string) => {
+        // Mock LLM: return content without memory instructions
+        return "# Cleaned content\n\nThis file has been cleaned.";
+      }),
+      logger: { info: vi.fn(), warn: vi.fn() },
+      ...overrides,
+    };
+  }
+
+  it("skips when already cleaned", async () => {
+    const deps = createCleanupDeps();
+    deps.dbState.set("workspace_cleanup_completed_at", "2026-04-06T00:00:00Z");
+
+    const result = await cleanupWorkspaceFiles(deps);
+
+    expect(result.status).toBe("skipped");
+    expect(deps.llm).not.toHaveBeenCalled();
+  });
+
+  it("marks clean when no files need cleaning", async () => {
+    // Write AGENTS.md without memory instructions
+    writeFileSync(join(tmpDir, "AGENTS.md"), "# Agent\n\nUse tools to help the user.");
+    const deps = createCleanupDeps();
+
+    const result = await cleanupWorkspaceFiles(deps);
+
+    expect(result.status).toBe("clean");
+    expect(deps.llm).not.toHaveBeenCalled();
+    expect(deps.dbState.get("workspace_cleanup_completed_at")).toBeTruthy();
+  });
+
+  it("cleans AGENTS.md with file-based memory instructions", async () => {
+    writeFileSync(
+      join(tmpDir, "AGENTS.md"),
+      `# Agent Instructions
+
+## Memory
+
+- **Daily notes:** memory/YYYY-MM-DD.md — raw logs
+- **Long-term:** MEMORY.md — curated memories
+
+## Tools
+
+Use weather to check forecasts.`,
+    );
+    const deps = createCleanupDeps();
+
+    const result = await cleanupWorkspaceFiles(deps);
+
+    expect(result.status).toBe("cleaned");
+    expect(result.filesModified).toContain("AGENTS.md");
+    expect(deps.llm).toHaveBeenCalledOnce();
+    // Backup should exist
+    expect(existsSync(join(tmpDir, "AGENTS.md.pre-associative-memory"))).toBe(true);
+  });
+
+  it("cleans both AGENTS.md and SOUL.md", async () => {
+    writeFileSync(join(tmpDir, "AGENTS.md"), "Write to memory/YYYY-MM-DD.md files");
+    writeFileSync(join(tmpDir, "SOUL.md"), "Nämä tiedostot ovat muistisi. Päivitä ne.");
+    const deps = createCleanupDeps();
+
+    const result = await cleanupWorkspaceFiles(deps);
+
+    expect(result.status).toBe("cleaned");
+    expect(result.filesModified).toEqual(expect.arrayContaining(["AGENTS.md", "SOUL.md"]));
+    expect(deps.llm).toHaveBeenCalledTimes(2);
+  });
+
+  it("skips files that don't exist", async () => {
+    // No files in tmpDir
+    const deps = createCleanupDeps();
+
+    const result = await cleanupWorkspaceFiles(deps);
+
+    expect(result.status).toBe("clean");
+  });
+
+  it("skips file if LLM returns too-short content", async () => {
+    writeFileSync(join(tmpDir, "AGENTS.md"), "Update MEMORY.md with stuff\n\nLots of content here.");
+    const deps = createCleanupDeps({
+      llm: vi.fn(async () => ""),
+    });
+
+    const result = await cleanupWorkspaceFiles(deps);
+
+    expect(result.status).toBe("clean");
+    expect(deps.logger.warn).toHaveBeenCalled();
+  });
+
+  it("continues if LLM fails for one file", async () => {
+    writeFileSync(join(tmpDir, "AGENTS.md"), "Update MEMORY.md daily");
+    writeFileSync(join(tmpDir, "SOUL.md"), "Nämä tiedostot ovat muistisi.");
+
+    let callCount = 0;
+    const deps = createCleanupDeps({
+      llm: vi.fn(async () => {
+        callCount++;
+        if (callCount === 1) throw new Error("LLM error");
+        return "# Cleaned SOUL\n\nYour memory plugin handles persistence.";
+      }),
+    });
+
+    const result = await cleanupWorkspaceFiles(deps);
+
+    expect(result.status).toBe("cleaned");
+    expect(result.filesModified).toEqual(["SOUL.md"]);
+  });
+
+  it("is idempotent — second run skips", async () => {
+    writeFileSync(join(tmpDir, "AGENTS.md"), "Update MEMORY.md daily");
+    const deps = createCleanupDeps();
+
+    await cleanupWorkspaceFiles(deps);
+    const result2 = await cleanupWorkspaceFiles(deps);
+
+    expect(result2.status).toBe("skipped");
+  });
+
+  it("does not overwrite existing backup", async () => {
+    const originalContent = "Update MEMORY.md with original instructions";
+    writeFileSync(join(tmpDir, "AGENTS.md"), originalContent);
+    writeFileSync(join(tmpDir, "AGENTS.md.pre-associative-memory"), "Previous backup");
+    const deps = createCleanupDeps();
+
+    await cleanupWorkspaceFiles(deps);
+
+    // Backup should still contain the previous backup, not overwritten
+    const backup = readFileSync(join(tmpDir, "AGENTS.md.pre-associative-memory"), "utf-8");
+    expect(backup).toBe("Previous backup");
   });
 });
