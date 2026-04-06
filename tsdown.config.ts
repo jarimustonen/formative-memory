@@ -5,4 +5,6 @@ export default defineConfig({
   env: { NODE_ENV: "production" },
   fixedExtension: false,
   platform: "node",
+  external: ["openclaw", /^openclaw\//],
+  noExternal: ["@sinclair/typebox", "markdown-it"],
 });
