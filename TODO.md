@@ -253,6 +253,21 @@ Tiivistelmä: content hash (SHA-256), SQLite backend, working.md + consolidated.
 
 ---
 
+## OpenClaw release impact -katselmus
+
+> Seurantatiedosto: `docs/openclaw-release-impact.md` — jokaisen OpenClaw-julkaisun vaikutusarvio pluginiin.
+> Prosessikuvaus: `docs/AGENTS.md`
+
+Toimenpiteet löydösten perusteella (v2026.3.24 → v2026.4.5):
+
+- [ ] **Päivitä `openclaw.plugin.json`:** `kind: "memory"` → `kind: ["memory", "context-engine"]` — eksplisiittinen dual-slot-omistajuus (v2026.3.31 multi-kind plugin -tuki)
+- [ ] **Päivitä context engine -tyypit:** käytä SDK:n `AssembleResult`, `CompactResult`, `IngestResult` jne. eksplisiittisiä palautustyyppejä (v2026.4.5 exportit)
+- [ ] **Tarkista `assemble()` prompt-parametri:** tukeeko meidän toteutus uutta `prompt`-kenttää vai luottaako se runtime-fallbackiin? (v2026.3.28)
+- [ ] **Arvioi `memory sleep` vs. dreaming:** OpenClaw:n `memory-core` sai kokeellisen dreaming-järjestelmän (light/deep/REM) — miten tämä suhtautuu meidän konsolidaatioon? (v2026.4.5)
+- [ ] **Päivitä `peerDependencies.openclaw`:** nosta minimivaatimus `>=2026.3.31` tai `>=2026.4.5`
+
+---
+
 ## Phase 6.5: OpenClaw embedding provider -integraatio ❌
 
 > Suunnitelma: `history/plan-embedding-provider-integration.md`
