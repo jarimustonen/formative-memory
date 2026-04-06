@@ -60,6 +60,11 @@
 
 > Ei V1:ssä. Myöhemmin erillinen feature.
 
+## 6.3.5 Workspace-siivous & OpenClaw PR:t ❌
+
+- [ ] **PR openclaw-repoon:** workspace-template-irroitus (proposal: `history/proposal-decouple-memory-from-workspace-templates.md`)
+- [ ] **PR openclaw-repoon:** SDK factory-funktioiden export (`createGeminiEmbeddingProvider`, `createOpenAiEmbeddingProvider`)
+
 ## 6.4 Myöhemmin (ei V1)
 
 - [ ] Provenance-tallennus ja reconciliation
