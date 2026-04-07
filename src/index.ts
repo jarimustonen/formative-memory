@@ -10,6 +10,7 @@
  */
 
 import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import { Type } from "@sinclair/typebox";
 import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk";
 import {
@@ -25,9 +26,72 @@ import { memoryConfigSchema } from "./config.ts";
 import { runConsolidation } from "./consolidation.ts";
 import { CONTEXT_ENGINE_ID, createAssociativeMemoryContextEngine } from "./context-engine.ts";
 import { EmbeddingCircuitBreaker } from "./embedding-circuit-breaker.ts";
+import { callLlm, resolveApiKey, type LlmCallerConfig } from "./llm-caller.ts";
 import { MemoryManager } from "./memory-manager.ts";
+import {
+  cleanupWorkspaceFiles,
+  runMigration,
+  buildEnrichmentPrompt,
+  parseEnrichmentResponse,
+  type EnrichFn,
+} from "./migration-service.ts";
 import { appendFeedbackEvent } from "./retrieval-log.ts";
 import { TurnMemoryLedger } from "./turn-memory-ledger.ts";
+
+// -- Auth profile resolution --
+
+const AUTH_PROFILE_FILENAME = "auth-profiles.json";
+
+/**
+ * Read API keys from auth-profiles.json.
+ * Tries agentDir first, then stateDir/agents/main/agent/.
+ */
+function readAuthProfiles(
+  stateDir?: string,
+  agentDir?: string,
+): Record<string, { provider?: string; key?: string }> | null {
+  const candidates = [
+    agentDir && join(agentDir, AUTH_PROFILE_FILENAME),
+    stateDir && join(stateDir, "agents", "main", "agent", AUTH_PROFILE_FILENAME),
+  ].filter(Boolean) as string[];
+
+  for (const path of candidates) {
+    try {
+      if (existsSync(path)) {
+        const data = JSON.parse(readFileSync(path, "utf-8"));
+        return data.profiles ?? null;
+      }
+    } catch {
+      // Continue to next candidate
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolve LLM caller config from auth profiles.
+ * Returns null if no suitable API key is found.
+ */
+function resolveLlmConfig(
+  stateDir?: string,
+  agentDir?: string,
+): LlmCallerConfig | null {
+  const profiles = readAuthProfiles(stateDir, agentDir);
+  const resolved = resolveApiKey(profiles ?? undefined, "anthropic");
+  if (!resolved) return null;
+  return { provider: resolved.provider, apiKey: resolved.apiKey };
+}
+
+/**
+ * Create an EnrichFn for migration that uses direct LLM calls.
+ */
+function createDirectLlmEnrichFn(llmConfig: LlmCallerConfig): EnrichFn {
+  return async (segments) => {
+    const prompt = buildEnrichmentPrompt(segments);
+    const response = await callLlm(prompt, llmConfig);
+    return parseEnrichmentResponse(response);
+  };
+}
 
 function jsonResult(payload: unknown) {
   return {
@@ -434,10 +498,24 @@ const associativeMemoryPlugin = {
       async handler() {
         const ws = getWorkspace(".");
 
+        // Resolve LLM for merge content production
+        const llmConfig = resolveLlmConfig(undefined, undefined);
+        const mergeContentProducer = llmConfig
+          ? async (
+              a: { id: string; content: string; type: string },
+              b: { id: string; content: string; type: string },
+            ) => {
+              const prompt = `Merge these two memory notes into a single, concise note that preserves all information. Return ONLY the merged content text, nothing else.\n\nMemory A (${a.type}):\n${a.content}\n\nMemory B (${b.type}):\n${b.content}`;
+              const content = await callLlm(prompt, llmConfig);
+              return { content: content.trim(), type: a.type };
+            }
+          : undefined;
+
         const result = await runConsolidation({
           db: ws.manager.getDatabase(),
           workingPath: join(ws.memoryDir, "working.md"),
           consolidatedPath: join(ws.memoryDir, "consolidated.md"),
+          mergeContentProducer,
         });
 
         const s = result.summary;
@@ -448,6 +526,77 @@ const associativeMemoryPlugin = {
             `Merged: ${s.merged}, Transitioned: ${s.transitioned}, ` +
             `Promoted: ${s.promoted}, Exposure GC: ${s.exposuresGc}`,
         };
+      },
+    });
+
+    // -- Startup service: migration + workspace cleanup --
+
+    api.registerService({
+      id: "memory-associative-migration",
+      async start(ctx) {
+        const llmConfig = resolveLlmConfig(ctx.stateDir);
+        const ws = getWorkspace(ctx.workspaceDir ?? ".");
+
+        // 1. Workspace file cleanup (remove file-based memory instructions)
+        if (llmConfig && ctx.workspaceDir) {
+          try {
+            const cleanupResult = await cleanupWorkspaceFiles({
+              workspaceDir: ctx.workspaceDir,
+              dbState: {
+                get: (key) => ws.manager.getDatabase().getState(key),
+                set: (key, value) => ws.manager.getDatabase().setState(key, value),
+              },
+              llm: (prompt) => callLlm(prompt, llmConfig),
+              logger: ctx.logger,
+            });
+            if (cleanupResult.status === "cleaned") {
+              ctx.logger.info(
+                `Workspace cleanup: modified ${cleanupResult.filesModified?.join(", ")}`,
+              );
+            }
+          } catch (err) {
+            ctx.logger.warn(
+              `Workspace cleanup failed: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+
+        // 2. Memory-core migration (import old memories)
+        if (ctx.workspaceDir) {
+          try {
+            const enrichFn: EnrichFn = llmConfig
+              ? createDirectLlmEnrichFn(llmConfig)
+              : async (segments) =>
+                  segments.map((seg) => ({
+                    id: seg.id,
+                    type: seg.evergreen ? "fact" : "observation",
+                    temporal_state: seg.date ? "past" : "none",
+                    temporal_anchor: seg.date,
+                  }));
+
+            const migrationResult = await runMigration({
+              workspaceDir: ctx.workspaceDir,
+              stateDir: ctx.stateDir,
+              store: (params) => ws.manager.store(params),
+              dbState: {
+                get: (key) => ws.manager.getDatabase().getState(key),
+                set: (key, value) => ws.manager.getDatabase().setState(key, value),
+              },
+              enrich: enrichFn,
+              logger: ctx.logger,
+            });
+
+            if (migrationResult.status === "completed") {
+              ctx.logger.info(
+                `Migration: imported ${migrationResult.segmentsImported} memories from ${migrationResult.filesFound} files`,
+              );
+            }
+          } catch (err) {
+            ctx.logger.warn(
+              `Migration failed: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
       },
     });
   },

@@ -142,13 +142,13 @@ describe("plugin registration", () => {
     expect(plugin.kind).toBe("memory");
   });
 
-  it("registers /memory sleep command", () => {
+  it("registers /memory-sleep command", () => {
     const api = fakeApi();
     plugin.register(api as any);
 
     expect(api.registerCommand).toHaveBeenCalledOnce();
     const cmd = api.registerCommand.mock.calls[0][0];
-    expect(cmd.name).toBe("memory sleep");
+    expect(cmd.name).toBe("memory-sleep");
     expect(cmd.handler).toBeTypeOf("function");
   });
 
