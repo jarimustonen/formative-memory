@@ -294,28 +294,46 @@ Toimenpiteet löydösten perusteella (v2026.3.24 → v2026.4.5):
 - [x] `escapeMemoryContent()`: `</upcoming_events>` escape lisätty
 - [x] Testit: 7 uutta testiä (formatointi, injektio, lookahead-raja, dedup)
 
-### 6.6.3 Workspace-ohjeiden LLM-siivous käynnistyksessä ❌
-
-> Koodi: `cleanupWorkspaceFiles()` migration-service.ts:ssä. Testit valmiina (499 läpi).
+### 6.6.3 Workspace-ohjeiden LLM-siivous käynnistyksessä ✅
 
 - [x] `cleanupWorkspaceFiles()` logiikka ja testit
 - [x] `hasFileMemoryInstructions()` heuristiikka
 - [x] `buildWorkspaceCleanupPrompt()` LLM-prompt
-- [ ] Kytke `index.ts`:ään — aja osana migraatiopalvelua ensimmäisellä käynnistyksellä
+- [x] Kytke `index.ts`:ään — `registerService` ajaa ensimmäisellä käynnistyksellä
+- [x] Retention ratio -tarkistus (>40%) estää LLM-hallusinaatioiden tuhoamasta tiedostoja
+- [x] Completion vain onnistuneilla — epäonnistuneet tiedostot yritetään uudelleen seuraavalla käynnistyksellä
 - [ ] Upstream-proposal: `history/proposal-decouple-memory-from-workspace-templates.md`
 
 ### 6.6.4 Embedding provider -fallback ✅
 
-> memory-core:n disablointi tyhjentää embedding-registryn. Korjattu: plugin luo providerin suoraan SDK:n factory-funktioilla.
-
 - [x] Direct factory fallback `resolveEmbeddingProvider()`-funktiossa (gemini, openai)
 - [x] Circuit breaker: synkronisen virheen käsittely (timer cleanup)
+- [x] Refaktoroitu `tryDirectProviderFactory()` yhteiskäyttöön (duplicated fallback poistettu)
 
 ### 6.6.5 Deploy-infrastruktuuri ✅
 
 - [x] `deploy.sh` — build + scp + restart
 - [x] `tsdown.config.ts` — bundlaa @sinclair/typebox ja markdown-it, externalisoi openclaw
 - [x] Homebase AGENTS.md — plugin-dokumentaatio
+
+### 6.6.6 Review-korjaukset ✅
+
+> LLM-review: `history/review-index-ts-wiring.md` (Gemini + Codex, 2 kierrosta)
+
+- [x] `memory-sleep` auth resolution — `runtimePaths` tallennetaan service/tool-kontekstista
+- [x] Startup gate — `awaitStartup()` tool-executeissa, service start kutsuu `startupResolve()` finally-blockissa
+- [x] Migraation partial failure — merkataan valmiiksi vain jos 0 virhettä
+- [x] `no_files` ei merkitse valmiiksi — retry seuraavalla käynnistyksellä
+- [x] Path resolution — `api.resolvePath()` + `isAbsolute()` (cross-platform, oikea `~` expansion)
+- [x] Auth profile reading — ENOENT-tarkistus, schema-validointi, logging
+- [x] Greedy regex → fenced code block extraction ensin
+- [x] Dead code poistettu (`createLlmEnrichFn`)
+
+### 6.6.7 Konsolidaatio: LLM-merge pakollinen ✅
+
+- [x] Poistettu default concatenation merge — konsolidaatio vaatii LLM:n
+- [x] `/memory-sleep` failaa selkeällä virheilmoituksella jos API-avainta ei löydy
+- [x] Konsolidaation testausharness: 12 fixture-pohjaista testiä (merge, decay, reinforcement, pruning, temporal, co-retrieval, realistinen skenario)
 
 ## Phase 7: Jatkokehitys ❌
 

@@ -32,29 +32,23 @@
   - [x] POSIX-polut, deterministinen järjestys
   - [x] Symlinkit, lukukielletyt tiedostot
 
-## 6.2 Migraatiopalvelu ✅ (logiikka) / ❌ (index.ts kytkentä)
+## 6.2 Migraatiopalvelu ✅
 
 - [x] **`src/migration-service.ts`** — migraatiologiikka
   - [x] `runMigration()`: tarkista db-state → discover → segment → enrich → store → mark done
   - [x] LLM-rikastus erissä `EnrichFn`:lla (4 segmenttiä/erä)
   - [x] `buildEnrichmentPrompt()` + `parseEnrichmentResponse()` — LLM-prompt ja -parsinta
-  - [x] `createLlmEnrichFn()` — factory `runEmbeddedPiAgent`-integraatiolle
   - [x] Heuristinen fallback: LLM-virhe → inferType/inferTemporalState
   - [x] Per-segmentti-virheenkäsittely
   - [x] Sub-segmenttien tuki (LLM voi pilkkoa)
-  - [x] Idempotenssi: db-state lippu estää uudelleenajon
-- [x] **Testit** (17 testiä)
-  - [x] Ei tiedostoja → no_files
-  - [x] Jo migratoitu → skipped
-  - [x] Tiedostoja löytyy → completed
-  - [x] LLM-virhe → fallback
-  - [x] Sub-segmentit
-  - [x] Idempotenssi
-  - [x] Store-virhe ei keskeytä
-- [ ] **index.ts kytkentä** — `api.registerService()` + deps wiring
-  - [ ] Kaappaa `api.runtime` register()-vaiheessa
-  - [ ] Kytke `MemoryManager.store()`, `db.getState/setState`, `createLlmEnrichFn()`
-  - [ ] ⚠️ Odota embed-provider-integration mergeä ennen kytkentää (index.ts konfliktialtis)
+  - [x] Idempotenssi: db-state lippu estää uudelleenajon (vain virheettömällä ajolla)
+- [x] **Testit** (17 testiä + workspace cleanup 10 testiä)
+- [x] **index.ts kytkentä** — `api.registerService()` + deps wiring
+  - [x] Direct LLM caller (`src/llm-caller.ts`) — Anthropic/OpenAI API suoraan fetchillä
+  - [x] Auth-profiilien luku `auth-profiles.json`:sta
+  - [x] `createDirectLlmEnrichFn()` — migraation enrichment
+  - [x] Workspace cleanup (`cleanupWorkspaceFiles`) ensimmäisellä käynnistyksellä
+  - [x] Startup gate — tool-kutsut odottavat migraation valmistumista
 
 ## 6.3 Sessiotranskriptit ❌
 
