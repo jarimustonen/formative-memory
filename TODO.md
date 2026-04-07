@@ -2,9 +2,9 @@
 
 > Plugin OpenClaw:lle. Arkkitehtuuri: `history/plan-context-engine-architecture-v2.md`
 
-## Tilanne (2026-04-04)
+## Tilanne (2026-04-07)
 
-**Valmista:** Infrastruktuuri, MemoryManager, context engine (Phase 3), konsolidaatio (Phase 4), `/memory sleep` komento, CLI-työkalu (Phase 5: stats, list, inspect, search, history, graph, export, import). 399 testiä läpi.
+**Valmista:** Infrastruktuuri, MemoryManager, context engine (Phase 3), konsolidaatio (Phase 4), `/memory sleep` komento, CLI-työkalu (Phase 5: stats, list, inspect, search, history, graph, export, import). Markdown-tiedostot (working.md, consolidated.md) ja .layout.json poistettu — DB on kanoninen datalähde.
 
 **Seuraava:** Phase 6 (memory-core-migraatio) — `openclaw memory migrate` + agentti-pohjainen LLM-rikastus.
 
@@ -14,7 +14,7 @@
 
 Kattava lista: `03-design-00-index.md`, Päätökset-taulukko. **Lue ne ja `plan-context-engine-architecture-v2.md` ennen koodausta.**
 
-Tiivistelmä: content hash (SHA-256), SQLite backend, working.md + consolidated.md, kaksisuuntaiset assosiaatiot, retrieval.log (append-only), 10-vaiheinen uniprosessi, vapaamuotoinen muistotyyppi, ei assosiaatio-boostia V1-haussa. **Uutta v2:ssa:** context engine -integraatio (assemble/afterTurn/compact/dispose), transcript fingerprinting, circuit breaker, turn memory ledger, provenance-taulut.
+Tiivistelmä: content hash (SHA-256), SQLite backend (kanoninen datalähde, ei markdown-tiedostoja), kaksisuuntaiset assosiaatiot, retrieval.log (append-only), 10-vaiheinen uniprosessi, vapaamuotoinen muistotyyppi, ei assosiaatio-boostia V1-haussa. **Uutta v2:ssa:** context engine -integraatio (assemble/afterTurn/compact/dispose), transcript fingerprinting, circuit breaker, turn memory ledger, provenance-taulut.
 
 ## Testausstrategia
 
@@ -31,9 +31,9 @@ Tiivistelmä: content hash (SHA-256), SQLite backend, working.md + consolidated.
 
 - [x] Projektin rakenne (TypeScript, plugin manifest, `kind: "memory"`)
 - [x] SQLite-skeema: memories, associations, memory_embeddings, memory_fts, state
-- [x] Tiedostoformaatti: working.md + consolidated.md chunkkimerkinnöillä
-- [x] Layout-manifesti (`.layout.json` + state-taulu)
-- [x] Muisto-olion luonti: hash, embedding, FTS-indeksointi, tiedostokirjoitus
+- [x] ~~Tiedostoformaatti: working.md + consolidated.md chunkkimerkinnöillä~~ → poistettu, DB on kanoninen
+- [x] ~~Layout-manifesti (`.layout.json` + state-taulu)~~ → poistettu, ei tarvita ilman markdown-tiedostoja
+- [x] Muisto-olion luonti: hash, embedding, FTS-indeksointi
 
 ## Phase 2: Työkalut ja retrieval ✅
 
@@ -218,11 +218,11 @@ Tiivistelmä: content hash (SHA-256), SQLite backend, working.md + consolidated.
 
 - [x] Working → consolidated: metadata-siirto, strength → 1.0 (vasta merge/prune jälkeen)
 - [x] Provenance GC: exposure >30d → poista
-- [x] Regeneroi `working.md` ja `consolidated.md` SQLite:stä
+- [x] ~~Regeneroi `working.md` ja `consolidated.md` SQLite:stä~~ → poistettu, DB on kanoninen
 - [x] Kirjoita `state.last_consolidation_at` (vasta kun kaikki onnistunut, finalization-transaktiossa)
-- [x] Testit: promote, markdown regeneration, empty state
+- [x] Testit: promote, empty state
 - [x] Plugin-rekisteröinti: `registerCommand` `/memory sleep`
-- [ ] `.layout.json` / state-versio päivitys regeneroinnin yhteydessä
+- [x] ~~`.layout.json` / state-versio päivitys~~ → ei tarvita, markdown-tiedostot ja layout poistettu
 
 ---
 

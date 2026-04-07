@@ -15,7 +15,6 @@ import {
   applyTemporalTransitions,
   promoteWorkingToConsolidated,
   provenanceGC,
-  regenerateMarkdownFiles,
   updateCoRetrievalAssociations,
   updateTransitiveAssociations,
 } from "./consolidation-steps.ts";
@@ -29,10 +28,6 @@ export type ConsolidationParams = {
   mergeContentProducer?: MergeContentProducer;
   /** Embedding generator for merged memories. */
   embedder?: EmbedderFn;
-  /** Path to working.md for markdown regeneration. */
-  workingPath?: string;
-  /** Path to consolidated.md for markdown regeneration. */
-  consolidatedPath?: string;
 };
 
 export type ConsolidationSummary = {
@@ -122,11 +117,6 @@ export async function runConsolidation(
     // Write completion timestamp
     params.db.setState("last_consolidation_at", new Date().toISOString());
   });
-
-  // Regenerate markdown files (outside transaction — file I/O)
-  if (params.workingPath && params.consolidatedPath) {
-    regenerateMarkdownFiles(params.db, params.workingPath, params.consolidatedPath);
-  }
 
   return {
     ok: true,

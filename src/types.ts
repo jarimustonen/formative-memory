@@ -33,10 +33,3 @@ export type RetrievalLogEntry = {
   comment?: string;
   context_ids?: string[];
 };
-
-export type LayoutManifest = {
-  layout: "associative-memory-v1";
-  schema_version: number;
-  created_at: string;
-  migrated_from?: string;
-};

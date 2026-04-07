@@ -1426,7 +1426,6 @@ describe("checkSleepDebt", () => {
       strength: 1.0,
       source: "agent_tool",
       consolidated: false,
-      file_path: "working.md",
     });
     const result = checkSleepDebt(() => sleepDb);
     expect(result).toContain("never been run");
@@ -1566,7 +1565,6 @@ describe("assemble temporal injection", () => {
       strength: 1.0,
       source: "agent_tool",
       consolidated: false,
-      file_path: "working.md",
     });
 
     const engine = makeEngine();
@@ -1592,7 +1590,6 @@ describe("assemble temporal injection", () => {
       strength: 1.0,
       source: "agent_tool",
       consolidated: false,
-      file_path: "working.md",
     });
 
     const engine = makeEngine();
@@ -1619,7 +1616,6 @@ describe("assemble temporal injection", () => {
       strength: 1.0,
       source: "agent_tool",
       consolidated: false,
-      file_path: "working.md",
     });
 
     // Same memory appears in semantic results

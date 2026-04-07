@@ -34,7 +34,6 @@ beforeEach(() => {
     strength: 0.8,
     source: "agent_tool",
     consolidated: false,
-    file_path: "working.md",
   });
   db.insertFts(
     "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111",
@@ -52,7 +51,6 @@ beforeEach(() => {
     strength: 0.5,
     source: "agent_tool",
     consolidated: true,
-    file_path: "consolidated.md",
   });
   db.insertFts(
     "bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222",

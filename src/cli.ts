@@ -554,7 +554,6 @@ function cmdImport(ctx: CliContext, args: string[]): void {
           consolidated: m.consolidated ?? false,
           source: (m.source ?? "agent_tool") as MemorySource,
           created_at: m.created_at,
-          file_path: m.file_path ?? (m.consolidated ? "consolidated.md" : "working.md"),
         });
         db.insertFts(m.id, m.content, m.type);
         counts.memories++;

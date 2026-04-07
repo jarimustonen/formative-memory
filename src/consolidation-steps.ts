@@ -7,8 +7,6 @@
  * Architecture: v2 §8 (reinforcement), §9 (consolidation).
  */
 
-import { writeFileSync } from "node:fs";
-import { formatChunkFile, type ChunkEntry } from "./chunks.ts";
 import type { MemoryDatabase } from "./db.ts";
 import type { TemporalState } from "./types.ts";
 
@@ -301,7 +299,7 @@ export function applyTemporalTransitions(db: MemoryDatabase): number {
 
 /**
  * Promote working memories to consolidated state.
- * Sets consolidated=1, file_path="consolidated.md".
+ * Sets consolidated=1.
  * Preserves current strength — reinforcement/decay dynamics are not reset.
  * Run AFTER merge/prune so only surviving working memories are promoted.
  *
@@ -312,7 +310,7 @@ export function promoteWorkingToConsolidated(db: MemoryDatabase): number {
   let count = 0;
 
   for (const mem of working) {
-    db.updateConsolidated(mem.id, true, "consolidated.md");
+    db.updateConsolidated(mem.id, true);
     count++;
   }
 
@@ -332,29 +330,3 @@ export function provenanceGC(db: MemoryDatabase, cutoffDays = 30): number {
   return db.deleteExposuresOlderThan(cutoffDate);
 }
 
-/**
- * Regenerate working.md and consolidated.md from SQLite canonical state.
- */
-export function regenerateMarkdownFiles(
-  db: MemoryDatabase,
-  workingPath: string,
-  consolidatedPath: string,
-): void {
-  const workingMemories = db.getWorkingMemories();
-  const consolidatedMemories = db.getConsolidatedMemories();
-
-  const toChunks = (rows: Array<{ id: string; type: string; content: string; created_at: string; strength: number }>): ChunkEntry[] =>
-    rows.map((m) => ({
-      id: m.id.slice(0, 8),
-      type: m.type,
-      created: m.created_at,
-      strength: m.strength,
-      content: m.content,
-    }));
-
-  const workingContent = formatChunkFile("Working Memory", toChunks(workingMemories));
-  const consolidatedContent = formatChunkFile("Consolidated Memory", toChunks(consolidatedMemories));
-
-  writeFileSync(workingPath, workingContent);
-  writeFileSync(consolidatedPath, consolidatedContent);
-}

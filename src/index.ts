@@ -586,8 +586,6 @@ const associativeMemoryPlugin = {
 
         const result = await runConsolidation({
           db: ws.manager.getDatabase(),
-          workingPath: join(ws.memoryDir, "working.md"),
-          consolidatedPath: join(ws.memoryDir, "consolidated.md"),
           mergeContentProducer,
         });
 

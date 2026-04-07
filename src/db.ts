@@ -9,9 +9,9 @@
  */
 
 import { DatabaseSync } from "node:sqlite";
-import type { Association, LayoutManifest, MemorySource, TemporalState } from "./types.ts";
+import type { Association, MemorySource, TemporalState } from "./types.ts";
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS memories (
@@ -23,8 +23,7 @@ CREATE TABLE IF NOT EXISTS memories (
   created_at TEXT NOT NULL,
   strength REAL NOT NULL DEFAULT 1.0,
   source TEXT NOT NULL,
-  consolidated INTEGER NOT NULL DEFAULT 0,
-  file_path TEXT NOT NULL
+  consolidated INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS associations (
@@ -107,7 +106,6 @@ export type MemoryRow = {
   strength: number;
   source: string;
   consolidated: number;
-  file_path: string;
 };
 
 export type ExposureRow = {
@@ -147,7 +145,18 @@ export class MemoryDatabase {
     this.db.exec(SCHEMA_SQL);
     const version = Number(this.getState("schema_version") ?? 0);
     if (version < SCHEMA_VERSION) {
+      this.migrate(version);
       this.setState("schema_version", String(SCHEMA_VERSION));
+    }
+  }
+
+  private migrate(fromVersion: number): void {
+    // v3 → v4: drop file_path column (markdown files removed, DB is canonical)
+    if (fromVersion >= 3 && fromVersion < 4) {
+      const cols = this.db.prepare("PRAGMA table_info(memories)").all() as Array<{ name: string }>;
+      if (cols.some((c) => c.name === "file_path")) {
+        this.db.exec("ALTER TABLE memories DROP COLUMN file_path");
+      }
     }
   }
 
@@ -180,12 +189,11 @@ export class MemoryDatabase {
     strength: number;
     source: MemorySource;
     consolidated: boolean;
-    file_path: string;
   }): void {
     this.db
       .prepare(
-        `INSERT INTO memories (id, type, content, temporal_state, temporal_anchor, created_at, strength, source, consolidated, file_path)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO memories (id, type, content, temporal_state, temporal_anchor, created_at, strength, source, consolidated)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         mem.id,
@@ -197,7 +205,6 @@ export class MemoryDatabase {
         mem.strength,
         mem.source,
         mem.consolidated ? 1 : 0,
-        mem.file_path,
       );
   }
 
@@ -248,10 +255,10 @@ export class MemoryDatabase {
     this.db.prepare("UPDATE memories SET strength = ? WHERE id = ?").run(strength, id);
   }
 
-  updateConsolidated(id: string, consolidated: boolean, filePath: string): void {
+  updateConsolidated(id: string, consolidated: boolean): void {
     this.db
-      .prepare("UPDATE memories SET consolidated = ?, file_path = ? WHERE id = ?")
-      .run(consolidated ? 1 : 0, filePath, id);
+      .prepare("UPDATE memories SET consolidated = ? WHERE id = ?")
+      .run(consolidated ? 1 : 0, id);
   }
 
   updateTemporalState(id: string, state: TemporalState): void {
@@ -812,18 +819,6 @@ export class MemoryDatabase {
       .prepare("SELECT old_id FROM memory_aliases WHERE new_id = ?")
       .all(newId) as Array<{ old_id: string }>;
     return rows.map((r) => r.old_id);
-  }
-
-  // -- Layout --
-
-  getLayoutManifest(): LayoutManifest | null {
-    const raw = this.getState("layout_manifest");
-    if (!raw) return null;
-    return JSON.parse(raw) as LayoutManifest;
-  }
-
-  setLayoutManifest(manifest: LayoutManifest): void {
-    this.setState("layout_manifest", JSON.stringify(manifest));
   }
 
   // -- Transaction helper --

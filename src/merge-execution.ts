@@ -123,7 +123,6 @@ export async function executeMerge(
           strength: 1.0,
           source: "consolidation" as MemorySource,
           consolidated: true,
-          file_path: "consolidated.md",
         });
         db.insertFts(newId, merged.content, merged.type);
         if (embedding) {

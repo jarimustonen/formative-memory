@@ -1,8 +1,7 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { parseChunks } from "./chunks.ts";
 import {
   DECAY_ASSOCIATION,
   DECAY_CONSOLIDATED,
@@ -19,7 +18,6 @@ import {
   applyReinforcement,
   applyTemporalTransitions,
   promoteWorkingToConsolidated,
-  regenerateMarkdownFiles,
   updateCoRetrievalAssociations,
   updateTransitiveAssociations,
 } from "./consolidation-steps.ts";
@@ -53,7 +51,6 @@ function insertMemory(
     strength,
     source: "agent_tool",
     consolidated,
-    file_path: consolidated ? "consolidated.md" : "working.md",
   });
 }
 
@@ -512,7 +509,6 @@ describe("applyTemporalTransitions", () => {
       strength: 1.0,
       source: "agent_tool",
       consolidated: false,
-      file_path: "working.md",
     });
 
     const count = applyTemporalTransitions(db);
@@ -532,7 +528,6 @@ describe("applyTemporalTransitions", () => {
       strength: 1.0,
       source: "agent_tool",
       consolidated: false,
-      file_path: "working.md",
     });
 
     const count = applyTemporalTransitions(db);
@@ -552,7 +547,6 @@ describe("applyTemporalTransitions", () => {
       strength: 1.0,
       source: "agent_tool",
       consolidated: false,
-      file_path: "working.md",
     });
 
     expect(applyTemporalTransitions(db)).toBe(0);
@@ -575,7 +569,6 @@ describe("applyTemporalTransitions", () => {
       strength: 1.0,
       source: "agent_tool",
       consolidated: false,
-      file_path: "working.md",
     });
 
     expect(applyTemporalTransitions(db)).toBe(0);
@@ -595,7 +588,6 @@ describe("promoteWorkingToConsolidated", () => {
     const memA = db.getMemory("mem-a")!;
     expect(memA.consolidated).toBe(1);
     expect(memA.strength).toBe(0.5); // preserved, not reset
-    expect(memA.file_path).toBe("consolidated.md");
 
     const memB = db.getMemory("mem-b")!;
     expect(memB.consolidated).toBe(1);
@@ -614,52 +606,3 @@ describe("promoteWorkingToConsolidated", () => {
   });
 });
 
-// -- regenerateMarkdownFiles --
-
-describe("regenerateMarkdownFiles", () => {
-  it("regenerates working.md and consolidated.md from DB state", () => {
-    insertMemory("mem-a", 0.8, false);
-    // Need content in DB for markdown generation
-    db.insertMemory({
-      id: "mem-c",
-      type: "decision",
-      content: "Consolidated decision about architecture",
-      temporal_state: "none",
-      temporal_anchor: null,
-      created_at: "2026-03-01T00:00:00Z",
-      strength: 0.9,
-      source: "consolidation",
-      consolidated: true,
-      file_path: "consolidated.md",
-    });
-
-    const workingPath = join(tmpDir, "working.md");
-    const consolidatedPath = join(tmpDir, "consolidated.md");
-
-    regenerateMarkdownFiles(db, workingPath, consolidatedPath);
-
-    const workingContent = readFileSync(workingPath, "utf8");
-    const consolidatedContent = readFileSync(consolidatedPath, "utf8");
-
-    expect(workingContent).toContain("Working Memory");
-    const workingChunks = parseChunks(workingContent);
-    expect(workingChunks).toHaveLength(1);
-    expect(workingChunks[0].content).toContain("content for mem-a");
-
-    expect(consolidatedContent).toContain("Consolidated Memory");
-    const consolidatedChunks = parseChunks(consolidatedContent);
-    expect(consolidatedChunks).toHaveLength(1);
-    expect(consolidatedChunks[0].content).toContain("Consolidated decision");
-  });
-
-  it("writes empty files when no memories exist", () => {
-    const workingPath = join(tmpDir, "working.md");
-    const consolidatedPath = join(tmpDir, "consolidated.md");
-
-    regenerateMarkdownFiles(db, workingPath, consolidatedPath);
-
-    const workingContent = readFileSync(workingPath, "utf8");
-    expect(workingContent).toContain("Working Memory");
-    expect(parseChunks(workingContent)).toHaveLength(0);
-  });
-});

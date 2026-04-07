@@ -33,7 +33,6 @@ function insertMemory(
     strength: opts?.strength ?? 0.8,
     source: (opts?.source ?? "agent_tool") as any,
     consolidated: opts?.consolidated ?? false,
-    file_path: opts?.consolidated ? "consolidated.md" : "working.md",
   });
   db.insertFts(id, content, "fact");
 }

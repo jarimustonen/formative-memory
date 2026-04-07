@@ -41,7 +41,6 @@ describe("MemoryDatabase", () => {
       strength: 1.0,
       source: "agent_tool" as const,
       consolidated: false,
-      file_path: "working.md",
     };
 
     it("inserts and retrieves memory with content", () => {
@@ -100,7 +99,6 @@ describe("MemoryDatabase", () => {
         ...sampleMemory,
         id: "def456",
         consolidated: true,
-        file_path: "consolidated.md",
       });
       expect(db.getWorkingMemories()).toHaveLength(1);
       expect(db.getConsolidatedMemories()).toHaveLength(1);
@@ -403,7 +401,6 @@ describe("MemoryDatabase", () => {
       strength: 0.8,
       source: "agent_tool" as const,
       consolidated: false,
-      file_path: "working.md",
     };
 
     it("replaces id in memories, FTS, embeddings and associations", () => {

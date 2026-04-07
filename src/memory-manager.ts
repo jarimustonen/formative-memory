@@ -1,6 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { appendChunk, formatChunkFile } from "./chunks.ts";
 import { MemoryDatabase, type MemoryRow } from "./db.ts";
 import {
   EmbeddingCircuitOpenError,
@@ -8,7 +7,7 @@ import {
 } from "./embedding-circuit-breaker.ts";
 import { contentHash } from "./hash.ts";
 import { appendRecallEvent, appendSearchEvent, appendStoreEvent } from "./retrieval-log.ts";
-import type { LayoutManifest, Memory, MemorySource, TemporalState } from "./types.ts";
+import type { Memory, MemorySource, TemporalState } from "./types.ts";
 
 /**
  * Embedding provider interface.
@@ -28,47 +27,17 @@ export type SearchResult = {
 export class MemoryManager {
   private db: MemoryDatabase;
   private memoryDir: string;
-  private workingPath: string;
-  private consolidatedPath: string;
   private logPath: string;
-  private layoutPath: string;
   private embedder: EmbeddingProvider;
 
   constructor(memoryDir: string, embedder: EmbeddingProvider) {
     this.memoryDir = memoryDir;
-    this.workingPath = join(memoryDir, "working.md");
-    this.consolidatedPath = join(memoryDir, "consolidated.md");
     this.logPath = join(memoryDir, "retrieval.log");
-    this.layoutPath = join(memoryDir, ".layout.json");
     this.embedder = embedder;
 
     mkdirSync(memoryDir, { recursive: true });
 
     this.db = new MemoryDatabase(join(memoryDir, "associations.db"));
-    this.ensureFiles();
-    this.ensureLayout();
-  }
-
-  private ensureFiles(): void {
-    if (!existsSync(this.workingPath)) {
-      writeFileSync(this.workingPath, formatChunkFile("Working Memory", []));
-    }
-    if (!existsSync(this.consolidatedPath)) {
-      writeFileSync(this.consolidatedPath, formatChunkFile("Consolidated Memory", []));
-    }
-  }
-
-  private ensureLayout(): void {
-    const manifest = this.db.getLayoutManifest();
-    if (!manifest) {
-      const layout: LayoutManifest = {
-        layout: "associative-memory-v1",
-        schema_version: 1,
-        created_at: new Date().toISOString(),
-      };
-      this.db.setLayoutManifest(layout);
-      writeFileSync(this.layoutPath, JSON.stringify(layout, null, 2) + "\n");
-    }
   }
 
   // -- Store --
@@ -119,25 +88,12 @@ export class MemoryManager {
         strength: 1.0,
         source: params.source,
         consolidated: false,
-        file_path: "working.md",
       });
       if (embedding) {
         this.db.setEmbedding(id, embedding);
       }
       this.db.insertFts(id, params.content, params.type);
     });
-
-    // Append to working.md
-    const fileContent = readFileSync(this.workingPath, "utf8");
-    writeFileSync(
-      this.workingPath,
-      appendChunk(fileContent, {
-        id: id.slice(0, 8),
-        type: params.type,
-        created: now,
-        content: params.content,
-      }),
-    );
 
     // Log store event
     appendStoreEvent(this.logPath, id, params.context_ids ?? []);

@@ -75,7 +75,6 @@ function loadFixture(
       strength: mem.strength ?? 1.0,
       source: (mem.source as any) ?? "agent_tool",
       consolidated: mem.consolidated ?? false,
-      file_path: mem.consolidated ? "consolidated.md" : "working.md",
     });
   }
 
