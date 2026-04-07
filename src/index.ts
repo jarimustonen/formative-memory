@@ -429,7 +429,7 @@ const associativeMemoryPlugin = {
     );
 
     api.registerCommand({
-      name: "memory sleep",
+      name: "memory-sleep",
       description: "Run memory consolidation (strengthens associations, merges duplicates, cleans up)",
       async handler() {
         const ws = getWorkspace(".");
@@ -441,11 +441,13 @@ const associativeMemoryPlugin = {
         });
 
         const s = result.summary;
-        return `Memory consolidation complete (${result.durationMs}ms).\n` +
-          `Reinforced: ${s.reinforced}, Decayed: ${s.decayed}, ` +
-          `Pruned: ${s.pruned} memories + ${s.prunedAssociations} associations, ` +
-          `Merged: ${s.merged}, Transitioned: ${s.transitioned}, ` +
-          `Promoted: ${s.promoted}, Exposure GC: ${s.exposuresGc}`;
+        return {
+          text: `Memory consolidation complete (${result.durationMs}ms).\n` +
+            `Reinforced: ${s.reinforced}, Decayed: ${s.decayed}, ` +
+            `Pruned: ${s.pruned} memories + ${s.prunedAssociations} associations, ` +
+            `Merged: ${s.merged}, Transitioned: ${s.transitioned}, ` +
+            `Promoted: ${s.promoted}, Exposure GC: ${s.exposuresGc}`,
+        };
       },
     });
   },
