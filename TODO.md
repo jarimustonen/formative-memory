@@ -289,10 +289,11 @@ Toimenpiteet löydösten perusteella (v2026.3.24 → v2026.4.5):
 ### 6.6.2 Temporaalinen injektio assemble():ssa ✅
 
 - [x] `db.getUpcomingMemories(from, to)` — temporaalinen DB-kysely
-- [x] `formatUpcomingMemories()` — `<upcoming_events>`-blokin formatointi
 - [x] Integraatio `assemble()`-funktioon: 7 päivän lookahead, dedup semantic-tulosten kanssa, ledger-tracking
-- [x] `escapeMemoryContent()`: `</upcoming_events>` escape lisätty
-- [x] Testit: 7 uutta testiä (formatointi, injektio, lookahead-raja, dedup)
+- [x] Yhdistetty `<memory_context>`-blokki: recalled + temporal samassa, luonteva ohjeistus
+- [x] Anchor-vertailu korjattu: käyttää päivän alkua joten tänään alkavat tapahtumat sisältyvät
+- [x] Testit: formatointi, injektio, lookahead-raja, dedup
+- [x] Live-testattu: Sylvia mainitsee lähipäivien tapahtumat luontevasti tervehdyksessä
 
 ### 6.6.3 Workspace-ohjeiden LLM-siivous käynnistyksessä ✅
 
