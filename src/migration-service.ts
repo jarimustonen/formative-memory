@@ -10,8 +10,7 @@
  */
 
 import { join } from "node:path";
-import { mkdirSync, existsSync, readFileSync, writeFileSync, copyFileSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { existsSync, readFileSync, writeFileSync, copyFileSync } from "node:fs";
 import type { ImportSegment, PrepareResult } from "./import-preprocess.ts";
 import { prepareImport } from "./import-preprocess.ts";
 
@@ -105,10 +104,8 @@ export async function runMigration(deps: MigrationDeps): Promise<MigrationResult
   }
 
   if (result.totalSegments === 0) {
-    logger.info("No memory-core files found. Marking migration as complete.");
-    dbState.set(STATE_KEY_COMPLETED, new Date().toISOString());
-    dbState.set(STATE_KEY_SOURCE_COUNT, "0");
-    dbState.set(STATE_KEY_SEGMENT_COUNT, "0");
+    // Don't mark complete — files may appear on a later startup (late mount, etc.)
+    logger.info("No memory-core files found. Will re-check on next startup.");
     return { status: "no_files", filesFound: 0, segmentsImported: 0 };
   }
 
@@ -133,13 +130,21 @@ export async function runMigration(deps: MigrationDeps): Promise<MigrationResult
       importErrors.push(msg);
 
       // Fallback: store with heuristic defaults
-      const stored = await storeBatchWithDefaults(batch, store, logger);
-      importedCount += stored;
+      try {
+        const stored = await storeBatchWithDefaults(batch, store, logger);
+        importedCount += stored;
+      } catch (fallbackErr) {
+        const fallbackMsg = `Batch ${Math.floor(i / BATCH_SIZE) + 1} fallback failed: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`;
+        logger.error(fallbackMsg);
+        importErrors.push(fallbackMsg);
+      }
     }
   }
 
-  // 4. Mark migration as complete
-  dbState.set(STATE_KEY_COMPLETED, new Date().toISOString());
+  // 4. Mark migration as complete only if no errors occurred
+  if (importErrors.length === 0) {
+    dbState.set(STATE_KEY_COMPLETED, new Date().toISOString());
+  }
   dbState.set(STATE_KEY_SOURCE_COUNT, String(result.files.length));
   dbState.set(STATE_KEY_SEGMENT_COUNT, String(importedCount));
 
@@ -302,11 +307,19 @@ Only include \`sub_segments\` if you split the segment. Respond ONLY with the JS
  */
 export function parseEnrichmentResponse(response: string): EnrichedSegment[] {
   try {
-    // Extract JSON from potential markdown code block
-    const jsonMatch = response.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) return [];
+    // Extract JSON: try fenced code block first, then raw parse, then bracket extraction
+    const fenced = response.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    let candidate = fenced ? fenced[1].trim() : response.trim();
 
-    const parsed = JSON.parse(jsonMatch[0]);
+    // If candidate doesn't start with [, try bracket extraction as last resort
+    if (!candidate.startsWith("[")) {
+      const start = candidate.indexOf("[");
+      const end = candidate.lastIndexOf("]");
+      if (start === -1 || end === -1 || end <= start) return [];
+      candidate = candidate.slice(start, end + 1);
+    }
+
+    const parsed = JSON.parse(candidate);
     if (!Array.isArray(parsed)) return [];
 
     return parsed.map((item: any) => ({
@@ -326,49 +339,6 @@ export function parseEnrichmentResponse(response: string): EnrichedSegment[] {
   } catch {
     return [];
   }
-}
-
-/**
- * Create an EnrichFn that uses runEmbeddedPiAgent.
- * The caller provides the runtime reference captured during register().
- */
-export function createLlmEnrichFn(opts: {
-  runEmbeddedPiAgent: (params: any) => Promise<any>;
-  sessionDir: string;
-  workspaceDir: string;
-  config?: any;
-}): EnrichFn {
-  return async (segments: ImportSegment[]): Promise<EnrichedSegment[]> => {
-    const prompt = buildEnrichmentPrompt(segments);
-    const sessionId = `memory-migration-${randomUUID()}`;
-    const sessionFile = join(opts.sessionDir, `${sessionId}.jsonl`);
-
-    // Ensure session directory exists
-    if (!existsSync(opts.sessionDir)) {
-      mkdirSync(opts.sessionDir, { recursive: true });
-    }
-
-    const result = await opts.runEmbeddedPiAgent({
-      sessionId,
-      sessionFile,
-      workspaceDir: opts.workspaceDir,
-      config: opts.config,
-      prompt,
-      timeoutMs: 60_000,
-      runId: `migration-${randomUUID()}`,
-      trigger: "memory" as const,
-      disableTools: true, // Pure classification, no tools needed
-      bootstrapContextMode: "lightweight" as const,
-    });
-
-    // Extract text from result payloads
-    const text = result?.payloads
-      ?.filter((p: any) => p.type === "text")
-      ?.map((p: any) => p.text)
-      ?.join("") ?? "";
-
-    return parseEnrichmentResponse(text);
-  };
 }
 
 // -- Workspace file cleanup --
@@ -451,14 +421,27 @@ export async function cleanupWorkspaceFiles(
   );
 
   const modified: string[] = [];
+  let hadFailure = false;
 
   for (const file of filesToClean) {
     try {
       const cleaned = await llm(buildWorkspaceCleanupPrompt(file.name, file.content));
 
-      // Validate: LLM should return non-empty content shorter than original
+      // Validate: LLM should return non-empty content
       if (!cleaned || cleaned.trim().length < 20) {
         logger.warn(`LLM returned empty/too-short result for ${file.name}. Skipping.`);
+        hadFailure = true;
+        continue;
+      }
+
+      // Retention ratio: reject if LLM removed too much content.
+      // Memory instructions are typically 20-30% of the file; removing >50% is suspicious.
+      const retentionRatio = cleaned.trim().length / file.content.length;
+      if (retentionRatio < 0.4) {
+        logger.warn(
+          `LLM removed too much content from ${file.name} (${Math.round(retentionRatio * 100)}% retained). Skipping to prevent data loss.`,
+        );
+        hadFailure = true;
         continue;
       }
 
@@ -475,13 +458,18 @@ export async function cleanupWorkspaceFiles(
       logger.warn(
         `Failed to clean ${file.name}: ${err instanceof Error ? err.message : String(err)}`,
       );
+      hadFailure = true;
     }
   }
 
-  dbState.set(STATE_KEY_WORKSPACE_CLEANED, new Date().toISOString());
+  // Only mark complete if all target files were handled successfully.
+  // Failed files will be retried on next startup.
+  if (!hadFailure) {
+    dbState.set(STATE_KEY_WORKSPACE_CLEANED, new Date().toISOString());
+  }
 
   return {
-    status: modified.length > 0 ? "cleaned" : "clean",
+    status: hadFailure && modified.length === 0 ? "error" : modified.length > 0 ? "cleaned" : "clean",
     filesModified: modified.length > 0 ? modified : undefined,
   };
 }

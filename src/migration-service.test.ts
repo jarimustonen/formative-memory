@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildEnrichmentPrompt,
   cleanupWorkspaceFiles,
-  createLlmEnrichFn,
   hasFileMemoryInstructions,
   parseEnrichmentResponse,
   runMigration,
@@ -96,7 +95,7 @@ describe("runMigration", () => {
     expect(deps.store).not.toHaveBeenCalled();
   });
 
-  it("marks complete with no_files when no memory-core files found", async () => {
+  it("returns no_files without marking complete when no memory-core files found", async () => {
     const deps = createMockDeps();
 
     const result = await runMigration(deps);
@@ -104,8 +103,8 @@ describe("runMigration", () => {
     expect(result.status).toBe("no_files");
     expect(result.filesFound).toBe(0);
     expect(result.segmentsImported).toBe(0);
-    expect(deps.dbState.get("migration_completed_at")).toBeTruthy();
-    expect(deps.dbState.get("migration_source_count")).toBe("0");
+    // Should NOT mark complete — files may appear later (late mount, etc.)
+    expect(deps.dbState.get("migration_completed_at")).toBeNull();
   });
 
   it("discovers, enriches, and stores memories", async () => {
@@ -376,8 +375,13 @@ describe("cleanupWorkspaceFiles", () => {
         set: (key, value) => state.set(key, value),
       },
       llm: vi.fn(async (prompt: string) => {
-        // Mock LLM: return content without memory instructions
-        return "# Cleaned content\n\nThis file has been cleaned.";
+        // Mock LLM: extract and return most of the original content, minus memory parts.
+        // Must pass retention ratio check (>40% of original).
+        const match = prompt.match(/Here is the current content of .*?:\n\n([\s\S]*)/);
+        const original = match?.[1] ?? "";
+        // Return ~80% of original to pass retention ratio
+        const kept = original.slice(0, Math.max(30, Math.floor(original.length * 0.8)));
+        return kept || "# Cleaned content\n\nThis file has been cleaned and memory instructions removed.";
       }),
       logger: { info: vi.fn(), warn: vi.fn() },
       ...overrides,
@@ -452,7 +456,7 @@ Use weather to check forecasts.`,
     expect(result.status).toBe("clean");
   });
 
-  it("skips file if LLM returns too-short content", async () => {
+  it("skips file if LLM returns too-short content and reports error", async () => {
     writeFileSync(join(tmpDir, "AGENTS.md"), "Update MEMORY.md with stuff\n\nLots of content here.");
     const deps = createCleanupDeps({
       llm: vi.fn(async () => ""),
@@ -460,8 +464,10 @@ Use weather to check forecasts.`,
 
     const result = await cleanupWorkspaceFiles(deps);
 
-    expect(result.status).toBe("clean");
+    expect(result.status).toBe("error");
     expect(deps.logger.warn).toHaveBeenCalled();
+    // Should NOT mark as completed — will retry next startup
+    expect(deps.dbState.get("workspace_cleanup_completed_at")).toBeNull();
   });
 
   it("continues if LLM fails for one file", async () => {

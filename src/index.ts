@@ -9,8 +9,8 @@
  * - Internal tick-based time perception
  */
 
-import { join } from "node:path";
-import { existsSync, readFileSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
+import { readFileSync } from "node:fs";
 import { Type } from "@sinclair/typebox";
 import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk";
 import {
@@ -44,25 +44,32 @@ const AUTH_PROFILE_FILENAME = "auth-profiles.json";
 
 /**
  * Read API keys from auth-profiles.json.
- * Tries agentDir first, then stateDir/agents/main/agent/.
+ * Tries agentDir first, then stateDir/agents/main/agent/ as fallback
+ * (hardcoded "main" — works for single-agent setups which is the common case).
  */
 function readAuthProfiles(
   stateDir?: string,
   agentDir?: string,
+  logger?: { warn: (msg: string) => void },
 ): Record<string, { provider?: string; key?: string }> | null {
   const candidates = [
-    agentDir && join(agentDir, AUTH_PROFILE_FILENAME),
-    stateDir && join(stateDir, "agents", "main", "agent", AUTH_PROFILE_FILENAME),
-  ].filter(Boolean) as string[];
+    agentDir ? join(agentDir, AUTH_PROFILE_FILENAME) : undefined,
+    stateDir ? join(stateDir, "agents", "main", "agent", AUTH_PROFILE_FILENAME) : undefined,
+  ].filter((p): p is string => Boolean(p));
 
-  for (const path of candidates) {
+  for (const filePath of candidates) {
     try {
-      if (existsSync(path)) {
-        const data = JSON.parse(readFileSync(path, "utf-8"));
-        return data.profiles ?? null;
+      const raw = readFileSync(filePath, "utf-8");
+      const data = JSON.parse(raw);
+      if (!data || typeof data !== "object" || typeof data.profiles !== "object") {
+        logger?.warn(`Invalid auth profile format: ${filePath}`);
+        continue;
       }
-    } catch {
-      // Continue to next candidate
+      return data.profiles;
+    } catch (err: any) {
+      if (err?.code !== "ENOENT") {
+        logger?.warn(`Failed to read auth profiles from ${filePath}: ${err.message}`);
+      }
     }
   }
   return null;
@@ -75,8 +82,9 @@ function readAuthProfiles(
 function resolveLlmConfig(
   stateDir?: string,
   agentDir?: string,
+  logger?: { warn: (msg: string) => void },
 ): LlmCallerConfig | null {
-  const profiles = readAuthProfiles(stateDir, agentDir);
+  const profiles = readAuthProfiles(stateDir, agentDir, logger);
   const resolved = resolveApiKey(profiles ?? undefined, "anthropic");
   if (!resolved) return null;
   return { provider: resolved.provider, apiKey: resolved.apiKey };
@@ -100,16 +108,58 @@ function jsonResult(payload: unknown) {
   };
 }
 
-function resolveMemoryDir(config: AssociativeMemoryConfig, workspaceDir: string): string {
+/**
+ * Resolve the memory database directory from plugin config.
+ * Uses api.resolvePath for ~ expansion (cross-platform) when available,
+ * falls back to manual resolution.
+ */
+function resolveMemoryDir(
+  config: AssociativeMemoryConfig,
+  workspaceDir: string,
+  pathResolver?: (input: string) => string,
+): string {
   const dbPath = config.dbPath;
-  if (dbPath.startsWith("~")) {
-    const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
-    return dbPath.replace("~", home);
+
+  // Use OpenClaw's path resolver if available (handles ~, ~user, cross-platform)
+  if (pathResolver) {
+    const resolved = pathResolver(dbPath);
+    return isAbsolute(resolved) ? resolved : join(workspaceDir, resolved);
   }
-  if (dbPath.startsWith("/")) {
+
+  // Manual fallback
+  if (dbPath === "~" || dbPath.startsWith("~/")) {
+    const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
+    return join(home, dbPath.slice(dbPath.startsWith("~/") ? 2 : 1));
+  }
+  if (isAbsolute(dbPath)) {
     return dbPath;
   }
   return join(workspaceDir, dbPath);
+}
+
+// -- Embedding provider resolution --
+
+/**
+ * Try to create an embedding provider directly via SDK factory functions.
+ * Used when the memory-core plugin is disabled and the global registry is empty.
+ * Factory returns { provider, client } — we extract the provider.
+ */
+async function tryDirectProviderFactory(
+  providerId: string,
+  openclawConfig: OpenClawConfig,
+  agentDir?: string,
+  model?: string,
+): Promise<MemoryEmbeddingProvider | null> {
+  const factories: Record<string, (opts: any) => Promise<any>> = {
+    openai: createOpenAiEmbeddingProvider,
+    gemini: createGeminiEmbeddingProvider,
+  };
+  const factory = factories[providerId];
+  if (!factory) return null;
+
+  const result = await factory({ config: openclawConfig, agentDir, model: model ?? "" });
+  const provider = result?.provider ?? result;
+  return provider?.embedQuery ? provider : null;
 }
 
 /**
@@ -126,12 +176,13 @@ async function resolveEmbeddingProvider(
   agentDir?: string,
   model?: string,
 ): Promise<MemoryEmbeddingProvider> {
+  const errors: string[] = [];
+
   if (providerId === "auto") {
     const adapters = listMemoryEmbeddingProviders()
       .filter((a) => typeof a.autoSelectPriority === "number")
       .toSorted((a, b) => (a.autoSelectPriority ?? Infinity) - (b.autoSelectPriority ?? Infinity));
 
-    const errors: string[] = [];
     for (const adapter of adapters) {
       try {
         const result = await adapter.create({
@@ -142,28 +193,17 @@ async function resolveEmbeddingProvider(
         if (result.provider) return result.provider;
       } catch (err) {
         errors.push(`${adapter.id}: ${err instanceof Error ? err.message : String(err)}`);
-        continue;
       }
     }
-    // Fallback: when no adapters are registered (memory-core disabled),
-    // try creating providers directly via SDK factory functions.
+
+    // Fallback: registry empty (memory-core disabled) — try direct factories
     if (adapters.length === 0) {
-      const directProviders = [
-        { id: "gemini", create: createGeminiEmbeddingProvider },
-        { id: "openai", create: createOpenAiEmbeddingProvider },
-      ];
-      for (const dp of directProviders) {
+      for (const id of ["gemini", "openai"] as const) {
         try {
-          const result = await dp.create({
-            config: openclawConfig,
-            agentDir,
-            model: model ?? "",
-          });
-          // Factory returns { provider, client } — extract the provider.
-          const provider = result?.provider ?? result;
-          if (provider?.embedQuery) return provider;
+          const provider = await tryDirectProviderFactory(id, openclawConfig, agentDir, model);
+          if (provider) return provider;
         } catch (err) {
-          errors.push(`${dp.id} (direct): ${err instanceof Error ? err.message : String(err)}`);
+          errors.push(`${id} (direct): ${err instanceof Error ? err.message : String(err)}`);
         }
       }
     }
@@ -173,7 +213,7 @@ async function resolveEmbeddingProvider(
     );
   }
 
-  // Try registry first, then fall back to direct factory creation.
+  // Explicit provider ID — try registry first, then direct factory
   const adapter = getMemoryEmbeddingProvider(providerId);
   if (adapter) {
     const result = await adapter.create({
@@ -185,21 +225,10 @@ async function resolveEmbeddingProvider(
     throw new Error(`Embedding provider "${providerId}" returned no provider instance`);
   }
 
-  // Registry empty (memory-core disabled) — create directly via SDK factories.
-  const factories: Record<string, (opts: any) => Promise<any>> = {
-    openai: createOpenAiEmbeddingProvider,
-    gemini: createGeminiEmbeddingProvider,
-  };
-  const factory = factories[providerId];
-  if (!factory) {
-    throw new Error(`Unknown embedding provider: "${providerId}"`);
-  }
-  const result = await factory({ config: openclawConfig, agentDir, model: model ?? "" });
-  const provider = result?.provider ?? result;
-  if (!provider?.embedQuery) {
-    throw new Error(`Embedding provider "${providerId}" returned no usable provider`);
-  }
-  return provider;
+  const directProvider = await tryDirectProviderFactory(providerId, openclawConfig, agentDir, model);
+  if (directProvider) return directProvider;
+
+  throw new Error(`Unknown embedding provider: "${providerId}"`);
 }
 
 // -- Workspace --
@@ -220,8 +249,9 @@ function createWorkspace(
   openclawConfig: OpenClawConfig,
   agentDir?: string,
   logger?: { warn: (...args: unknown[]) => void },
+  pathResolver?: (input: string) => string,
 ): ManagedWorkspace {
-  const memoryDir = resolveMemoryDir(config, workspaceDir);
+  const memoryDir = resolveMemoryDir(config, workspaceDir, pathResolver);
   const circuitBreaker = new EmbeddingCircuitBreaker({
     onLateSettlement: (outcome, err) => {
       logger?.warn(
@@ -270,6 +300,7 @@ function createMemoryTools(
   getManager: () => MemoryManager,
   getLogPath: () => string,
   ledger?: TurnMemoryLedger,
+  awaitStartup?: () => Promise<void>,
 ): AnyAgentTool[] {
   const storeTool: AnyAgentTool = {
     name: "memory_store",
@@ -307,6 +338,7 @@ function createMemoryTools(
       ),
     }),
     async execute(_toolCallId, params) {
+      await awaitStartup?.();
       const memory = await getManager().store({
         content: params.content,
         type: params.type,
@@ -336,6 +368,7 @@ function createMemoryTools(
       limit: Type.Optional(Type.Number({ description: "Max results to return (default: 5)" })),
     }),
     async execute(_toolCallId, params) {
+      await awaitStartup?.();
       const results = await getManager().search(params.query, params.limit);
       ledger?.addSearchResults(
         results.map((r) => ({ id: r.memory.id, score: r.score, query: params.query })),
@@ -363,6 +396,7 @@ function createMemoryTools(
       id: Type.String({ description: "Memory ID (full SHA-256 hash or 8-char prefix)" }),
     }),
     async execute(_toolCallId, params) {
+      await awaitStartup?.();
       const memory = getManager().getMemory(params.id);
       if (!memory) {
         return jsonResult({ error: "Memory not found", id: params.id });
@@ -418,25 +452,57 @@ const associativeMemoryPlugin = {
     const logger = api.logger;
     const ledger = new TurnMemoryLedger();
 
-    // Single lazy workspace — created on first tool call, shared by all
-    // consumers (tools, context engine, commands) within this registration.
+    // Runtime state captured from service/tool contexts for use by commands.
+    const runtimePaths: { stateDir?: string; agentDir?: string } = {};
+
+    // Startup gate: tools/context/commands await this before accessing DB
+    // to avoid races with migration. Resolves when service start() completes.
+    let startupResolve: () => void;
+    let startupDone = false;
+    const startupPromise = new Promise<void>((resolve) => {
+      startupResolve = () => { startupDone = true; resolve(); };
+    });
+    // If no service runs (e.g. tests, or service registration not supported), unblock quickly.
+    // In production the service start() always calls startupResolve() in its finally block.
+    const startupTimeoutMs = process.env.NODE_ENV === "test" ? 0 : 30_000;
+    if (startupTimeoutMs > 0) {
+      setTimeout(() => { if (!startupDone) startupResolve(); }, startupTimeoutMs);
+    } else {
+      // Unblock immediately in test environment (microtask to preserve async ordering)
+      Promise.resolve().then(() => { if (!startupDone) startupResolve(); });
+    }
+
+    // Single lazy workspace — created on first access, shared by all consumers.
+    // NOTE: Context engine and command pass "." because ContextEngineFactory
+    // receives no runtime context (workspaceDir/agentDir). This is a known
+    // limitation — see history/proposal-context-engine-factory-context.md.
+    // In practice, the service start() always runs first and initializes the
+    // workspace with the correct path before any tool/engine call.
     let workspace: ManagedWorkspace | null = null;
 
     const getWorkspace = (workspaceDir: string, agentDir?: string): ManagedWorkspace => {
       if (!workspace) {
-        workspace = createWorkspace(config, workspaceDir, openclawConfig, agentDir, logger);
+        workspace = createWorkspace(
+          config, workspaceDir, openclawConfig, agentDir, logger, api.resolvePath,
+        );
       }
       return workspace;
+    };
+
+    const awaitStartup = async (): Promise<void> => {
+      if (!startupDone) await startupPromise;
     };
 
     api.registerTool(
       (ctx) => {
         const workspaceDir = ctx.workspaceDir ?? ctx.agentDir ?? ".";
+        runtimePaths.agentDir ??= ctx.agentDir;
         const ws = getWorkspace(workspaceDir, ctx.agentDir);
         return createMemoryTools(
           () => ws.manager,
           () => join(ws.memoryDir, "retrieval.log"),
           ledger,
+          awaitStartup,
         );
       },
       { names: ["memory_store", "memory_search", "memory_get", "memory_feedback"] },
@@ -496,10 +562,11 @@ const associativeMemoryPlugin = {
       name: "memory-sleep",
       description: "Run memory consolidation (strengthens associations, merges duplicates, cleans up)",
       async handler() {
+        await awaitStartup();
         const ws = getWorkspace(".");
 
-        // Resolve LLM for merge content production
-        const llmConfig = resolveLlmConfig(undefined, undefined);
+        // Resolve LLM for merge — uses runtime paths captured from service/tool context
+        const llmConfig = resolveLlmConfig(runtimePaths.stateDir, runtimePaths.agentDir, logger);
         const mergeContentProducer = llmConfig
           ? async (
               a: { id: string; content: string; type: string },
@@ -519,12 +586,14 @@ const associativeMemoryPlugin = {
         });
 
         const s = result.summary;
+        const llmNote = mergeContentProducer ? "" : "\n(LLM merge unavailable — used concatenation fallback)";
         return {
           text: `Memory consolidation complete (${result.durationMs}ms).\n` +
             `Reinforced: ${s.reinforced}, Decayed: ${s.decayed}, ` +
             `Pruned: ${s.pruned} memories + ${s.prunedAssociations} associations, ` +
             `Merged: ${s.merged}, Transitioned: ${s.transitioned}, ` +
-            `Promoted: ${s.promoted}, Exposure GC: ${s.exposuresGc}`,
+            `Promoted: ${s.promoted}, Exposure GC: ${s.exposuresGc}` +
+            llmNote,
         };
       },
     });
@@ -534,68 +603,86 @@ const associativeMemoryPlugin = {
     api.registerService({
       id: "memory-associative-migration",
       async start(ctx) {
-        const llmConfig = resolveLlmConfig(ctx.stateDir);
-        const ws = getWorkspace(ctx.workspaceDir ?? ".");
+        try {
+          // Capture runtime paths for later use by commands
+          runtimePaths.stateDir = ctx.stateDir;
 
-        // 1. Workspace file cleanup (remove file-based memory instructions)
-        if (llmConfig && ctx.workspaceDir) {
-          try {
-            const cleanupResult = await cleanupWorkspaceFiles({
-              workspaceDir: ctx.workspaceDir,
-              dbState: {
-                get: (key) => ws.manager.getDatabase().getState(key),
-                set: (key, value) => ws.manager.getDatabase().setState(key, value),
-              },
-              llm: (prompt) => callLlm(prompt, llmConfig),
-              logger: ctx.logger,
-            });
-            if (cleanupResult.status === "cleaned") {
-              ctx.logger.info(
-                `Workspace cleanup: modified ${cleanupResult.filesModified?.join(", ")}`,
+          const llmConfig = resolveLlmConfig(ctx.stateDir, undefined, ctx.logger);
+          const ws = getWorkspace(ctx.workspaceDir ?? ".");
+
+          // 1. Workspace file cleanup (remove file-based memory instructions)
+          if (llmConfig && ctx.workspaceDir) {
+            try {
+              const cleanupResult = await cleanupWorkspaceFiles({
+                workspaceDir: ctx.workspaceDir,
+                dbState: {
+                  get: (key) => ws.manager.getDatabase().getState(key),
+                  set: (key, value) => ws.manager.getDatabase().setState(key, value),
+                },
+                llm: (prompt) => callLlm(prompt, llmConfig),
+                logger: ctx.logger,
+              });
+              if (cleanupResult.status === "cleaned") {
+                ctx.logger.info(
+                  `Workspace cleanup: modified ${cleanupResult.filesModified?.join(", ")}`,
+                );
+              } else if (cleanupResult.status === "error") {
+                ctx.logger.warn("Workspace cleanup completed with errors — will retry on next startup");
+              }
+            } catch (err) {
+              ctx.logger.warn(
+                `Workspace cleanup failed: ${err instanceof Error ? err.message : String(err)}`,
               );
             }
-          } catch (err) {
-            ctx.logger.warn(
-              `Workspace cleanup failed: ${err instanceof Error ? err.message : String(err)}`,
-            );
           }
-        }
 
-        // 2. Memory-core migration (import old memories)
-        if (ctx.workspaceDir) {
-          try {
-            const enrichFn: EnrichFn = llmConfig
-              ? createDirectLlmEnrichFn(llmConfig)
-              : async (segments) =>
-                  segments.map((seg) => ({
-                    id: seg.id,
-                    type: seg.evergreen ? "fact" : "observation",
-                    temporal_state: seg.date ? "past" : "none",
-                    temporal_anchor: seg.date,
-                  }));
+          // 2. Memory-core migration (import old memories)
+          if (ctx.workspaceDir) {
+            try {
+              const enrichFn: EnrichFn = llmConfig
+                ? createDirectLlmEnrichFn(llmConfig)
+                : async (segments) =>
+                    segments.map((seg) => ({
+                      id: seg.id,
+                      type: seg.evergreen ? "fact" : "observation",
+                      temporal_state: seg.date ? "past" : "none",
+                      temporal_anchor: seg.date,
+                    }));
 
-            const migrationResult = await runMigration({
-              workspaceDir: ctx.workspaceDir,
-              stateDir: ctx.stateDir,
-              store: (params) => ws.manager.store(params),
-              dbState: {
-                get: (key) => ws.manager.getDatabase().getState(key),
-                set: (key, value) => ws.manager.getDatabase().setState(key, value),
-              },
-              enrich: enrichFn,
-              logger: ctx.logger,
-            });
+              const migrationResult = await runMigration({
+                workspaceDir: ctx.workspaceDir,
+                stateDir: ctx.stateDir,
+                store: (params) => ws.manager.store(params),
+                dbState: {
+                  get: (key) => ws.manager.getDatabase().getState(key),
+                  set: (key, value) => ws.manager.getDatabase().setState(key, value),
+                },
+                enrich: enrichFn,
+                logger: ctx.logger,
+              });
 
-            if (migrationResult.status === "completed") {
-              ctx.logger.info(
-                `Migration: imported ${migrationResult.segmentsImported} memories from ${migrationResult.filesFound} files`,
+              if (migrationResult.status === "completed") {
+                ctx.logger.info(
+                  `Migration: imported ${migrationResult.segmentsImported} memories from ${migrationResult.filesFound} files`,
+                );
+              }
+              if (migrationResult.errors && migrationResult.errors.length > 0) {
+                ctx.logger.warn(
+                  `Migration completed with ${migrationResult.errors.length} errors — some memories may need re-import`,
+                );
+              }
+            } catch (err) {
+              ctx.logger.warn(
+                `Migration failed: ${err instanceof Error ? err.message : String(err)}`,
               );
             }
-          } catch (err) {
-            ctx.logger.warn(
-              `Migration failed: ${err instanceof Error ? err.message : String(err)}`,
-            );
           }
+        } catch (err) {
+          ctx.logger.warn(
+            `Service startup failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        } finally {
+          startupResolve();
         }
       },
     });
