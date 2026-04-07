@@ -565,18 +565,24 @@ const associativeMemoryPlugin = {
         await awaitStartup();
         const ws = getWorkspace(".");
 
-        // Resolve LLM for merge — uses runtime paths captured from service/tool context
+        // Resolve LLM for merge — required for consolidation
         const llmConfig = resolveLlmConfig(runtimePaths.stateDir, runtimePaths.agentDir, logger);
-        const mergeContentProducer = llmConfig
-          ? async (
-              a: { id: string; content: string; type: string },
-              b: { id: string; content: string; type: string },
-            ) => {
-              const prompt = `Merge these two memory notes into a single, concise note that preserves all information. Return ONLY the merged content text, nothing else.\n\nMemory A (${a.type}):\n${a.content}\n\nMemory B (${b.type}):\n${b.content}`;
-              const content = await callLlm(prompt, llmConfig);
-              return { content: content.trim(), type: a.type };
-            }
-          : undefined;
+        if (!llmConfig) {
+          return {
+            text: "⚠️ Memory consolidation failed: no LLM API key found.\n" +
+              "Consolidation requires an Anthropic or OpenAI API key in auth-profiles.json " +
+              "to merge duplicate memories. Other consolidation steps (decay, pruning) were not run.",
+          };
+        }
+
+        const mergeContentProducer = async (
+          a: { id: string; content: string; type: string },
+          b: { id: string; content: string; type: string },
+        ) => {
+          const prompt = `Merge these two memory notes into a single, concise note that preserves all information. Return ONLY the merged content text, nothing else.\n\nMemory A (${a.type}):\n${a.content}\n\nMemory B (${b.type}):\n${b.content}`;
+          const content = await callLlm(prompt, llmConfig);
+          return { content: content.trim(), type: a.type };
+        };
 
         const result = await runConsolidation({
           db: ws.manager.getDatabase(),
@@ -586,14 +592,12 @@ const associativeMemoryPlugin = {
         });
 
         const s = result.summary;
-        const llmNote = mergeContentProducer ? "" : "\n(LLM merge unavailable — used concatenation fallback)";
         return {
           text: `Memory consolidation complete (${result.durationMs}ms).\n` +
             `Reinforced: ${s.reinforced}, Decayed: ${s.decayed}, ` +
             `Pruned: ${s.pruned} memories + ${s.prunedAssociations} associations, ` +
             `Merged: ${s.merged}, Transitioned: ${s.transitioned}, ` +
-            `Promoted: ${s.promoted}, Exposure GC: ${s.exposuresGc}` +
-            llmNote,
+            `Promoted: ${s.promoted}, Exposure GC: ${s.exposuresGc}`,
         };
       },
     });

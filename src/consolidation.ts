@@ -52,12 +52,6 @@ export type ConsolidationResult = {
   durationMs: number;
 };
 
-/** Default content producer — simple concatenation (no LLM). */
-const defaultContentProducer: MergeContentProducer = async (a, b) => ({
-  content: `${a.content}\n\n${b.content}`,
-  type: a.type,
-});
-
 /**
  * Run the full consolidation process.
  *
@@ -65,12 +59,15 @@ const defaultContentProducer: MergeContentProducer = async (a, b) => ({
  * in a single transaction. Merge execution runs separately because
  * the content producer may be async (LLM call). Finalization
  * (promote, GC, markdown regen) runs in its own transaction.
+ *
+ * If no mergeContentProducer is provided, the merge phase is skipped entirely.
+ * Concatenation is not acceptable — merging requires an LLM to produce
+ * coherent, deduplicated content.
  */
 export async function runConsolidation(
   params: ConsolidationParams,
 ): Promise<ConsolidationResult> {
   const start = Date.now();
-  const producer = params.mergeContentProducer ?? defaultContentProducer;
 
   const summary: ConsolidationSummary = {
     reinforced: 0,
@@ -98,19 +95,22 @@ export async function runConsolidation(
     summary.prunedAssociations = pruneResult.associationsPruned;
   });
 
-  // Phase 4.4 — Merge candidate detection (pure, no mutations)
-  const allMemories = params.db.getAllMemories();
-  const candidates: MemoryCandidate[] = allMemories.map((m) => ({
-    id: m.id,
-    content: m.content,
-    embedding: params.db.getEmbedding(m.id),
-  }));
-  const pairs = findMergeCandidates(candidates);
+  // Phase 4.4–4.5 — Merge (requires LLM content producer)
+  if (params.mergeContentProducer) {
+    const allMemories = params.db.getAllMemories();
+    const candidates: MemoryCandidate[] = allMemories.map((m) => ({
+      id: m.id,
+      content: m.content,
+      embedding: params.db.getEmbedding(m.id),
+    }));
+    const pairs = findMergeCandidates(candidates);
 
-  // Phase 4.5 — Merge execution (async content producer, then DB transaction per merge)
-  if (pairs.length > 0) {
-    const mergeResults = await executeMerges(params.db, pairs, producer, params.embedder);
-    summary.merged = mergeResults.length;
+    if (pairs.length > 0) {
+      const mergeResults = await executeMerges(
+        params.db, pairs, params.mergeContentProducer, params.embedder,
+      );
+      summary.merged = mergeResults.length;
+    }
   }
 
   // Transaction 2: Finalization
