@@ -6,7 +6,13 @@
  */
 
 import { createHash } from "node:crypto";
-import type { ContextEngine, ContextEngineInfo } from "openclaw/plugin-sdk";
+import type {
+  AssembleResult,
+  CompactResult,
+  ContextEngine,
+  ContextEngineInfo,
+  IngestResult,
+} from "openclaw/plugin-sdk";
 import { delegateCompactionToRuntime } from "openclaw/plugin-sdk";
 import { processAfterTurn } from "./after-turn.ts";
 import type { MemoryDatabase } from "./db.ts";
@@ -314,7 +320,7 @@ export function createAssociativeMemoryContextEngine(
   return {
     info,
 
-    async assemble(params) {
+    async assemble(params): Promise<AssembleResult> {
       const budgetClass = classifyBudget(params.tokenBudget, params.messages);
 
       if (budgetClass === "none") {
@@ -490,11 +496,11 @@ export function createAssociativeMemoryContextEngine(
       }
     },
 
-    async ingest(_params) {
+    async ingest(_params): Promise<IngestResult> {
       return { ingested: false };
     },
 
-    async compact(params) {
+    async compact(params): Promise<CompactResult> {
       return delegateCompactionToRuntime(params);
     },
 

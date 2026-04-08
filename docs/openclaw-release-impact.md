@@ -49,10 +49,10 @@ Tämä dokumentti seuraa OpenClaw-pääohjelman julkaisuja ja arvioi niiden vaik
 
 ### Toimenpiteet
 
-- [ ] Tarkista `assemble()`-metodi `src/context-engine.ts`:ssa: tukeeko se `prompt`-parametria vai luottaako runtime-fallbackiin
-- [ ] Tarkista `compact()`-metodi: onko `delegateCompactionToRuntime()`-kutsu yhteensopiva uuden flush-sopimuksen kanssa
-- [ ] Varmista embedding provider -toiminta split-runtime-tilanteessa
-- [ ] Päivitä `peerDependency` tarvittaessa
+- [x] Tarkista `assemble()`-metodi: tukee `prompt`-parametria (rivi 379: `params.prompt ?? null`)
+- [x] Tarkista `compact()`-metodi: `delegateCompactionToRuntime()` delegoi runtimelle — yhteensopiva
+- [x] Varmista embedding provider -toiminta split-runtime-tilanteessa — toteutettu Phase 6.5:ssa
+- [x] Päivitä `peerDependency` — nostettu `>=2026.4.5`
 
 ---
 
@@ -84,8 +84,8 @@ Tämä dokumentti seuraa OpenClaw-pääohjelman julkaisuja ja arvioi niiden vaik
 
 ### Toimenpiteet
 
-- [ ] **Kriittinen:** Harkitse `openclaw.plugin.json` `kind`-kentän päivittämistä `"memory"` → `["memory", "context-engine"]` dual-slot-omistajuuden eksplisiittiseksi ilmoittamiseksi
-- [ ] Tarkista ettei mikään tuontimme käytä deprecoituja legacy plugin-sdk-polkuja (nykyiset polut `openclaw/plugin-sdk` ja `openclaw/plugin-sdk/memory-core-host-engine-embeddings` ovat turvallisia)
+- [x] **Kriittinen:** `openclaw.plugin.json` `kind` päivitetty `["memory", "context-engine"]`
+- [x] Tarkistettu: tuonnit käyttävät `openclaw/plugin-sdk` ja `openclaw/plugin-sdk/memory-core-host-engine-embeddings` — ei deprecoituja polkuja
 - [ ] Varmista plugin-asennus toimii uuden security scan -politiikan kanssa
 - [ ] Harkitse FTS-fallback-hakua tilanteisiin joissa embedding-provider ei ole saatavilla
 
@@ -162,8 +162,8 @@ Tämä dokumentti seuraa OpenClaw-pääohjelman julkaisuja ja arvioi niiden vaik
 
 ### Toimenpiteet
 
-- [ ] **Suositus:** Päivitä `src/context-engine.ts` käyttämään eksplisiittisiä palautustyyppejä `AssembleResult`, `CompactResult` jne. SDK:sta
-- [ ] **Suositus:** Päivitä `peerDependencies.openclaw` vähintään `>=2026.3.31` (tai `>=2026.4.5` jos halutaan hyödyntää uusia context-engine-tyyppejä)
-- [ ] Arvioi meidän `memory sleep` -konsolidaation suhde `memory-core`:n uuteen dreaming-järjestelmään — onko päällekkäisyyttä tai integraatiomahdollisuuksia?
-- [ ] Harkitse `kind: ["memory", "context-engine"]` -päivitystä `openclaw.plugin.json`:iin (jo suositeltu v2026.3.31:ssä)
+- [x] **Suositus:** `src/context-engine.ts` päivitetty käyttämään `AssembleResult`, `CompactResult`, `IngestResult` SDK:sta
+- [x] **Suositus:** `peerDependencies.openclaw` nostettu `>=2026.4.5`
+- [x] Dreaming vs. consolidation -analyysi: `history/analysis-dreaming-vs-consolidation.md`. Ei päällekkäisyyttä, ei toimenpiteitä.
+- [x] `kind: ["memory", "context-engine"]` päivitetty `openclaw.plugin.json`:iin
 - [ ] Tutustu uusiin memory-host-aliaksiin (`memory-host-core`, `memory-host-files`, `memory-host-markdown`) — voiko niistä olla hyötyä?

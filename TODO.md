@@ -267,21 +267,22 @@ Tiivistelmä: content hash (SHA-256), SQLite backend (kanoninen datalähde, ei m
 
 Toimenpiteet löydösten perusteella (v2026.3.24 → v2026.4.5):
 
-- [ ] **Päivitä `openclaw.plugin.json`:** `kind: "memory"` → `kind: ["memory", "context-engine"]` — eksplisiittinen dual-slot-omistajuus (v2026.3.31 multi-kind plugin -tuki)
-- [ ] **Päivitä context engine -tyypit:** käytä SDK:n `AssembleResult`, `CompactResult`, `IngestResult` jne. eksplisiittisiä palautustyyppejä (v2026.4.5 exportit)
-- [ ] **Tarkista `assemble()` prompt-parametri:** tukeeko meidän toteutus uutta `prompt`-kenttää vai luottaako se runtime-fallbackiin? (v2026.3.28)
-- [ ] **Arvioi `memory sleep` vs. dreaming:** OpenClaw:n `memory-core` sai kokeellisen dreaming-järjestelmän (light/deep/REM) — miten tämä suhtautuu meidän konsolidaatioon? (v2026.4.5)
-- [ ] **Päivitä `peerDependencies.openclaw`:** nosta minimivaatimus `>=2026.3.31` tai `>=2026.4.5`
+- [x] **Päivitä `openclaw.plugin.json`:** `kind: "memory"` → `kind: ["memory", "context-engine"]` — eksplisiittinen dual-slot-omistajuus (v2026.3.31 multi-kind plugin -tuki)
+- [x] **Päivitä context engine -tyypit:** käytä SDK:n `AssembleResult`, `CompactResult`, `IngestResult` jne. eksplisiittisiä palautustyyppejä (v2026.4.5 exportit)
+- [x] **Tarkista `assemble()` prompt-parametri:** tuettu (rivi 379: `params.prompt ?? null`) — ei tarvetta muutoksille
+- [x] **Arvioi `memory sleep` vs. dreaming:** Analyysi `history/analysis-dreaming-vs-consolidation.md`. Ei päällekkäisyyttä — eri datamalli, eri abstraktiotaso, eri triggerit. Ei toimenpiteitä.
+- [x] **Päivitä `peerDependencies.openclaw`:** nostettu `>=2026.4.5`
 
 ---
 
-## Phase 6.5: OpenClaw embedding provider -integraatio ❌
+## Phase 6.5: OpenClaw embedding provider -integraatio ✅
 
 > Suunnitelma: `history/plan-embedding-provider-integration.md`
+> Review: `history/review-embedding-provider-integration.md`, `history/review-embedding-provider-integration-final.md`
 
-- [ ] Korvaa oma `createEmbedder()` (hardkoodattu OpenAI fetch) OpenClaw:n `getMemoryEmbeddingProvider()` -rajapinnalla
-- [ ] Poista `embedding.apiKey` plugin-configista — avaimet resolvataan auth-profileista / models.providers -konfiguraatiosta
-- [ ] Päivitä testit
+- [x] Korvaa oma `createEmbedder()` (hardkoodattu OpenAI fetch) OpenClaw:n `getMemoryEmbeddingProvider()` -rajapinnalla
+- [x] Poista `embedding.apiKey` plugin-configista — avaimet resolvataan auth-profileista / models.providers -konfiguraatiosta
+- [x] Päivitä testit
 
 ## Phase 6.6: Live-testauksen löydökset
 
@@ -356,8 +357,8 @@ Toimenpiteet löydösten perusteella (v2026.3.24 → v2026.4.5):
 
 ### 6.6.9 Live-testauksen löydökset (2026-04-08) ❌
 
-- [ ] LLM-enrichment tuottaa `**bold**`-merkintöjä muistoihin — pitäisi stripata
-- [ ] Yksi muisto jäi englanniksi vaikka kieliohje on (Video Summary -segmentti)
+- [~] ~~LLM-enrichment tuottaa `**bold**`-merkintöjä muistoihin~~ — kosmeettinen, ei puututa
+- [~] ~~Yksi muisto jäi englanniksi (Video Summary -segmentti)~~ — yksittäistapaus, ei puututa
 - [ ] Assemble recall palauttaa vain 5 muistoa — metakysymykset eivät toimi hyvin → Phase 7 metahaku
 
 - [x] Poistettu default concatenation merge — konsolidaatio vaatii LLM:n
