@@ -2,6 +2,12 @@
 created: 2026-04-08T19:00:00+03:00
 source_branch: main
 task: Research sleep architecture — scheduled consolidation, REM-like learning, biological concepts
+merged: 2026-04-08T21:00:54+03:00
+commits:
+  - hash: ac55e9a
+    message: "docs: add sleep architecture plans — scheduled consolidation, delta-merge, promotion bugfix"
+  - hash: 6ef2dfa
+    message: "docs: add worktree prompt for research-sleep-architecture"
 ---
 
 # Task: Nukkumisarkkitehtuurin tutkimus — aikataulutettu konsolidaatio ja REM-oppiminen

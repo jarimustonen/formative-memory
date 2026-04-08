@@ -372,7 +372,42 @@ Toimenpiteet löydösten perusteella (v2026.3.24 → v2026.4.8):
 - [x] `/memory-sleep` failaa selkeällä virheilmoituksella jos API-avainta ei löydy
 - [x] Konsolidaation testausharness: 12 fixture-pohjaista testiä (merge, decay, reinforcement, pruning, temporal, co-retrieval, realistinen skenario)
 
-## Phase 7: Jatkokehitys ❌
+## Phase 7: Konsolidaation parannukset ❌
+
+> Tutkimus tehty worktreessä `research-sleep-architecture` (2026-04-08).
+
+### 7.1 Aikataulutettu konsolidaatio ❌
+
+> Suunnitelma: `history/plan-scheduled-consolidation.md`
+
+- [ ] Catch-up decay: `applyCatchUpDecay()` — kompensoi väliin jääneet konsolidaatioajot
+- [ ] Temporaalisten tilojen erillinen 12h ajo: `runTemporalTransitionsOnly()`
+- [ ] Cron-integraatio: päivittäinen konsolidaatio klo 03:00, temporaaliset siirtymät klo 03:00 ja 15:00
+- [ ] Manuaalinen `/memory sleep` säilyy (catch-up toimii automaattisesti)
+
+### 7.2 Delta-merge ja promootio-bugfix ❌
+
+> Suunnitelma: `history/plan-delta-merge-and-promotion-bugfix.md`
+
+- [ ] Delta-merge: rajatut source/target-joukot (vahvat, uudet, käytetyt muistot) O(N²):n sijaan
+- [ ] **Bugfix:** poista virheellinen `promoteWorkingToConsolidated()` — consolidated-tila syntyy vain mergessä
+
+### 7.3 REM-oppiminen (myöhemmin) ❌
+
+Viikoittainen LLM-pohjainen analyysi joka tuottaa toisen asteen tietoartefakteja muistoklustereista. Erillinen suunnittelu tehdään kun 7.1–7.2 ovat valmiita.
+
+**Tavoitteet:**
+- **Teema-analyysi** — tunnistaa toistuvia teemoja ja tiivistää ne
+- **Ristiriitojen tunnistus** — löytää muistoja jotka ovat keskenään ristiriidassa tai edustavat temporaalista muutosta
+
+**Arkkitehtuuriperiaatteet:**
+- Erillinen `derived_artifacts`-taulukko — ei samassa haussa kuin kanoniset muistot
+- Strukturoitu putki: deterministiset SQL-louhijat → LLM-synteesi → tallennus
+- REM-tuotteet eivät muuta kanonisia muistoja, eivät osallistu mergeen, eivät tue toisiaan
+- Haetaan vain eksplisiittisellä toolilla, ei automaattisessa recallissa
+- TTL: artefaktit ilman tukea vanhenevat ja prunautuvat
+
+## Phase 8: Jatkokehitys ❌
 
 - [x] **Metahaku (broad recall)** — `memory_browse` työkalu laajoille muistokatsauksille
   - Toteutettu tool-pohjaisena: LLM kutsuu `memory_browse` kun tarvitsee laajan katsauksen
