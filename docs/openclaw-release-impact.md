@@ -167,3 +167,51 @@ Tämä dokumentti seuraa OpenClaw-pääohjelman julkaisuja ja arvioi niiden vaik
 - [x] Dreaming vs. consolidation -analyysi: `history/analysis-dreaming-vs-consolidation.md`. Ei päällekkäisyyttä, ei toimenpiteitä.
 - [x] `kind: ["memory", "context-engine"]` päivitetty `openclaw.plugin.json`:iin
 - [ ] Tutustu uusiin memory-host-aliaksiin (`memory-host-core`, `memory-host-files`, `memory-host-markdown`) — voiko niistä olla hyötyä?
+
+---
+
+## v2026.4.7
+
+**Julkaistu:** 2026-04-07
+**Vaikutus:** 🟡 Kohtalainen — uusia mahdollisuuksia, ei breaking changeja pluginille
+
+### Pluginiin vaikuttavat muutokset
+
+- **Pluggable compaction provider registry** (#56224) — Uusi `registerCompactionProvider()` API. Pluginit voivat nyt korvata OpenClaw:n sisäänrakennetun compaction-pipelinen omalla logiikalla. Konfiguraatio: `agents.defaults.compaction.provider`. Fallback LLM-summarisaatioon jos custom provider epäonnistuu. **Vaikutus:** meidän plugin delegoi compactionin runtimelle (`delegateCompactionToRuntime()`), joten ei välitöntä vaikutusta. **Mahdollisuus:** tulevaisuudessa voisimme tarjota muistipohjaista compaction-logiikkaa.
+- **Prompt-cache telemetry exposed to context engines** (#62179) — `ContextEngineRuntimeContext` saa uuden `promptCache`-kentän: retention policy, usage (input/output/cacheRead/cacheWrite tokens), observation data, expiry. Uudet tyypit: `ContextEnginePromptCacheInfo`, `ContextEnginePromptCacheRetention`, `ContextEnginePromptCacheUsage`. **Vaikutus:** meidän `afterTurn()` ja `compact()` saavat nyt `runtimeContext`-parametrissa cache-metadataa. Ei vaadi muutoksia, mutta **mahdollisuus:** cache-tietoinen muistipäätöksenteko (esim. muistojen priorisointi kun cache eviktoituu).
+- **Memory wiki restoration** — Bundled `memory-wiki`-pino palautettu: structured claim/evidence, compiled digest retrieval, claim-health linting, contradiction clustering, freshness-weighted search. **Vaikutus:** ei suora vaikutus, mutta rinnakkaiseloa seurattava.
+- **Config contract schema in plugin manifests** — Plugin-manifestiin uusi `configContracts`-kenttä: `dangerousFlags` ja `secretInputs` -deklaraatiot. **Vaikutus:** meillä ei ole salaisuuksia configissa (apiKey poistettu Phase 6.5:ssa). Ei välittömiä toimenpiteitä.
+- **Runtime-ready provider auth exposure** (v2026.4.7-1 hotfix, #62753) — Uudet plugin-sdk exportit: `resolveApiKeyForProvider()`, `getRuntimeAuthForModel()`. **Mahdollisuus:** voisimme yksinkertaistaa auth-resoluutiota embedding-providerien kanssa.
+- **Uudet SDK-tyypit:** `MemoryPluginCapability`, `MemoryPluginPublicArtifact`, `MemoryPluginPublicArtifactsProvider`, `buildMemorySystemPromptAddition` — memory-plugin-kyvykkyyksien julkiset tyypit. **Mahdollisuus:** strukturoitu kyvykkyysrekisteröinti.
+- **Subagent bootstrap context mode** — `bootstrapContextRunKind: "default"` ei enää lähetetä implisiittisesti. Ei vaikuta meidän pluginiin (ei spawn subagenteja).
+
+### Breaking changes
+
+- **Config alias removal** (#60726) — Legacy config-aliakset (`talk.voiceId`, `agents.*.sandbox.perSession` jne.) poistettu. Ei koske tätä pluginia.
+
+### Toimenpiteet
+
+- [ ] Harkitse prompt-cache-telemetrian hyödyntämistä `afterTurn()`/`compact()`-metodeissa (ei kiireellinen)
+- [ ] Harkitse `resolveApiKeyForProvider()` -käyttöä auth-resoluution yksinkertaistamiseen
+- [ ] Seuraa memory-wiki -rinnakkaiseloa
+
+---
+
+## v2026.4.8
+
+**Julkaistu:** 2026-04-08
+**Vaikutus:** 🟢 Ei vaikutusta — bundled plugin packaging, channel setup, infrakorjauksia
+
+### Pluginiin vaikuttavat muutokset
+
+- **Bundled plugins: packaged plugin compatibility metadata aligned with release version** — Koskee vain bundled plugineja, ei kolmannen osapuolen plugineja.
+- **Plugin-SDK: uusi `provider-web-search-config-contract` export** — Additiivinen muutos web search -providereille. Ei koske tätä pluginia.
+- **Manifest-driven contract inventory** — OpenClaw lukee kyvykkyydet manifestista ilman runtime-latausta. Positiivinen muutos: nopeampi plugin discovery.
+
+### Breaking changes
+
+- Ei breaking changeja.
+
+### Toimenpiteet
+
+- Ei toimenpiteitä.

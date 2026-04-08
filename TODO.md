@@ -4,9 +4,9 @@
 
 ## Tilanne (2026-04-08)
 
-**Valmista:** Infrastruktuuri, MemoryManager, context engine (Phase 3), konsolidaatio (Phase 4), `/memory sleep` komento, CLI-työkalu (Phase 5), memory-core-migraatio (Phase 6.1–6.2). DB on kanoninen datalähde (markdown-tiedostot poistettu). Migraatio ja workspace-siivous ajetaan automaattisesti (lazy init) ensimmäisellä tool-kutsulla. Live-testattu Sylvialla.
+**Valmista:** Infrastruktuuri, MemoryManager, context engine (Phase 3), konsolidaatio (Phase 4), `/memory sleep` komento, CLI-työkalu (Phase 5), memory-core-migraatio (Phase 6.1–6.2), embedding provider -integraatio (Phase 6.5), OpenClaw release impact -katselmus (v2026.3.24–v2026.4.8). DB on kanoninen datalähde (markdown-tiedostot poistettu). Migraatio ja workspace-siivous ajetaan automaattisesti (lazy init) ensimmäisellä tool-kutsulla. Live-testattu Sylvialla.
 
-**Seuraava:** Live-testaus ja stabilointi. OpenClaw release impact -toimenpiteet. Go-to-Market.
+**Seuraava:** Live-testaus ja stabilointi. Go-to-Market.
 
 **V1-periaate:** Yksinkertainen ja laajennettava. Minimoi hot path -kirjoitukset, mutta salli append-only sidecar-kirjoitukset normaalikäytössä (retrieval.log, provenance). Kanoniset muistomutaatiot (strength, assosiaatiot, pruning, merget, temporaaliset siirtymät) vain konsolidaatiossa.
 
@@ -265,13 +265,16 @@ Tiivistelmä: content hash (SHA-256), SQLite backend (kanoninen datalähde, ei m
 > Seurantatiedosto: `docs/openclaw-release-impact.md` — jokaisen OpenClaw-julkaisun vaikutusarvio pluginiin.
 > Prosessikuvaus: `docs/AGENTS.md`
 
-Toimenpiteet löydösten perusteella (v2026.3.24 → v2026.4.5):
+Toimenpiteet löydösten perusteella (v2026.3.24 → v2026.4.8):
 
 - [x] **Päivitä `openclaw.plugin.json`:** `kind: "memory"` → `kind: ["memory", "context-engine"]` — eksplisiittinen dual-slot-omistajuus (v2026.3.31 multi-kind plugin -tuki)
 - [x] **Päivitä context engine -tyypit:** käytä SDK:n `AssembleResult`, `CompactResult`, `IngestResult` jne. eksplisiittisiä palautustyyppejä (v2026.4.5 exportit)
 - [x] **Tarkista `assemble()` prompt-parametri:** tuettu (rivi 379: `params.prompt ?? null`) — ei tarvetta muutoksille
 - [x] **Arvioi `memory sleep` vs. dreaming:** Analyysi `history/analysis-dreaming-vs-consolidation.md`. Ei päällekkäisyyttä — eri datamalli, eri abstraktiotaso, eri triggerit. Ei toimenpiteitä.
 - [x] **Päivitä `peerDependencies.openclaw`:** nostettu `>=2026.4.5`
+- [ ] Harkitse prompt-cache-telemetrian hyödyntämistä `afterTurn()`/`compact()`-metodeissa (v2026.4.7, ei kiireellinen)
+- [ ] Harkitse `resolveApiKeyForProvider()` -käyttöä auth-resoluution yksinkertaistamiseen (v2026.4.7-1)
+- [ ] Seuraa memory-wiki -rinnakkaiseloa (v2026.4.7)
 
 ---
 
