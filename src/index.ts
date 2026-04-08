@@ -362,6 +362,7 @@ function createWorkspace(
           workspaceDir,
           stateDir: initDeps.stateDir ?? workspaceDir,
           store: (params) => ws.manager.store(params),
+          updateStrength: (id, strength) => ws.manager.getDatabase().updateStrength(id, strength),
           dbState,
           enrich: enrichFn,
           logger: log ?? { info: () => {}, warn: () => {}, error: () => {} },
@@ -688,6 +689,7 @@ const associativeMemoryPlugin = {
           workspaceDir: ".",
           stateDir: runtimePaths.stateDir ?? ".",
           store: (params) => ws.manager.store(params),
+          updateStrength: (id, strength) => db.updateStrength(id, strength),
           dbState: {
             get: (key) => db.getState(key),
             set: (key, value) => db.setState(key, value),

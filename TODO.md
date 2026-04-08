@@ -345,6 +345,10 @@ Toimenpiteet löydösten perusteella (v2026.3.24 → v2026.4.5):
 
 ## Phase 7: Jatkokehitys ❌
 
+- [ ] **Metahaku (broad recall)** — assemble():n recall-strategia avoimille kysymyksille
+  - **Ongelma:** Nykyinen recall käyttää viimeistä käyttäjäviestiä raakana hakuna. "Kerro mitä muistat minusta?" ei ole hyvä BM25/embedding-query — se on metakysymys joka tarvitsee laajan katsauksen, ei yksittäistä faktamatchausta. Tulos: palautuu 5 satunnaista osumaa vahvojen ja relevanttien muistojen sijaan.
+  - **Ratkaisu:** Erillinen metahaku-funktio joka tunnistaa avoimet/laajat kysymykset ja hakee monipuolisesti: top-by-strength, per-type-sampling, kategoriahaku. Normaali recall jatkaa toimimaan tarkkoihin kysymyksiin.
+  - **Harkittavia lähestymistapoja:** query rewriting (LLM tiivistää hakutermiksi), monihaku (useita queryja eri näkökulmista), budget-nosto geneerisille kysymyksille, top-by-strength fallback
 - [ ] **Async signal analysis** (afterTurn, fire-and-forget, fast model)
   - Prompt design: konteksti, signaalityypit, false positive -hallinta, output-skeema, trigger-policy
   - Kirjoittaa provenance-storeen itsenäisesti (WAL + busy_timeout)

@@ -54,6 +54,8 @@ export type MigrationDeps = {
   workspaceDir: string;
   stateDir: string;
   store: StoreMemoryFn;
+  /** Update strength of a stored memory. Used to apply age-based decay after import. */
+  updateStrength?: (id: string, strength: number) => void;
   dbState: DbStateFn;
   enrich: EnrichFn;
   logger: {
@@ -77,6 +79,25 @@ const STATE_KEY_COMPLETED = "migration_completed_at";
 const STATE_KEY_SOURCE_COUNT = "migration_source_count";
 const STATE_KEY_SEGMENT_COUNT = "migration_segment_count";
 const BATCH_SIZE = 4;
+
+/** Consolidated decay factor per day — same as consolidation-steps.ts DECAY_CONSOLIDATED. */
+const DECAY_PER_DAY = 0.977;
+/** Minimum strength after decay — below this the memory would be pruned anyway. */
+const MIN_IMPORT_STRENGTH = 0.05;
+
+/**
+ * Calculate age-based strength for an imported memory.
+ * Uses consolidated decay (0.977/day) applied for each day since the segment's date.
+ * Segments without a date get strength 1.0 (no decay).
+ */
+function calculateImportStrength(segmentDate: string | null): number {
+  if (!segmentDate) return 1.0;
+  const ageMs = Date.now() - new Date(segmentDate).getTime();
+  if (ageMs <= 0) return 1.0;
+  const ageDays = ageMs / (24 * 60 * 60 * 1000);
+  const strength = Math.pow(DECAY_PER_DAY, ageDays);
+  return Math.max(strength, MIN_IMPORT_STRENGTH);
+}
 
 // -- Main --
 
@@ -122,7 +143,7 @@ export async function runMigration(deps: MigrationDeps): Promise<MigrationResult
 
     try {
       const enriched = await enrichBatch(batch, enrich, logger);
-      const stored = await storeBatch(batch, enriched, store, logger);
+      const stored = await storeBatch(batch, enriched, store, logger, deps.updateStrength);
       importedCount += stored;
     } catch (err) {
       const msg = `Batch ${Math.floor(i / BATCH_SIZE) + 1} failed: ${err instanceof Error ? err.message : String(err)}`;
@@ -131,7 +152,7 @@ export async function runMigration(deps: MigrationDeps): Promise<MigrationResult
 
       // Fallback: store with heuristic defaults
       try {
-        const stored = await storeBatchWithDefaults(batch, store, logger);
+        const stored = await storeBatchWithDefaults(batch, store, logger, deps.updateStrength);
         importedCount += stored;
       } catch (fallbackErr) {
         const fallbackMsg = `Batch ${Math.floor(i / BATCH_SIZE) + 1} fallback failed: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`;
@@ -181,6 +202,7 @@ async function storeBatch(
   enriched: Map<number, EnrichedSegment>,
   store: StoreMemoryFn,
   logger: MigrationDeps["logger"],
+  updateStrength?: (id: string, strength: number) => void,
 ): Promise<number> {
   let count = 0;
 
@@ -188,25 +210,27 @@ async function storeBatch(
     const meta = enriched.get(seg.id);
     try {
       if (meta?.sub_segments && meta.sub_segments.length > 0) {
-        // LLM split the segment into sub-segments
         for (const sub of meta.sub_segments) {
-          await store({
+          const result = await store({
             content: sub.content,
             type: sub.type,
             source: "import",
             temporal_state: sub.temporal_state,
             temporal_anchor: sub.temporal_anchor,
           });
+          applyImportDecay(result.id, sub.temporal_anchor ?? seg.date, updateStrength);
           count++;
         }
       } else {
-        await store({
+        const anchor = meta?.temporal_anchor ?? seg.date;
+        const result = await store({
           content: seg.content,
           type: meta?.type ?? inferType(seg),
           source: "import",
           temporal_state: meta?.temporal_state ?? inferTemporalState(seg),
-          temporal_anchor: meta?.temporal_anchor ?? seg.date,
+          temporal_anchor: anchor,
         });
+        applyImportDecay(result.id, anchor, updateStrength);
         count++;
       }
     } catch (err) {
@@ -221,18 +245,20 @@ async function storeBatchWithDefaults(
   segments: ImportSegment[],
   store: StoreMemoryFn,
   logger: MigrationDeps["logger"],
+  updateStrength?: (id: string, strength: number) => void,
 ): Promise<number> {
   let count = 0;
 
   for (const seg of segments) {
     try {
-      await store({
+      const result = await store({
         content: seg.content,
         type: inferType(seg),
         source: "import",
         temporal_state: inferTemporalState(seg),
         temporal_anchor: seg.date,
       });
+      applyImportDecay(result.id, seg.date, updateStrength);
       count++;
     } catch (err) {
       logger.warn(`Failed to store segment ${seg.id} (fallback): ${err instanceof Error ? err.message : String(err)}`);
@@ -240,6 +266,19 @@ async function storeBatchWithDefaults(
   }
 
   return count;
+}
+
+/** Apply age-based decay to an imported memory. */
+function applyImportDecay(
+  id: string,
+  date: string | null,
+  updateStrength?: (id: string, strength: number) => void,
+): void {
+  if (!updateStrength || !date) return;
+  const strength = calculateImportStrength(date);
+  if (strength < 1.0) {
+    updateStrength(id, strength);
+  }
 }
 
 // -- Heuristic inference (fallback when LLM unavailable) --
