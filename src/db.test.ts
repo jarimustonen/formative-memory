@@ -103,6 +103,30 @@ describe("MemoryDatabase", () => {
       expect(db.getWorkingMemories()).toHaveLength(1);
       expect(db.getConsolidatedMemories()).toHaveLength(1);
     });
+
+    it("getTopByStrength returns memories ordered by strength descending", () => {
+      db.insertMemory({ ...sampleMemory, id: "weak", strength: 0.3 });
+      db.insertMemory({ ...sampleMemory, id: "strong", strength: 0.9 });
+      db.insertMemory({ ...sampleMemory, id: "medium", strength: 0.6 });
+      db.insertMemory({ ...sampleMemory, id: "dead", strength: 0.02 }); // below threshold
+
+      const results = db.getTopByStrength(10);
+      expect(results).toHaveLength(3); // dead excluded
+      expect(results[0].id).toBe("strong");
+      expect(results[1].id).toBe("medium");
+      expect(results[2].id).toBe("weak");
+    });
+
+    it("getTopByStrength respects limit", () => {
+      db.insertMemory({ ...sampleMemory, id: "a", strength: 0.9 });
+      db.insertMemory({ ...sampleMemory, id: "b", strength: 0.8 });
+      db.insertMemory({ ...sampleMemory, id: "c", strength: 0.7 });
+
+      const results = db.getTopByStrength(2);
+      expect(results).toHaveLength(2);
+      expect(results[0].id).toBe("a");
+      expect(results[1].id).toBe("b");
+    });
   });
 
   describe("embeddings", () => {

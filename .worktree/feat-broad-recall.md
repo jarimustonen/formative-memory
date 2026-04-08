@@ -2,6 +2,12 @@
 created: 2026-04-08T18:45:00+03:00
 source_branch: main
 task: Design and implement broad recall for open-ended queries
+merged: 2026-04-08T20:19:13+03:00
+commits:
+  - hash: 1a3e150
+    message: "feat: add memory_browse tool for broad recall"
+  - hash: 088c4cb
+    message: "docs: add worktree prompt for feat-broad-recall"
 ---
 
 # Task: Metahaku (Broad Recall) — Phase 7

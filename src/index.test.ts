@@ -146,10 +146,10 @@ describe("plugin registration", () => {
     const api = fakeApi();
     plugin.register(api as any);
 
-    expect(api.registerCommand).toHaveBeenCalledOnce();
-    const cmd = api.registerCommand.mock.calls[0][0];
-    expect(cmd.name).toBe("memory-sleep");
-    expect(cmd.handler).toBeTypeOf("function");
+    const cmds = api.registerCommand.mock.calls.map((c: any) => c[0]);
+    const sleepCmd = cmds.find((c: any) => c.name === "memory-sleep");
+    expect(sleepCmd).toBeDefined();
+    expect(sleepCmd.handler).toBeTypeOf("function");
   });
 
   it("registers a context engine", () => {
@@ -184,7 +184,7 @@ describe("plugin registration", () => {
     expect(api.registerMemoryPromptSection).toHaveBeenCalledOnce();
     const builder = api.registerMemoryPromptSection.mock.calls[0][0] as Function;
 
-    const allTools = new Set(["memory_store", "memory_search", "memory_get", "memory_feedback"]);
+    const allTools = new Set(["memory_store", "memory_search", "memory_get", "memory_feedback", "memory_browse"]);
     const lines = builder({ availableTools: allTools });
     expect(lines).toBeInstanceOf(Array);
     expect(lines.length).toBeGreaterThan(0);
@@ -196,7 +196,7 @@ describe("plugin registration", () => {
     expect(builder({ availableTools: noTools })).toEqual([]);
   });
 
-  it("registers a tool factory with all four tool names", () => {
+  it("registers a tool factory with all five tool names", () => {
     const api = fakeApi();
     plugin.register(api as any);
 
@@ -204,18 +204,18 @@ describe("plugin registration", () => {
     const call = api.registerTool.mock.calls[0];
     expect(typeof call[0]).toBe("function");
     expect(call[1]).toEqual({
-      names: ["memory_store", "memory_search", "memory_get", "memory_feedback"],
+      names: ["memory_store", "memory_search", "memory_get", "memory_feedback", "memory_browse"],
     });
   });
 
-  it("factory returns four tools with correct names", () => {
+  it("factory returns five tools with correct names", () => {
     const api = fakeApi();
     plugin.register(api as any);
     const tools = getTools(api);
 
-    expect(tools).toHaveLength(4);
+    expect(tools).toHaveLength(5);
     expect(tools.map((t: any) => t.name)).toEqual([
-      "memory_store", "memory_search", "memory_get", "memory_feedback",
+      "memory_store", "memory_search", "memory_get", "memory_feedback", "memory_browse",
     ]);
   });
 
@@ -268,6 +268,57 @@ describe("tool operations", () => {
     const getResult = await getTool.execute("call-2", { id: stored.id_short });
     const retrieved = JSON.parse(getResult.content[0].text);
     expect(retrieved.content).toBe("TypeScript is great for type safety");
+  });
+
+  it("memory_browse returns stored memories sorted by importance", async () => {
+    const api = fakeApi();
+    plugin.register(api as any);
+    const tools = getTools(api);
+    const storeTool = tools.find((t: any) => t.name === "memory_store")!;
+    const browseTool = tools.find((t: any) => t.name === "memory_browse")!;
+
+    await storeTool.execute("call-1", { content: "User prefers dark mode", type: "preference" });
+    await storeTool.execute("call-2", { content: "Project uses PostgreSQL", type: "decision" });
+    await storeTool.execute("call-3", { content: "Team meeting every Monday", type: "event" });
+
+    const result = await browseTool.execute("call-4", {});
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed).toHaveLength(3);
+    // All memories should have required fields
+    for (const mem of parsed) {
+      expect(mem.id).toBeTypeOf("string");
+      expect(mem.type).toBeTypeOf("string");
+      expect(mem.content).toBeTypeOf("string");
+      expect(mem.strength).toBeTypeOf("number");
+      expect(mem.score).toBeTypeOf("number");
+    }
+  });
+
+  it("memory_browse respects limit parameter", async () => {
+    const api = fakeApi();
+    plugin.register(api as any);
+    const tools = getTools(api);
+    const storeTool = tools.find((t: any) => t.name === "memory_store")!;
+    const browseTool = tools.find((t: any) => t.name === "memory_browse")!;
+
+    for (let i = 0; i < 5; i++) {
+      await storeTool.execute(`call-${i}`, { content: `Memory number ${i}`, type: "fact" });
+    }
+
+    const result = await browseTool.execute("call-browse", { limit: 2 });
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed).toHaveLength(2);
+  });
+
+  it("memory_browse returns empty for empty database", async () => {
+    const api = fakeApi();
+    plugin.register(api as any);
+    const tools = getTools(api);
+    const browseTool = tools.find((t: any) => t.name === "memory_browse")!;
+
+    const result = await browseTool.execute("call-1", {});
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed).toHaveLength(0);
   });
 
   it("memory_feedback writes to retrieval log", async () => {

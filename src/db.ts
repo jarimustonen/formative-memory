@@ -231,6 +231,22 @@ export class MemoryDatabase {
   }
 
   /**
+   * Get the strongest memories, ordered by strength descending.
+   * Used by broadRecall() for overview/browse queries.
+   * Excludes near-dead memories (strength ≤ 0.05).
+   */
+  getTopByStrength(limit: number): MemoryRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM memories
+         WHERE strength > 0.05
+         ORDER BY strength DESC, created_at DESC
+         LIMIT ?`,
+      )
+      .all(limit) as MemoryRow[];
+  }
+
+  /**
    * Get memories with temporal_anchor within a date range.
    * Used by assemble() to inject upcoming events regardless of query relevance.
    * Only returns memories with strength > pruning threshold.

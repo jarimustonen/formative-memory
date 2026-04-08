@@ -518,7 +518,38 @@ function createMemoryTools(
     },
   };
 
-  return [storeTool, searchTool, getTool, feedbackTool];
+  const browseTool: AnyAgentTool = {
+    name: "memory_browse",
+    description:
+      "Browse all memories sorted by importance. Use this for broad/overview questions like 'What do you remember about me?', 'Tell me everything you know', or when injected memories don't cover the topic. Returns many memories at once with type diversity.",
+    label: "Browse Memories",
+    parameters: Type.Object({
+      limit: Type.Optional(
+        Type.Number({ description: "Max memories to return (default: 50, max: 200)" }),
+      ),
+    }),
+    async execute(_toolCallId, params) {
+      const limit = Math.min(Math.max(1, params.limit ?? 50), 200);
+      const results = getManager().broadRecall(limit);
+      ledger?.addSearchResults(
+        results.map((r) => ({ id: r.memory.id, score: r.score, query: "__browse__" })),
+      );
+      return jsonResult(
+        results.map((r) => ({
+          id: r.memory.id,
+          id_short: r.memory.id.slice(0, 8),
+          type: r.memory.type,
+          content: r.memory.content,
+          strength: r.memory.strength,
+          score: Math.round(r.score * 1000) / 1000,
+          temporal_state: r.memory.temporal_state,
+          created_at: r.memory.created_at,
+        })),
+      );
+    },
+  };
+
+  return [storeTool, searchTool, getTool, feedbackTool, browseTool];
 }
 
 // -- Plugin --
@@ -570,7 +601,7 @@ const associativeMemoryPlugin = {
           ledger,
         );
       },
-      { names: ["memory_store", "memory_search", "memory_get", "memory_feedback"] },
+      { names: ["memory_store", "memory_search", "memory_get", "memory_feedback", "memory_browse"] },
     );
 
     // Register system prompt section via the pluggable memory API (PR #40126)
@@ -579,12 +610,14 @@ const associativeMemoryPlugin = {
       const hasSearch = availableTools.has("memory_search");
       const hasGet = availableTools.has("memory_get");
       const hasFeedback = availableTools.has("memory_feedback");
+      const hasBrowse = availableTools.has("memory_browse");
 
       if (!hasStore && !hasSearch && !hasGet) return [];
 
       const tools = [
         hasStore && "`memory_store` (save)",
-        hasSearch && "`memory_search` (find)",
+        hasSearch && "`memory_search` (find by query)",
+        hasBrowse && "`memory_browse` (broad overview)",
         hasGet && "`memory_get` (retrieve by ID)",
         hasFeedback && "`memory_feedback` (rate usefulness 1-5)",
       ].filter(Boolean);
@@ -604,6 +637,9 @@ const associativeMemoryPlugin = {
         "",
         "**When to store:** key decisions, user preferences, project facts, plans, corrections, anything worth remembering. When the user says \"remember this\" or similar, ALWAYS use `memory_store`.",
         "**When to search:** start of a task, when context seems missing, when the user references past work.",
+        hasBrowse
+          ? "**When to browse:** when the user asks broad questions like \"What do you remember about me?\", \"Tell me everything you know\", or when auto-recalled memories don't cover the topic. `memory_browse` returns many memories sorted by importance with type diversity — use it for overview, not targeted search."
+          : "",
         hasFeedback
           ? "**When to give feedback:** after using a retrieved memory — rate how useful it was."
           : "",

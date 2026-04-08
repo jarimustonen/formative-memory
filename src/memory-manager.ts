@@ -222,6 +222,76 @@ export class MemoryManager {
     return results;
   }
 
+  /**
+   * Broad recall: return diverse, high-value memories for overview queries.
+   *
+   * Unlike search/recall which match a query, broadRecall returns memories
+   * ranked by a combination of strength and recency, with type diversity
+   * and near-duplicate suppression.
+   *
+   * Designed as a tool-callable function — the LLM decides when to use it
+   * (e.g. "What do you remember about me?") rather than heuristic detection.
+   */
+  broadRecall(limit = 50): SearchResult[] {
+    if (limit <= 0) return [];
+
+    const poolSize = Math.min(200, Math.max(20, limit * 4));
+    const candidates = this.db.getTopByStrength(poolSize);
+
+    const now = Date.now();
+
+    const scored = candidates.map((row) => {
+      const ageDays = Math.max(0, (now - new Date(row.created_at).getTime()) / (1000 * 60 * 60 * 24));
+      const recencyScore = Math.exp(-ageDays / 30);
+      const broadScore = 0.8 * row.strength + 0.2 * recencyScore;
+
+      return {
+        memory: this.rowToMemory(row),
+        score: broadScore,
+        normalizedType: row.type.trim().toLowerCase(),
+        normalizedContent: row.content.trim().toLowerCase().replace(/\s+/g, " "),
+      };
+    });
+
+    scored.sort((a, b) => b.score - a.score);
+
+    const maxPerType = Math.max(2, Math.ceil(limit / 3));
+    const selected: typeof scored = [];
+    const typeCounts = new Map<string, number>();
+
+    // First pass: greedy selection with type cap + dedup
+    for (const item of scored) {
+      if (selected.length >= limit) break;
+      if (isNearDuplicate(item.normalizedContent, selected)) continue;
+
+      const count = typeCounts.get(item.normalizedType) ?? 0;
+      if (count >= maxPerType) continue;
+
+      selected.push(item);
+      typeCounts.set(item.normalizedType, count + 1);
+    }
+
+    // Second pass: fill remaining slots ignoring type caps (keep dedup)
+    if (selected.length < limit) {
+      const selectedIds = new Set(selected.map((s) => s.memory.id));
+      for (const item of scored) {
+        if (selected.length >= limit) break;
+        if (selectedIds.has(item.memory.id)) continue;
+        if (isNearDuplicate(item.normalizedContent, selected)) continue;
+        selected.push(item);
+      }
+    }
+
+    const results = selected.map(({ memory, score }) => ({ memory, score }));
+
+    // Log recall event
+    if (results.length > 0) {
+      appendRecallEvent(this.logPath, results.map((r) => r.memory.id));
+    }
+
+    return results;
+  }
+
   getTransitionMemories(): Memory[] {
     const all = this.db.getAllMemories();
     const now = new Date();
@@ -291,4 +361,23 @@ function escapeFtsQuery(query: string): string {
     .filter(Boolean)
     .map((term) => `"${term.replace(/"/g, '""')}"`)
     .join(" ");
+}
+
+/**
+ * Check if a candidate's content is a near-duplicate of any already selected item.
+ * Uses normalized content (lowercase, collapsed whitespace).
+ */
+function isNearDuplicate(
+  content: string,
+  selected: ReadonlyArray<{ normalizedContent: string }>,
+): boolean {
+  for (const s of selected) {
+    if (content === s.normalizedContent) return true;
+    // Prefix match: one is a prefix of the other (for len >= 40)
+    const minLen = Math.min(content.length, s.normalizedContent.length);
+    if (minLen >= 40 && (content.startsWith(s.normalizedContent) || s.normalizedContent.startsWith(content))) {
+      return true;
+    }
+  }
+  return false;
 }
