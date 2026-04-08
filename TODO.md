@@ -2,11 +2,11 @@
 
 > Plugin OpenClaw:lle. Arkkitehtuuri: `history/plan-context-engine-architecture-v2.md`
 
-## Tilanne (2026-04-07)
+## Tilanne (2026-04-08)
 
-**Valmista:** Infrastruktuuri, MemoryManager, context engine (Phase 3), konsolidaatio (Phase 4), `/memory sleep` komento, CLI-työkalu (Phase 5: stats, list, inspect, search, history, graph, export, import). Markdown-tiedostot (working.md, consolidated.md) ja .layout.json poistettu — DB on kanoninen datalähde.
+**Valmista:** Infrastruktuuri, MemoryManager, context engine (Phase 3), konsolidaatio (Phase 4), `/memory sleep` komento, CLI-työkalu (Phase 5), memory-core-migraatio (Phase 6.1–6.2). DB on kanoninen datalähde (markdown-tiedostot poistettu). Migraatio ja workspace-siivous ajetaan automaattisesti (lazy init) ensimmäisellä tool-kutsulla. Live-testattu Sylvialla.
 
-**Seuraava:** Phase 6 (memory-core-migraatio) — `openclaw memory migrate` + agentti-pohjainen LLM-rikastus.
+**Seuraava:** Live-testaus ja stabilointi. OpenClaw release impact -toimenpiteet. Go-to-Market.
 
 **V1-periaate:** Yksinkertainen ja laajennettava. Minimoi hot path -kirjoitukset, mutta salli append-only sidecar-kirjoitukset normaalikäytössä (retrieval.log, provenance). Kanoniset muistomutaatiot (strength, assosiaatiot, pruning, merget, temporaaliset siirtymät) vain konsolidaatiossa.
 
@@ -246,10 +246,17 @@ Tiivistelmä: content hash (SHA-256), SQLite backend (kanoninen datalähde, ei m
 - [ ] Interaktiivinen terminaali-UI (Ink tai vastaava)
 - [ ] Muistojen selaus, haku, graafin navigointi
 
-## Phase 6: Memory-core-migraatio ❌
+## Phase 6: Memory-core-migraatio ✅
 
 > Erillinen TODO: `history/todo-memory-core-migration.md`
 > Suunnitelma: `history/plan-memory-core-importer.md`, sanasto: `docs/glossary.md`
+>
+> **Toteutettu:** Lazy init ensimmäisellä tool-kutsulla (ei service start, ei manuaalista komentoa).
+> Migraatio segmentoi markdown-it:llä, rikastaa LLM:llä (käyttäjän kielellä USER.md:stä),
+> tallentaa MemoryManager.store():lla. Workspace-siivous poistaa file-based memory-ohjeet.
+> Erilliset komennot: `/memory-migrate` (uudelleenajo), `/memory-cleanup` (workspace-siivous).
+> Review: `history/review-remove-markdown-and-memory-init.md`
+> Proposal: `history/proposal-plugin-service-start-for-memory-plugins.md`
 
 ---
 
@@ -300,7 +307,7 @@ Toimenpiteet löydösten perusteella (v2026.3.24 → v2026.4.5):
 - [x] `cleanupWorkspaceFiles()` logiikka ja testit
 - [x] `hasFileMemoryInstructions()` heuristiikka
 - [x] `buildWorkspaceCleanupPrompt()` LLM-prompt
-- [x] Kytke `index.ts`:ään — `registerService` ajaa ensimmäisellä käynnistyksellä
+- [x] Kytke `index.ts`:ään — lazy init ensimmäisellä tool-kutsulla (service start ei aja memory-plugineille)
 - [x] Retention ratio -tarkistus (>40%) estää LLM-hallusinaatioiden tuhoamasta tiedostoja
 - [x] Completion vain onnistuneilla — epäonnistuneet tiedostot yritetään uudelleen seuraavalla käynnistyksellä
 - [ ] Upstream-proposal: `history/proposal-decouple-memory-from-workspace-templates.md`
@@ -321,8 +328,8 @@ Toimenpiteet löydösten perusteella (v2026.3.24 → v2026.4.5):
 
 > LLM-review: `history/review-index-ts-wiring.md` (Gemini + Codex, 2 kierrosta)
 
-- [x] `memory-sleep` auth resolution — `runtimePaths` tallennetaan service/tool-kontekstista
-- [x] Startup gate — `awaitStartup()` tool-executeissa, service start kutsuu `startupResolve()` finally-blockissa
+- [x] `memory-sleep` auth resolution — `runtimePaths` tallennetaan tool-kontekstista
+- [x] ~~Startup gate~~ — poistettu, lazy init korvaa
 - [x] Migraation partial failure — merkataan valmiiksi vain jos 0 virhettä
 - [x] `no_files` ei merkitse valmiiksi — retry seuraavalla käynnistyksellä
 - [x] Path resolution — `api.resolvePath()` + `isAbsolute()` (cross-platform, oikea `~` expansion)

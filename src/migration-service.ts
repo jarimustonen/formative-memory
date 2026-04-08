@@ -262,7 +262,7 @@ function inferTemporalState(seg: ImportSegment): string {
  * Build the enrichment prompt for a batch of segments.
  * Used by the caller to construct the actual LLM call.
  */
-export function buildEnrichmentPrompt(segments: ImportSegment[]): string {
+export function buildEnrichmentPrompt(segments: ImportSegment[], language?: string): string {
   const segmentDescriptions = segments.map((seg) => {
     const meta = [
       `ID: ${seg.id}`,
@@ -277,12 +277,16 @@ export function buildEnrichmentPrompt(segments: ImportSegment[]): string {
     return `### Segment ${seg.id}\n${meta}\n\n${seg.content}`;
   });
 
+  const languageInstruction = language
+    ? `\n\nIMPORTANT: All output content (including sub_segments) MUST be written in ${language}. Translate any non-${language} content.`
+    : "";
+
   return `Analyze these memory segments from a memory-core migration.
 For each segment, determine:
 - **type**: fact | decision | preference | observation | plan | narrative
 - **temporal_state**: none (timeless) | past (happened) | present (ongoing) | future (upcoming)
 - **temporal_anchor**: ISO date if identifiable, null otherwise
-- If a segment contains multiple distinct items, split into sub-segments.
+- If a segment contains multiple distinct items, split into sub-segments.${languageInstruction}
 
 ${segmentDescriptions.join("\n\n---\n\n")}
 

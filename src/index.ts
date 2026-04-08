@@ -93,12 +93,27 @@ function resolveLlmConfig(
 /**
  * Create an EnrichFn for migration that uses direct LLM calls.
  */
-function createDirectLlmEnrichFn(llmConfig: LlmCallerConfig): EnrichFn {
+function createDirectLlmEnrichFn(llmConfig: LlmCallerConfig, language?: string): EnrichFn {
   return async (segments) => {
-    const prompt = buildEnrichmentPrompt(segments);
+    const prompt = buildEnrichmentPrompt(segments, language);
     const response = await callLlm(prompt, llmConfig);
     return parseEnrichmentResponse(response);
   };
+}
+
+/**
+ * Detect user's preferred language from USER.md in the workspace.
+ * Looks for "Kielet:" or "Languages:" line and returns the first (native) language.
+ */
+function detectUserLanguage(workspaceDir: string): string | undefined {
+  try {
+    const content = readFileSync(join(workspaceDir, "USER.md"), "utf-8");
+    // Match "Kielet: suomi (äidinkieli)" or "Languages: Finnish (native)"
+    const match = content.match(/(?:Kielet|Languages?)\s*[:：]\s*(\S+)/i);
+    return match?.[1]?.replace(/[,;]$/, "");
+  } catch {
+    return undefined;
+  }
 }
 
 function jsonResult(payload: unknown) {
@@ -332,8 +347,9 @@ function createWorkspace(
 
       // 2. Memory-core migration (import old memories)
       try {
+        const userLanguage = detectUserLanguage(workspaceDir);
         const enrichFn: EnrichFn = initDeps.llmConfig
-          ? createDirectLlmEnrichFn(initDeps.llmConfig)
+          ? createDirectLlmEnrichFn(initDeps.llmConfig, userLanguage)
           : async (segments) =>
               segments.map((seg) => ({
                 id: seg.id,
@@ -654,8 +670,9 @@ const associativeMemoryPlugin = {
         const ws = getWorkspace(".");
         const db = ws.manager.getDatabase();
         const llmConfig = resolveLlmConfig(runtimePaths.stateDir, runtimePaths.agentDir, logger);
+        const userLanguage = detectUserLanguage(".");
         const enrichFn: EnrichFn = llmConfig
-          ? createDirectLlmEnrichFn(llmConfig)
+          ? createDirectLlmEnrichFn(llmConfig, userLanguage)
           : async (segments) =>
               segments.map((seg) => ({
                 id: seg.id,
