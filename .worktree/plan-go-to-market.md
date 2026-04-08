@@ -2,6 +2,12 @@
 created: 2026-04-08T18:45:00+03:00
 source_branch: main
 task: Plan Go-to-Market strategy, website, README, repo cleanup
+merged: 2026-04-08T20:26:40+03:00
+commits:
+  - hash: 8b72cb2
+    message: "docs: add GTM planning artifacts — README, website plan, repo cleanup, review"
+  - hash: d90b2b7
+    message: "docs: add worktree prompt for plan-go-to-market"
 ---
 
 # Task: Go-to-Market -suunnittelu
