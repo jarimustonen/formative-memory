@@ -37,7 +37,7 @@ Tiivistelmä: content hash (SHA-256), SQLite backend (kanoninen datalähde, ei m
 
 ## Phase 2: Työkalut ja retrieval ✅
 
-- [x] Store-logiikka: content → hash → working.md + DB + retrieval.log
+- [x] Store-logiikka: content → hash → DB + retrieval.log
 - [x] Search-logiikka: embedding+BM25 hybridi → strength-painotus → tulokset
 - [x] Recall-logiikka: search + retrieval.log-kirjaus
 - [x] Get-logiikka: id/prefix → muisto
@@ -283,7 +283,7 @@ Toimenpiteet löydösten perusteella (v2026.3.24 → v2026.4.5):
 - [ ] Poista `embedding.apiKey` plugin-configista — avaimet resolvataan auth-profileista / models.providers -konfiguraatiosta
 - [ ] Päivitä testit
 
-## Phase 6.6: Live-testauksen löydökset ❌
+## Phase 6.6: Live-testauksen löydökset
 
 > Löydökset ensimmäisestä tuotantotestistä (2026-04-06).
 
@@ -339,6 +339,27 @@ Toimenpiteet löydösten perusteella (v2026.3.24 → v2026.4.5):
 
 ### 6.6.7 Konsolidaatio: LLM-merge pakollinen ✅
 
+### 6.6.8 Markdown-tiedostojen poisto ja lazy init ✅
+
+> Review: `history/review-remove-markdown-and-memory-init.md`
+
+- [x] Poistettu `working.md`, `consolidated.md`, `.layout.json` — DB on ainoa datalähde
+- [x] Poistettu `chunks.ts`, `file_path`-sarake, `LayoutManifest`-tyyppi
+- [x] Schema v3→v4 migraatio (PRAGMA table_info -pohjainen, ei version-riippuvainen)
+- [x] Lazy init: migraatio+cleanup ajetaan automaattisesti ensimmäisellä tool-kutsulla
+- [x] Startup gate poistettu (ei enää 2s viivettä)
+- [x] `/memory-migrate` ja `/memory-cleanup` erillisinä komentoina
+- [x] `deploy.sh --clean-slate` — putsaa plugin-datan tuotannossa
+- [x] Kielitunnistus USER.md:stä — enrichment suomeksi
+- [x] Age-based decay importoiduille muistoille (`0.977^päivät`)
+- [x] `sylvia-memory` CLI wrapper -skripti
+
+### 6.6.9 Live-testauksen löydökset (2026-04-08) ❌
+
+- [ ] LLM-enrichment tuottaa `**bold**`-merkintöjä muistoihin — pitäisi stripata
+- [ ] Yksi muisto jäi englanniksi vaikka kieliohje on (Video Summary -segmentti)
+- [ ] Assemble recall palauttaa vain 5 muistoa — metakysymykset eivät toimi hyvin → Phase 7 metahaku
+
 - [x] Poistettu default concatenation merge — konsolidaatio vaatii LLM:n
 - [x] `/memory-sleep` failaa selkeällä virheilmoituksella jos API-avainta ei löydy
 - [x] Konsolidaation testausharness: 12 fixture-pohjaista testiä (merge, decay, reinforcement, pruning, temporal, co-retrieval, realistinen skenario)
@@ -391,7 +412,7 @@ Erillinen kuvaus: `history/openclaw-upstream-changes.md`
 
 ### Myöhemmin ratkaistavat
 
-10. Consolidated.md:n kasvu pitkällä aikavälillä
+10. ~~Consolidated.md:n kasvu pitkällä aikavälillä~~ → ei relevantti, markdown-tiedostot poistettu
 11. Unicode-tokenizer Jaccard-vertailuun
 12. Konsolidaation kesto jos tuhansia muistoja (cap merge candidates per run?)
 14. Temporal metadata merged muistoissa: pitäisikö periä temporal_state/anchor lähdemuistoilta? Nyt aina `none`. Konsolidoitu muisto on abstraktio, mutta aikasidonnaiset faktat (deadlinet, tapahtumat) voivat menettää kontekstinsa.
