@@ -150,13 +150,12 @@ export class MemoryDatabase {
     }
   }
 
-  private migrate(fromVersion: number): void {
-    // v3 → v4: drop file_path column (markdown files removed, DB is canonical)
-    if (fromVersion >= 3 && fromVersion < 4) {
-      const cols = this.db.prepare("PRAGMA table_info(memories)").all() as Array<{ name: string }>;
-      if (cols.some((c) => c.name === "file_path")) {
-        this.db.exec("ALTER TABLE memories DROP COLUMN file_path");
-      }
+  private migrate(_fromVersion: number): void {
+    // v4: drop file_path column (markdown files removed, DB is canonical).
+    // Schema-driven: check actual table structure regardless of version metadata.
+    const cols = this.db.prepare("PRAGMA table_info(memories)").all() as Array<{ name: string }>;
+    if (cols.some((c) => c.name === "file_path")) {
+      this.db.exec("ALTER TABLE memories DROP COLUMN file_path");
     }
   }
 

@@ -242,14 +242,22 @@ type ManagedWorkspace = {
 /**
  * Create the single workspace instance for this plugin registration.
  * Provider resolution is lazy — deferred to first embed call via a cached promise.
+ *
+ * When `initDeps` is provided, one-time startup tasks (migration, workspace
+ * cleanup) are run asynchronously after workspace creation. This happens on
+ * the first tool call which provides the real workspace context.
  */
 function createWorkspace(
   config: AssociativeMemoryConfig,
   workspaceDir: string,
   openclawConfig: OpenClawConfig,
   agentDir?: string,
-  logger?: { warn: (...args: unknown[]) => void },
+  logger?: { warn: (...args: unknown[]) => void; info?: (msg: string) => void },
   pathResolver?: (input: string) => string,
+  initDeps?: {
+    stateDir?: string;
+    llmConfig: LlmCallerConfig | null;
+  },
 ): ManagedWorkspace {
   const memoryDir = resolveMemoryDir(config, workspaceDir, pathResolver);
   const circuitBreaker = new EmbeddingCircuitBreaker({
@@ -291,7 +299,70 @@ function createWorkspace(
     },
   };
 
-  return { manager: new MemoryManager(memoryDir, embedder), circuitBreaker, memoryDir };
+  const ws: ManagedWorkspace = { manager: new MemoryManager(memoryDir, embedder), circuitBreaker, memoryDir };
+
+  // One-time startup tasks (migration + workspace cleanup).
+  // Runs asynchronously on first workspace creation — does not block tool calls.
+  // Guarded by DB state keys so each task runs at most once.
+  if (initDeps) {
+    const log = logger as { warn: (msg: string) => void; info?: (msg: string) => void } | undefined;
+    void (async () => {
+      const db = ws.manager.getDatabase();
+      const dbState = {
+        get: (key: string) => db.getState(key),
+        set: (key: string, value: string) => db.setState(key, value),
+      };
+
+      // 1. Workspace file cleanup (remove file-based memory instructions)
+      if (initDeps.llmConfig) {
+        try {
+          const result = await cleanupWorkspaceFiles({
+            workspaceDir,
+            dbState,
+            llm: (prompt) => callLlm(prompt, initDeps.llmConfig!),
+            logger: log ?? { info: () => {}, warn: () => {} },
+          });
+          if (result.status === "cleaned") {
+            log?.info?.(`Workspace cleanup: modified ${result.filesModified?.join(", ")}`);
+          }
+        } catch (err) {
+          log?.warn(`Workspace cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+
+      // 2. Memory-core migration (import old memories)
+      try {
+        const enrichFn: EnrichFn = initDeps.llmConfig
+          ? createDirectLlmEnrichFn(initDeps.llmConfig)
+          : async (segments) =>
+              segments.map((seg) => ({
+                id: seg.id,
+                type: seg.evergreen ? "fact" : "observation",
+                temporal_state: seg.date ? "past" : "none",
+                temporal_anchor: seg.date,
+              }));
+
+        const migrationResult = await runMigration({
+          workspaceDir,
+          stateDir: initDeps.stateDir ?? workspaceDir,
+          store: (params) => ws.manager.store(params),
+          dbState,
+          enrich: enrichFn,
+          logger: log ?? { info: () => {}, warn: () => {}, error: () => {} },
+        });
+
+        if (migrationResult.status === "completed") {
+          log?.info?.(
+            `Migration: imported ${migrationResult.segmentsImported} memories from ${migrationResult.filesFound} files`,
+          );
+        }
+      } catch (err) {
+        log?.warn(`Migration failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    })();
+  }
+
+  return ws;
 }
 
 // -- Tools --
@@ -300,7 +371,6 @@ function createMemoryTools(
   getManager: () => MemoryManager,
   getLogPath: () => string,
   ledger?: TurnMemoryLedger,
-  awaitStartup?: () => Promise<void>,
 ): AnyAgentTool[] {
   const storeTool: AnyAgentTool = {
     name: "memory_store",
@@ -338,7 +408,6 @@ function createMemoryTools(
       ),
     }),
     async execute(_toolCallId, params) {
-      await awaitStartup?.();
       const memory = await getManager().store({
         content: params.content,
         type: params.type,
@@ -368,7 +437,6 @@ function createMemoryTools(
       limit: Type.Optional(Type.Number({ description: "Max results to return (default: 5)" })),
     }),
     async execute(_toolCallId, params) {
-      await awaitStartup?.();
       const results = await getManager().search(params.query, params.limit);
       ledger?.addSearchResults(
         results.map((r) => ({ id: r.memory.id, score: r.score, query: params.query })),
@@ -396,7 +464,6 @@ function createMemoryTools(
       id: Type.String({ description: "Memory ID (full SHA-256 hash or 8-char prefix)" }),
     }),
     async execute(_toolCallId, params) {
-      await awaitStartup?.();
       const memory = getManager().getMemory(params.id);
       if (!memory) {
         return jsonResult({ error: "Memory not found", id: params.id });
@@ -452,57 +519,38 @@ const associativeMemoryPlugin = {
     const logger = api.logger;
     const ledger = new TurnMemoryLedger();
 
-    // Runtime state captured from service/tool contexts for use by commands.
+    // Runtime state captured from tool contexts for use by commands.
     const runtimePaths: { stateDir?: string; agentDir?: string } = {};
 
-    // Startup gate: tools/context/commands await this before accessing DB
-    // to avoid races with migration. Resolves when service start() completes.
-    let startupResolve: () => void;
-    let startupDone = false;
-    const startupPromise = new Promise<void>((resolve) => {
-      startupResolve = () => { startupDone = true; resolve(); };
-    });
-    // If no service runs (e.g. tests, or service registration not supported), unblock quickly.
-    // In production the service start() always calls startupResolve() in its finally block.
-    const startupTimeoutMs = process.env.NODE_ENV === "test" ? 0 : 30_000;
-    if (startupTimeoutMs > 0) {
-      setTimeout(() => { if (!startupDone) startupResolve(); }, startupTimeoutMs);
-    } else {
-      // Unblock immediately in test environment (microtask to preserve async ordering)
-      Promise.resolve().then(() => { if (!startupDone) startupResolve(); });
-    }
-
-    // Single lazy workspace — created on first access, shared by all consumers.
-    // NOTE: Context engine and command pass "." because ContextEngineFactory
-    // receives no runtime context (workspaceDir/agentDir). This is a known
-    // limitation — see history/proposal-context-engine-factory-context.md.
-    // In practice, the service start() always runs first and initializes the
-    // workspace with the correct path before any tool/engine call.
+    // Single lazy workspace — created on first tool call, shared by all consumers.
+    // The first tool call provides the real workspaceDir from OpenClaw runtime context.
+    // Context engine and commands use "." which reuses the already-initialized singleton.
+    // See history/proposal-context-engine-factory-context.md for the upstream limitation.
     let workspace: ManagedWorkspace | null = null;
 
-    const getWorkspace = (workspaceDir: string, agentDir?: string): ManagedWorkspace => {
+    const getWorkspace = (workspaceDir: string, agentDir?: string, triggerInit = false): ManagedWorkspace => {
       if (!workspace) {
+        const llmConfig = resolveLlmConfig(runtimePaths.stateDir, agentDir, logger);
         workspace = createWorkspace(
           config, workspaceDir, openclawConfig, agentDir, logger, api.resolvePath,
+          triggerInit ? { stateDir: runtimePaths.stateDir, llmConfig } : undefined,
         );
       }
       return workspace;
     };
 
-    const awaitStartup = async (): Promise<void> => {
-      if (!startupDone) await startupPromise;
-    };
-
     api.registerTool(
       (ctx) => {
         const workspaceDir = ctx.workspaceDir ?? ctx.agentDir ?? ".";
+        // stateDir is not available in tool context — captured from service start if it runs
         runtimePaths.agentDir ??= ctx.agentDir;
-        const ws = getWorkspace(workspaceDir, ctx.agentDir);
+        // First tool call creates workspace with real paths and triggers lazy init
+        // (migration + workspace cleanup). Subsequent calls reuse the singleton.
+        const ws = getWorkspace(workspaceDir, ctx.agentDir, true);
         return createMemoryTools(
           () => ws.manager,
           () => join(ws.memoryDir, "retrieval.log"),
           ledger,
-          awaitStartup,
         );
       },
       { names: ["memory_store", "memory_search", "memory_get", "memory_feedback"] },
@@ -562,14 +610,12 @@ const associativeMemoryPlugin = {
       name: "memory-sleep",
       description: "Run memory consolidation (strengthens associations, merges duplicates, cleans up)",
       async handler() {
-        await awaitStartup();
         const ws = getWorkspace(".");
 
-        // Resolve LLM for merge — required for consolidation
         const llmConfig = resolveLlmConfig(runtimePaths.stateDir, runtimePaths.agentDir, logger);
         if (!llmConfig) {
           return {
-            text: "⚠️ Memory consolidation failed: no LLM API key found.\n" +
+            text: "Memory consolidation failed: no LLM API key found.\n" +
               "Consolidation requires an Anthropic or OpenAI API key in auth-profiles.json " +
               "to merge duplicate memories. Other consolidation steps (decay, pruning) were not run.",
           };
@@ -600,92 +646,90 @@ const associativeMemoryPlugin = {
       },
     });
 
-    // -- Startup service: migration + workspace cleanup --
+    // -- /memory-migrate: re-run memory-core import --
+    api.registerCommand({
+      name: "memory-migrate",
+      description: "Re-import memories from memory-core files (migration normally runs automatically on first use)",
+      async handler() {
+        const ws = getWorkspace(".");
+        const db = ws.manager.getDatabase();
+        const llmConfig = resolveLlmConfig(runtimePaths.stateDir, runtimePaths.agentDir, logger);
+        const enrichFn: EnrichFn = llmConfig
+          ? createDirectLlmEnrichFn(llmConfig)
+          : async (segments) =>
+              segments.map((seg) => ({
+                id: seg.id,
+                type: seg.evergreen ? "fact" : "observation",
+                temporal_state: seg.date ? "past" : "none",
+                temporal_anchor: seg.date,
+              }));
 
-    api.registerService({
-      id: "memory-associative-migration",
-      async start(ctx) {
-        try {
-          // Capture runtime paths for later use by commands
-          runtimePaths.stateDir = ctx.stateDir;
+        // Reset migration state to allow re-run
+        db.setState("migration_completed_at", "");
 
-          const llmConfig = resolveLlmConfig(ctx.stateDir, undefined, ctx.logger);
-          const ws = getWorkspace(ctx.workspaceDir ?? ".");
+        const result = await runMigration({
+          workspaceDir: ".",
+          stateDir: runtimePaths.stateDir ?? ".",
+          store: (params) => ws.manager.store(params),
+          dbState: {
+            get: (key) => db.getState(key),
+            set: (key, value) => db.setState(key, value),
+          },
+          enrich: enrichFn,
+          logger,
+        });
 
-          // 1. Workspace file cleanup (remove file-based memory instructions)
-          if (llmConfig && ctx.workspaceDir) {
-            try {
-              const cleanupResult = await cleanupWorkspaceFiles({
-                workspaceDir: ctx.workspaceDir,
-                dbState: {
-                  get: (key) => ws.manager.getDatabase().getState(key),
-                  set: (key, value) => ws.manager.getDatabase().setState(key, value),
-                },
-                llm: (prompt) => callLlm(prompt, llmConfig),
-                logger: ctx.logger,
-              });
-              if (cleanupResult.status === "cleaned") {
-                ctx.logger.info(
-                  `Workspace cleanup: modified ${cleanupResult.filesModified?.join(", ")}`,
-                );
-              } else if (cleanupResult.status === "error") {
-                ctx.logger.warn("Workspace cleanup completed with errors — will retry on next startup");
-              }
-            } catch (err) {
-              ctx.logger.warn(
-                `Workspace cleanup failed: ${err instanceof Error ? err.message : String(err)}`,
-              );
-            }
-          }
-
-          // 2. Memory-core migration (import old memories)
-          if (ctx.workspaceDir) {
-            try {
-              const enrichFn: EnrichFn = llmConfig
-                ? createDirectLlmEnrichFn(llmConfig)
-                : async (segments) =>
-                    segments.map((seg) => ({
-                      id: seg.id,
-                      type: seg.evergreen ? "fact" : "observation",
-                      temporal_state: seg.date ? "past" : "none",
-                      temporal_anchor: seg.date,
-                    }));
-
-              const migrationResult = await runMigration({
-                workspaceDir: ctx.workspaceDir,
-                stateDir: ctx.stateDir,
-                store: (params) => ws.manager.store(params),
-                dbState: {
-                  get: (key) => ws.manager.getDatabase().getState(key),
-                  set: (key, value) => ws.manager.getDatabase().setState(key, value),
-                },
-                enrich: enrichFn,
-                logger: ctx.logger,
-              });
-
-              if (migrationResult.status === "completed") {
-                ctx.logger.info(
-                  `Migration: imported ${migrationResult.segmentsImported} memories from ${migrationResult.filesFound} files`,
-                );
-              }
-              if (migrationResult.errors && migrationResult.errors.length > 0) {
-                ctx.logger.warn(
-                  `Migration completed with ${migrationResult.errors.length} errors — some memories may need re-import`,
-                );
-              }
-            } catch (err) {
-              ctx.logger.warn(
-                `Migration failed: ${err instanceof Error ? err.message : String(err)}`,
-              );
-            }
-          }
-        } catch (err) {
-          ctx.logger.warn(
-            `Service startup failed: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        } finally {
-          startupResolve();
+        if (result.status === "completed") {
+          return {
+            text: `Migration complete: imported ${result.segmentsImported} memories from ${result.filesFound} files` +
+              (result.errors?.length ? ` (${result.errors.length} errors)` : ""),
+          };
         }
+        return { text: `Migration: ${result.status}` };
+      },
+    });
+
+    // -- /memory-cleanup: re-run workspace file cleanup --
+    api.registerCommand({
+      name: "memory-cleanup",
+      description: "Remove file-based memory instructions from workspace files (AGENTS.md, SOUL.md)",
+      async handler() {
+        const ws = getWorkspace(".");
+        const db = ws.manager.getDatabase();
+        const llmConfig = resolveLlmConfig(runtimePaths.stateDir, runtimePaths.agentDir, logger);
+        if (!llmConfig) {
+          return { text: "Workspace cleanup failed: no LLM API key found." };
+        }
+
+        // Reset cleanup state to allow re-run
+        db.setState("workspace_cleanup_completed_at", "");
+
+        const result = await cleanupWorkspaceFiles({
+          workspaceDir: ".",
+          dbState: {
+            get: (key) => db.getState(key),
+            set: (key, value) => db.setState(key, value),
+          },
+          llm: (prompt) => callLlm(prompt, llmConfig),
+          logger,
+        });
+
+        if (result.status === "cleaned") {
+          return { text: `Workspace cleanup: modified ${result.filesModified?.join(", ")}` };
+        }
+        return { text: `Workspace cleanup: ${result.status}` };
+      },
+    });
+
+    // -- Startup service --
+    // NOTE: OpenClaw does not currently call service.start() for memory-kind plugins
+    // (see history/proposal-plugin-service-start-for-memory-plugins.md).
+    // Migration and cleanup run lazily on first tool call instead.
+    // This service captures stateDir for auth-profile resolution in commands.
+    api.registerService({
+      id: "memory-associative-startup",
+      async start(ctx) {
+        runtimePaths.stateDir = ctx.stateDir;
       },
     });
   },
