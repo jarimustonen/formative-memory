@@ -242,9 +242,13 @@ Tiivistelmä: content hash (SHA-256), SQLite backend (kanoninen datalähde, ei m
 - [x] Error boundary, argument-validointi, prefix-ambiguity check, DOT escaping
 - [x] 25 automaattista testiä
 
-### Phase 5 TUI (myöhemmin)
-- [ ] Interaktiivinen terminaali-UI (Ink tai vastaava)
+### Idea: Visuaalinen UI (TUI tai GUI)
+
+> Ei aktiivisessa kehityksessä. Mahdollisesti GUI web-pohjaisena terminaalin sijaan.
+
 - [ ] Muistojen selaus, haku, graafin navigointi
+- [ ] Assosiaatioverkon visualisointi
+- [ ] Toteutusteknologia avoin (Ink TUI, web GUI, Tauri, tms.)
 
 ## Phase 6: Memory-core-migraatio ✅
 
@@ -295,7 +299,7 @@ Toimenpiteet löydösten perusteella (v2026.3.24 → v2026.4.8):
 
 - [x] Päivitä `registerMemoryPromptSection()`: "One fact per memory" -ohje
 - [x] Ohjeista pilkkomaan moniosainen tieto erillisiksi kutsuiksi
-- [ ] Testaa: pyydä Sylviaa tallentamaan moniosainen tieto → tuleeko 2+ erillistä muistoa
+- [x] Testaa: pyydä Sylviaa tallentamaan moniosainen tieto → tuleeko 2+ erillistä muistoa
 
 ### 6.6.2 Temporaalinen injektio assemble():ssa ✅
 
