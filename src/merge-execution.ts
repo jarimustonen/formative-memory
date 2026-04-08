@@ -121,7 +121,7 @@ export async function executeMerge(
           temporal_anchor: null,
           created_at: now,
           strength: 1.0,
-          source: "consolidation" as MemorySource,
+          source: "consolidation",
           consolidated: true,
         });
         db.insertFts(newId, merged.content, merged.type);

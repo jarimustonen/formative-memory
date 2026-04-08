@@ -9,7 +9,20 @@
  */
 
 import { DatabaseSync } from "node:sqlite";
-import type { Association, MemorySource, TemporalState } from "./types.ts";
+import type {
+  Association,
+  AttributionEvidence,
+  ExposureMode,
+  MemorySource,
+  RetrievalMode,
+  TemporalState,
+} from "./types.ts";
+import {
+  assertIsoUtcTimestamp,
+  AttributionEvidenceGuard,
+  ExposureModeGuard,
+  RetrievalModeGuard,
+} from "./types.ts";
 
 const SCHEMA_VERSION = 4;
 
@@ -189,6 +202,9 @@ export class MemoryDatabase {
     source: MemorySource;
     consolidated: boolean;
   }): void {
+    if (!Number.isFinite(mem.strength) || mem.strength < 0) {
+      throw new Error(`Invalid strength for ${mem.id}: ${mem.strength}`);
+    }
     this.db
       .prepare(
         `INSERT INTO memories (id, type, content, temporal_state, temporal_anchor, created_at, strength, source, consolidated)
@@ -267,6 +283,9 @@ export class MemoryDatabase {
   }
 
   updateStrength(id: string, strength: number): void {
+    if (!Number.isFinite(strength) || strength < 0) {
+      throw new Error(`Invalid strength for ${id}: ${strength}`);
+    }
     this.db.prepare("UPDATE memories SET strength = ? WHERE id = ?").run(strength, id);
   }
 
@@ -384,7 +403,16 @@ export class MemoryDatabase {
   // -- Embeddings --
 
   setEmbedding(id: string, embedding: number[]): void {
-    const buf = Buffer.from(new Float32Array(embedding).buffer);
+    if (embedding.length === 0) {
+      throw new Error(`Empty embedding for ${id}`);
+    }
+    const f32 = new Float32Array(embedding);
+    for (let i = 0; i < f32.length; i++) {
+      if (!Number.isFinite(f32[i])) {
+        throw new Error(`Non-finite value in embedding for ${id} at index ${i} (after Float32 conversion)`);
+      }
+    }
+    const buf = Buffer.from(f32.buffer);
     this.db
       .prepare("INSERT OR REPLACE INTO memory_embeddings (id, embedding) VALUES (?, ?)")
       .run(id, buf);
@@ -395,6 +423,7 @@ export class MemoryDatabase {
       | { embedding: Buffer }
       | undefined;
     if (!row) return null;
+    if (row.embedding.byteLength === 0 || row.embedding.byteLength % 4 !== 0) return null;
     return Array.from(
       new Float32Array(
         row.embedding.buffer,
@@ -409,7 +438,9 @@ export class MemoryDatabase {
       id: string;
       embedding: Buffer;
     }>;
-    return rows.map((row) => ({
+    return rows
+      .filter((row) => row.embedding.byteLength > 0 && row.embedding.byteLength % 4 === 0)
+      .map((row) => ({
       id: row.id,
       embedding: Array.from(
         new Float32Array(
@@ -530,12 +561,15 @@ export class MemoryDatabase {
     sessionId: string;
     turnId: string;
     memoryId: string;
-    mode: string;
+    mode: ExposureMode;
     score: number | null;
-    retrievalMode: string | null;
+    retrievalMode: RetrievalMode | null;
     messageIndex?: number | null;
     createdAt: string;
   }): void {
+    if (params.score != null && !Number.isFinite(params.score)) {
+      throw new Error(`Invalid exposure score: ${params.score}`);
+    }
     this.db
       .prepare(
         `INSERT INTO turn_memory_exposure
@@ -576,8 +610,13 @@ export class MemoryDatabase {
     return (this.db.prepare("SELECT changes() as c").get() as { c: number }).c;
   }
 
-  /** Raw insert for import — preserves all fields including message_index. */
+  /** Raw insert for import — validates enum/timestamp fields before insert. */
   insertExposureRaw(row: ExposureRow): void {
+    if (!ExposureModeGuard.is(row.mode)) throw new Error(`Invalid exposure mode: ${row.mode}`);
+    if (row.retrieval_mode != null && !RetrievalModeGuard.is(row.retrieval_mode)) {
+      throw new Error(`Invalid retrieval_mode: ${row.retrieval_mode}`);
+    }
+    assertIsoUtcTimestamp(row.created_at, "exposure created_at");
     this.db
       .prepare(
         `INSERT OR IGNORE INTO turn_memory_exposure
@@ -601,11 +640,14 @@ export class MemoryDatabase {
   upsertAttribution(params: {
     messageId: string;
     memoryId: string;
-    evidence: string;
+    evidence: AttributionEvidence;
     confidence: number;
     turnId: string;
     createdAt: string;
   }): void {
+    if (!Number.isFinite(params.confidence) || params.confidence < -1 || params.confidence > 1) {
+      throw new Error(`Invalid attribution confidence: ${params.confidence}`);
+    }
     this.mergeAttributionRow({
       message_id: params.messageId,
       memory_id: params.memoryId,
@@ -631,7 +673,7 @@ export class MemoryDatabase {
    * - turn_id is NEVER updated: it represents the original message's turn,
    *   not the most recent update event. updated_at tracks mutation time.
    */
-  private mergeAttributionRow(row: AttributionRow): void {
+  private mergeAttributionRow(row: Omit<AttributionRow, "reinforcement_applied">): void {
     this.db
       .prepare(
         `INSERT INTO message_memory_attribution
@@ -711,8 +753,11 @@ export class MemoryDatabase {
       .all(turnId) as AttributionRow[];
   }
 
-  /** Raw insert for import — preserves all fields including reinforcement_applied. */
+  /** Raw insert for import — validates enum/timestamp fields before insert. */
   insertAttributionRaw(row: AttributionRow): void {
+    if (!AttributionEvidenceGuard.is(row.evidence)) throw new Error(`Invalid evidence: ${row.evidence}`);
+    assertIsoUtcTimestamp(row.created_at, "attribution created_at");
+    if (row.updated_at != null) assertIsoUtcTimestamp(row.updated_at, "attribution updated_at");
     this.db
       .prepare(
         `INSERT OR IGNORE INTO message_memory_attribution
@@ -804,7 +849,11 @@ export class MemoryDatabase {
     let current = id;
     const visited = new Set<string>();
     for (let i = 0; i < maxDepth; i++) {
-      if (visited.has(current)) return current; // cycle detected
+      if (visited.has(current)) {
+        // Cycle detected — return current rather than looping forever.
+        // Caller or integrity scan can diagnose further.
+        return current;
+      }
       visited.add(current);
       const row = this.db
         .prepare("SELECT new_id FROM memory_aliases WHERE old_id = ?")

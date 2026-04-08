@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryDatabase } from "./db.ts";
 import { runConsolidation, type ConsolidationResult } from "./consolidation.ts";
 import type { MergeContentProducer } from "./merge-execution.ts";
+import type { AttributionEvidence, RetrievalMode } from "./types.ts";
 
 // -- Helpers --
 
@@ -49,7 +50,7 @@ type ExposureFixture = {
   session_id: string;
   turn_id: string;
   memory_ids: string[];
-  retrieval_mode?: string;
+  retrieval_mode?: RetrievalMode;
 };
 
 type AttributionFixture = {
@@ -57,7 +58,7 @@ type AttributionFixture = {
   turn_id: string;
   memory_id: string;
   confidence: number;
-  evidence?: string;
+  evidence?: AttributionEvidence;
 };
 
 function loadFixture(
@@ -113,8 +114,6 @@ function loadFixture(
 function consolidate(mergeProducer?: MergeContentProducer): Promise<ConsolidationResult> {
   return runConsolidation({
     db,
-    workingPath: join(tmpDir, "working.md"),
-    consolidatedPath: join(tmpDir, "consolidated.md"),
     mergeContentProducer: mergeProducer,
   });
 }

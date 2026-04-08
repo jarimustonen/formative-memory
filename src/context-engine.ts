@@ -552,9 +552,7 @@ export function extractLastUserMessage(messages: { role?: string; content?: unkn
 
     // Handle structured content arrays (multimodal messages)
     if (Array.isArray(msg.content)) {
-      const texts = msg.content
-        .filter((block: any) => block.type === "text" && typeof block.text === "string")
-        .map((block: any) => block.text);
+      const texts = msg.content.filter(isTextBlock).map((b) => b.text);
       if (texts.length > 0) return texts.join("\n");
     }
   }
@@ -584,4 +582,11 @@ export function checkSleepDebt(getDb?: () => MemoryDatabase): string {
   } catch {
     return ""; // Don't break assemble if state check fails
   }
+}
+
+/** Type guard for text content blocks in multimodal messages. */
+function isTextBlock(v: unknown): v is { type: "text"; text: string } {
+  if (v == null || typeof v !== "object") return false;
+  const b = v as Record<string, unknown>;
+  return b.type === "text" && typeof b.text === "string";
 }

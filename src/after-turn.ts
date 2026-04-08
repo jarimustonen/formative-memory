@@ -11,6 +11,7 @@
 import type { MemoryDatabase } from "./db.ts";
 import { appendRecallEvent } from "./retrieval-log.ts";
 import type { TurnMemoryLedger } from "./turn-memory-ledger.ts";
+import type { AttributionEvidence, ExposureMode, RetrievalMode } from "./types.ts";
 
 // -- Types --
 
@@ -256,7 +257,7 @@ export function isValidRating(value: unknown): value is number {
  * Map a feedback rating (1–5) to evidence type and confidence value.
  */
 export function feedbackEvidenceForRating(rating: number): {
-  evidence: string;
+  evidence: AttributionEvidence;
   confidence: number;
 } {
   if (rating >= 4) {

@@ -213,9 +213,9 @@ describe("MemoryDatabase", () => {
       sessionId: "s1",
       turnId: "t1",
       memoryId: "mem1",
-      mode: "auto_injected",
+      mode: "auto_injected" as const,
       score: 0.85,
-      retrievalMode: "hybrid",
+      retrievalMode: "hybrid" as const,
       createdAt: "2026-03-31T10:00:00Z",
     };
 
@@ -237,7 +237,7 @@ describe("MemoryDatabase", () => {
 
     it("allows multiple modes for same memory in same turn", () => {
       db.insertExposure(exposure);
-      db.insertExposure({ ...exposure, mode: "tool_search" });
+      db.insertExposure({ ...exposure, mode: "tool_search_returned" });
       expect(db.getExposures("s1", "t1")).toHaveLength(2);
     });
 
@@ -267,7 +267,7 @@ describe("MemoryDatabase", () => {
     const attribution = {
       messageId: "msg1",
       memoryId: "mem1",
-      evidence: "tool_search_returned",
+      evidence: "tool_search_returned" as const,
       confidence: 0.3,
       turnId: "t1",
       createdAt: "2026-03-31T10:00:00Z",

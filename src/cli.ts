@@ -18,7 +18,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { MemoryDatabase } from "./db.ts";
-import type { MemorySource, TemporalState } from "./types.ts";
+import {
+  MemorySourceGuard,
+  TemporalStateGuard,
+  type MemorySource,
+  type TemporalState,
+} from "./types.ts";
 
 // -- Types --
 
@@ -549,10 +554,10 @@ function cmdImport(ctx: CliContext, args: string[]): void {
           type: m.type,
           content: m.content,
           strength: m.strength,
-          temporal_state: (m.temporal_state ?? "none") as TemporalState,
+          temporal_state: TemporalStateGuard.is(m.temporal_state) ? m.temporal_state : "none",
           temporal_anchor: m.temporal_anchor ?? null,
           consolidated: m.consolidated ?? false,
-          source: (m.source ?? "agent_tool") as MemorySource,
+          source: MemorySourceGuard.is(m.source) ? m.source : "agent_tool",
           created_at: m.created_at,
         });
         db.insertFts(m.id, m.content, m.type);

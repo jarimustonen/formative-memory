@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { existsSync, readFileSync, writeFileSync, copyFileSync } from "node:fs";
 import type { ImportSegment, PrepareResult } from "./import-preprocess.ts";
 import { prepareImport } from "./import-preprocess.ts";
+import { TemporalStateGuard, type TemporalState } from "./types.ts";
 
 // -- Types --
 
@@ -21,7 +22,7 @@ export type StoreMemoryFn = (params: {
   content: string;
   type: string;
   source: "import";
-  temporal_state?: string;
+  temporal_state?: TemporalState;
   temporal_anchor?: string | null;
 }) => Promise<{ id: string }>;
 
@@ -215,7 +216,7 @@ async function storeBatch(
             content: sub.content,
             type: sub.type,
             source: "import",
-            temporal_state: sub.temporal_state,
+            temporal_state: safeTemporalState(sub.temporal_state, inferTemporalState(seg)),
             temporal_anchor: sub.temporal_anchor,
           });
           applyImportDecay(result.id, sub.temporal_anchor ?? seg.date, updateStrength);
@@ -227,7 +228,7 @@ async function storeBatch(
           content: seg.content,
           type: meta?.type ?? inferType(seg),
           source: "import",
-          temporal_state: meta?.temporal_state ?? inferTemporalState(seg),
+          temporal_state: safeTemporalState(meta?.temporal_state, inferTemporalState(seg)),
           temporal_anchor: anchor,
         });
         applyImportDecay(result.id, anchor, updateStrength);
@@ -289,10 +290,16 @@ function inferType(seg: ImportSegment): string {
   return "observation";
 }
 
-function inferTemporalState(seg: ImportSegment): string {
+function inferTemporalState(seg: ImportSegment): TemporalState {
   if (seg.date) return "past";
   if (seg.evergreen) return "none";
   return "none";
+}
+
+/** Validate a temporal_state from LLM enrichment, falling back to a safe default. */
+function safeTemporalState(value: string | undefined, fallback: TemporalState): TemporalState {
+  if (value != null && TemporalStateGuard.is(value)) return value;
+  return fallback;
 }
 
 // -- LLM enrichment prompt builder --

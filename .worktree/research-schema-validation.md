@@ -2,6 +2,14 @@
 created: 2026-04-08T18:45:00+03:00
 source_branch: main
 task: Research runtime schema validation for DB layer
+merged: 2026-04-08T20:44:49+03:00
+commits:
+  - hash: eb2ce2c
+    message: "feat: runtime schema validation with enum guards and numeric integrity"
+  - hash: 9251d8c
+    message: "docs: runtime schema validation research and LLM reviews"
+  - hash: 2efabf2
+    message: "docs: add worktree prompt for research-schema-validation"
 ---
 
 # Task: Runtime-skeemavalidointi DB-kerrokseen — tutkimus

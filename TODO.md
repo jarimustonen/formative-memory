@@ -435,7 +435,8 @@ Erillinen kuvaus: `history/openclaw-upstream-changes.md`
 
 Erillisiä tutkimuksia ja katselmuksia jotka eivät blokkaa kehitystä.
 
-- [ ] **Research: Runtime-skeemavalidointi DB-kerrokseen.** Projektissa on `@sinclair/typebox` tool-parametreissa ja käsin kirjoitetut TypeScript-tyypit + `as`-castit DB-riveille. Revieweissä toistuva löydös: evidence/mode -stringeille ei ole CHECK-rajoitteita eikä runtime-validointia, `unknown[]`-tyypitys transkriptiparsinnassa. Tutkittava: sopiiko Zod (tai olemassa oleva typebox) DB-rivien, AfterTurnParams-sisääntulon ja transcript-parsintarajapintojen runtime-validointiin? Huomioitava: kahden skeemakirjaston ylläpitokustannus vs. hyöty, SQLiten TEXT-kenttien luonne, validointikerroksen sijainti (DB-luku vs. rajapinta).
+- [x] **Research: Runtime-skeemavalidointi DB-kerrokseen.** Tutkimus valmis: `history/analysis-schema-validation.md`, review `history/review-schema-validation.md`. Päätös: ei uusia skeemakirjastoja. Toteutettu: enum guardit (`makeEnumGuard`, const tuples), runtime-validointi `rowToMemory()` + import-polut, numeerinen integriteetti (`strength`, `embedding`, `cosineSimilarity`), ISO-8601 validointi `*Raw()`-poluilla, `any`-poisto transkriptiparsinnasta.
+- [ ] **Idea: `memory-integrity` CLI-komento.** Skannaa olemassa oleva DB integriteettien varalta: tuntemattomia enum-arvoja, virheellisiä aikaleimoja, orphaned FTS-rivejä, korruptoituneita embedding-blobeja. Raportoi löydökset ilman automaattista korjausta. Hyödyllinen pre-validointi-aikaisen datan diagnostiikkaan.
 
 ---
 

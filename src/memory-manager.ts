@@ -7,7 +7,13 @@ import {
 } from "./embedding-circuit-breaker.ts";
 import { contentHash } from "./hash.ts";
 import { appendRecallEvent, appendSearchEvent, appendStoreEvent } from "./retrieval-log.ts";
-import type { Memory, MemorySource, TemporalState } from "./types.ts";
+import {
+  MemorySourceGuard,
+  TemporalStateGuard,
+  type Memory,
+  type MemorySource,
+  type TemporalState,
+} from "./types.ts";
 
 /**
  * Embedding provider interface.
@@ -53,10 +59,10 @@ export class MemoryManager {
     const id = contentHash(params.content);
     const now = new Date().toISOString();
 
-    // Check for duplicate
+    // Check for duplicate — row was written by us, so rowToMemory cannot return null
     const existing = this.db.getMemory(id);
     if (existing) {
-      return this.rowToMemory(existing);
+      return this.rowToMemory(existing)!;
     }
 
     // Generate embedding — gracefully degrade to null if unavailable
@@ -299,13 +305,15 @@ export class MemoryManager {
       .filter((row) => {
         if (!row.temporal_anchor) return false;
         const anchor = new Date(row.temporal_anchor);
+        if (Number.isNaN(anchor.getTime())) return false;
         const diffDays = (now.getTime() - anchor.getTime()) / (1000 * 60 * 60 * 24);
 
         if (row.temporal_state === "future" && diffDays >= 0) return true;
         if (row.temporal_state === "present" && diffDays > 1) return true;
         return false;
       })
-      .map((row) => this.rowToMemory(row));
+      .map((row) => this.rowToMemory(row))
+      .filter((m): m is Memory => m !== null);
   }
 
   // -- Stats --
@@ -316,16 +324,29 @@ export class MemoryManager {
 
   // -- Helpers --
 
-  private rowToMemory(row: MemoryRow): Memory {
+  /**
+   * Convert a raw DB row to a validated Memory object.
+   * Returns null (with warning) if the row contains invalid enum values,
+   * so a single corrupt row does not crash bulk operations.
+   */
+  private rowToMemory(row: MemoryRow): Memory | null {
+    if (!TemporalStateGuard.is(row.temporal_state)) {
+      console.warn(`Skipping memory ${row.id}: invalid temporal_state "${row.temporal_state}"`);
+      return null;
+    }
+    if (!MemorySourceGuard.is(row.source)) {
+      console.warn(`Skipping memory ${row.id}: invalid source "${row.source}"`);
+      return null;
+    }
     return {
       id: row.id,
       content: row.content || "(content not found)",
       type: row.type,
-      temporal_state: row.temporal_state as TemporalState,
+      temporal_state: row.temporal_state,
       temporal_anchor: row.temporal_anchor,
       created_at: row.created_at,
       strength: row.strength,
-      source: row.source as MemorySource,
+      source: row.source,
       consolidated: row.consolidated === 1,
       embedding: null, // Don't load embedding by default
     };
@@ -351,7 +372,9 @@ function cosineSimilarity(a: number[], b: number[]): number {
     normB += b[i] * b[i];
   }
   const denom = Math.sqrt(normA) * Math.sqrt(normB);
-  return denom === 0 ? 0 : dot / denom;
+  if (denom === 0 || !Number.isFinite(denom)) return 0;
+  const result = dot / denom;
+  return Number.isFinite(result) ? result : 0;
 }
 
 function escapeFtsQuery(query: string): string {
