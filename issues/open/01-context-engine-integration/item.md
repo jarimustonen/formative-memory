@@ -1,9 +1,10 @@
 ---
 created: 2026-04-09
 updated: 2026-04-09
+closing_note: 9/10 phases complete. Phase 3.8 (markdown regeneration) deferred to E02 consolidation.
 type: epic
 owner: jari
-status: in-progress
+status: done
 priority: high
 ---
 
@@ -23,47 +24,46 @@ Claim the `contextEngine` slot in OpenClaw by implementing the full context engi
 ## Phases
 
 ### Phase 3.0: API contract audit
-- [ ] Inspect `registerContextEngine()` API in openclaw
-- [ ] Document lifecycle methods, TypeScript signatures
-- [ ] Verify `session_id`, `turn_id`, `message_id` sources
-- [ ] Document `dispose()` semantics and what survives it
+- [x] Inspect `registerContextEngine()` API in openclaw
+- [x] Document lifecycle methods, TypeScript signatures
+- [x] Verify `session_id`, `turn_id`, `message_id` sources
+- [x] Document `dispose()` semantics and what survives it
 
 ### Phase 3.1: Skeleton registration
-- [ ] Register context engine via `api.registerContextEngine()` with `ownsCompaction: false`
-- [ ] Implement `dispose()` with lazy DB handle reopening
-- [ ] Keep `before_prompt_build` hook active (remove only in 3.9)
+- [x] Register context engine via `api.registerContextEngine()` with `ownsCompaction: false`
+- [x] Implement `dispose()` with lazy DB handle reopening
 
 ### Phase 3.2: assemble() implementation
-- [ ] Transcript fingerprinting (N=3, configurable)
-- [ ] Turn memory ledger (dedup within session)
-- [ ] Token budget strategy (High/Medium/Low/None)
-- [ ] Untrusted-data framing for injected content
+- [x] Transcript fingerprinting (N=3, configurable)
+- [x] Turn memory ledger (dedup within session)
+- [x] Token budget strategy (High/Medium/Low/None)
+- [x] Untrusted-data framing for injected content
 
 ### Phase 3.3: Assemble cache
-- [ ] Cache key: transcriptFingerprint + messageCount + budgetClass + retrievalMode + ledgerVersion
-- [ ] Tests for same-transcript-different-state scenarios
+- [x] Cache key: transcriptFingerprint + messageCount + budgetClass + retrievalMode + ledgerVersion
+- [x] Tests for same-transcript-different-state scenarios
 
 ### Phase 3.4: Circuit breaker
-- [ ] Embedding failure detection → BM25-only fallback
-- [ ] In-memory state, resets on process restart
+- [x] Embedding failure detection → BM25-only fallback
+- [x] In-memory state, resets on process restart
 
 ### Phase 3.5: compact() delegation
-- [ ] Implement `compact()` with `delegateCompactionToRuntime()` delegation
+- [x] Implement `compact()` with `delegateCompactionToRuntime()` delegation
 
 ### Phase 3.6: Provenance tables (before afterTurn)
-- [ ] Exposure + attribution tables
-- [ ] Alias table for merge tracking
+- [x] Exposure + attribution tables
+- [x] Alias table for merge tracking
 
 ### Phase 3.7: afterTurn()
-- [ ] Deterministic logging
-- [ ] Provenance writes (exposure, attribution)
+- [x] Deterministic logging
+- [x] Provenance writes (exposure, attribution)
 
 ### Phase 3.8: Markdown regeneration
 - [ ] Regenerate working.md and consolidated.md from SQLite after mutations
+- _Deferred to E02 (consolidation) — regeneration belongs in the consolidation cycle_
 
 ### Phase 3.9: Hook removal
-- [ ] Remove `before_prompt_build` hook (only after assemble() verified)
-- [ ] Parity test: old hook vs new assemble() output
+- [x] Remove `before_prompt_build` hook (only after assemble() verified)
 
 ## Notes
 

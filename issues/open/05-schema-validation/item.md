@@ -4,7 +4,7 @@ updated: 2026-04-09
 type: improvement
 reporter: jari
 assignee: jari
-status: open
+status: done
 priority: normal
 ---
 

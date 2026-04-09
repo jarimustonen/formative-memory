@@ -3,7 +3,7 @@ created: 2026-04-09
 updated: 2026-04-09
 type: epic
 owner: jari
-status: open
+status: in-progress
 priority: high
 ---
 
@@ -22,30 +22,30 @@ Implement the 10-phase consolidation process that strengthens, decays, associate
 ## Phases
 
 ### Phase 4.1: Foundation
-- [ ] Implement `state.last_consolidation_at` persistence
+- [x] Implement `state.last_consolidation_at` persistence
 - [ ] Catch-up decay for missed cycles (pow() for efficiency, MAX_CATCHUP_CYCLES=30)
 - [ ] Sleep debt warning in assemble() (>72h since last consolidation)
 
 ### Phase 4.2: Core cycle
-- [ ] Reinforcement (retrieval-based strength boost)
-- [ ] Normal single-cycle decay
-- [ ] Co-retrieval associations
-- [ ] Transitive associations
+- [x] Reinforcement (retrieval-based strength boost)
+- [x] Normal single-cycle decay
+- [x] Co-retrieval associations
+- [x] Transitive associations
 
 ### Phase 4.3: Temporal & pruning
-- [ ] Temporal state transitions
-- [ ] Pruning (dead memories below threshold)
+- [x] Temporal state transitions
+- [x] Pruning (dead memories below threshold)
 
 ### Phase 4.4: Merge
-- [ ] Delta-merge candidate search (O(S×T) filtered, not O(N²))
-- [ ] LLM-based merge execution
-- [ ] Association inheritance for merged memories
-- [ ] Alias table updates
+- [ ] Delta-merge candidate search (O(S×T) filtered, not O(N²)) — see #06
+- [x] LLM-based merge execution
+- [x] Association inheritance for merged memories
+- [x] Alias table updates
 
 ### Phase 4.5: Finalization
-- [ ] Provenance GC
-- [ ] Write consolidated memories
-- [ ] Regenerate working.md and consolidated.md
+- [x] Provenance GC
+- [x] Write consolidated memories
+- [ ] Regenerate working.md and consolidated.md — deferred from E01 Phase 3.8
 
 ## Issues
 
