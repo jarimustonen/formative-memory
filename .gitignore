@@ -12,3 +12,6 @@ bun.lock
 bun.lockb
 .worktrees/
 .claude/settings.local.json
+
+# AI agent working directories
+history/

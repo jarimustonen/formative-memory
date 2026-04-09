@@ -1,7 +1,7 @@
 {
   "id": "memory-associative",
   "name": "Memory (Associative)",
-  "kind": "memory",
+  "kind": ["memory", "context-engine"],
   "description": "Biologically-inspired associative memory with consolidation, temporal awareness, and retrieval-based strengthening.",
   "configSchema": {
     "type": "object",
@@ -11,15 +11,14 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "apiKey": {
-            "type": "string"
+          "provider": {
+            "type": "string",
+            "default": "auto"
           },
           "model": {
-            "type": "string",
-            "enum": ["text-embedding-3-small", "text-embedding-3-large"]
+            "type": "string"
           }
-        },
-        "required": ["apiKey"]
+        }
       },
       "dbPath": {
         "type": "string"
@@ -30,20 +29,17 @@
       "autoRecall": {
         "type": "boolean"
       }
-    },
-    "required": ["embedding"]
+    }
   },
   "uiHints": {
-    "embedding.apiKey": {
-      "label": "OpenAI API Key",
-      "sensitive": true,
-      "placeholder": "sk-proj-...",
-      "help": "API key for OpenAI embeddings (or use ${OPENAI_API_KEY})"
+    "embedding.provider": {
+      "label": "Embedding Provider",
+      "placeholder": "auto",
+      "help": "Embedding provider to use. \"auto\" selects the best available provider based on configured API keys."
     },
     "embedding.model": {
       "label": "Embedding Model",
-      "placeholder": "text-embedding-3-small",
-      "help": "OpenAI embedding model to use"
+      "help": "Override the provider's default embedding model"
     },
     "dbPath": {
       "label": "Database Path",

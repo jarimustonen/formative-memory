@@ -143,6 +143,87 @@ describe("MemoryManager", () => {
     });
   });
 
+  describe("broadRecall", () => {
+    it("returns memories sorted by broad score (strength + recency)", async () => {
+      await manager.store({ content: "Strong old memory.", type: "fact", source: "agent_tool" });
+      await manager.store({ content: "Weak recent memory.", type: "fact", source: "agent_tool" });
+
+      // Adjust strengths directly via DB
+      const db = manager.getDatabase();
+      const all = db.getAllMemories();
+      db.updateStrength(all[0].id, 0.5); // recent, weak
+      db.updateStrength(all[1].id, 0.9); // old, strong
+
+      const results = manager.broadRecall(10);
+      expect(results.length).toBe(2);
+      // Strong memory should rank higher (strength dominates at 0.8 weight)
+      expect(results[0].memory.strength).toBe(0.9);
+    });
+
+    it("enforces type diversity via caps", async () => {
+      // Create 6 memories of type "fact" and 2 of type "decision"
+      for (let i = 0; i < 6; i++) {
+        await manager.store({ content: `Fact number ${i}.`, type: "fact", source: "agent_tool" });
+      }
+      await manager.store({ content: "Decision alpha.", type: "decision", source: "agent_tool" });
+      await manager.store({ content: "Decision beta.", type: "decision", source: "agent_tool" });
+
+      // With limit=5, maxPerType = ceil(5/3) = 2
+      const results = manager.broadRecall(5);
+      expect(results.length).toBe(5);
+
+      const factCount = results.filter((r) => r.memory.type === "fact").length;
+      const decisionCount = results.filter((r) => r.memory.type === "decision").length;
+      // First pass caps facts at 2, decisions at 2; second pass fills remaining
+      expect(decisionCount).toBeLessThanOrEqual(2);
+      // Total should be 5 (3 facts from second pass fill + 2 decisions or similar)
+      expect(factCount + decisionCount).toBe(5);
+    });
+
+    it("suppresses near-duplicate content", async () => {
+      const longContent = "This is a fairly long memory content that should be detected as duplicate when prefixed. It has more than forty characters for sure.";
+      await manager.store({ content: longContent, type: "fact", source: "agent_tool" });
+      await manager.store({ content: longContent + " With extra.", type: "fact", source: "agent_tool" });
+      await manager.store({ content: "Completely different memory.", type: "fact", source: "agent_tool" });
+
+      const results = manager.broadRecall(10);
+      // The prefix-duplicate should be suppressed
+      expect(results.length).toBe(2);
+    });
+
+    it("returns empty for empty database", () => {
+      const results = manager.broadRecall(10);
+      expect(results).toHaveLength(0);
+    });
+
+    it("returns empty for limit 0", async () => {
+      await manager.store({ content: "Something.", type: "fact", source: "agent_tool" });
+      expect(manager.broadRecall(0)).toHaveLength(0);
+    });
+
+    it("respects limit", async () => {
+      for (let i = 0; i < 10; i++) {
+        await manager.store({ content: `Unique memory ${i}.`, type: "fact", source: "agent_tool" });
+      }
+      const results = manager.broadRecall(3);
+      expect(results.length).toBe(3);
+    });
+
+    it("excludes near-dead memories (strength <= 0.05)", async () => {
+      await manager.store({ content: "Healthy memory.", type: "fact", source: "agent_tool" });
+      await manager.store({ content: "Dying memory.", type: "fact", source: "agent_tool" });
+
+      const db = manager.getDatabase();
+      const all = db.getAllMemories();
+      db.updateStrength(all[0].id, 0.03); // below threshold
+      db.updateStrength(all[1].id, 0.8);
+
+      const results = manager.broadRecall(10);
+      expect(results.length).toBe(1);
+      expect(results[0].memory.strength).toBe(0.8);
+    });
+  });
+
   describe("stats", () => {
     it("counts memories", async () => {
       await manager.store({

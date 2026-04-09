@@ -34,21 +34,22 @@ describe("MemoryDatabase", () => {
     const sampleMemory = {
       id: "abc123",
       type: "fact",
+      content: "Team preferred PostgreSQL for operational reasons.",
       temporal_state: "none" as const,
       temporal_anchor: null,
       created_at: "2026-03-01T10:00:00Z",
       strength: 1.0,
       source: "agent_tool" as const,
       consolidated: false,
-      file_path: "working.md",
     };
 
-    it("inserts and retrieves memory", () => {
+    it("inserts and retrieves memory with content", () => {
       db.insertMemory(sampleMemory);
       const mem = db.getMemory("abc123");
       expect(mem).not.toBeNull();
       expect(mem!.id).toBe("abc123");
       expect(mem!.type).toBe("fact");
+      expect(mem!.content).toBe("Team preferred PostgreSQL for operational reasons.");
       expect(mem!.strength).toBe(1.0);
     });
 
@@ -71,16 +72,60 @@ describe("MemoryDatabase", () => {
       expect(db.getEmbedding("abc123")).toBeNull();
     });
 
+    it("deleteMemory removes exposure but preserves attribution", () => {
+      db.insertMemory(sampleMemory);
+      db.insertExposure({
+        sessionId: "s1", turnId: "t1", memoryId: "abc123",
+        mode: "auto_injected", score: 0.8, retrievalMode: "hybrid",
+        createdAt: "2026-03-31T10:00:00Z",
+      });
+      db.upsertAttribution({
+        messageId: "msg1", memoryId: "abc123",
+        evidence: "tool_search_returned", confidence: 0.3,
+        turnId: "t1", createdAt: "2026-03-31T10:00:00Z",
+      });
+
+      db.deleteMemory("abc123");
+
+      // Exposure ephemeral — deleted
+      expect(db.getExposuresByMemory("abc123")).toHaveLength(0);
+      // Attribution durable — preserved
+      expect(db.getAttributionsByMemory("abc123")).toHaveLength(1);
+    });
+
     it("lists working vs consolidated memories", () => {
       db.insertMemory(sampleMemory);
       db.insertMemory({
         ...sampleMemory,
         id: "def456",
         consolidated: true,
-        file_path: "consolidated.md",
       });
       expect(db.getWorkingMemories()).toHaveLength(1);
       expect(db.getConsolidatedMemories()).toHaveLength(1);
+    });
+
+    it("getTopByStrength returns memories ordered by strength descending", () => {
+      db.insertMemory({ ...sampleMemory, id: "weak", strength: 0.3 });
+      db.insertMemory({ ...sampleMemory, id: "strong", strength: 0.9 });
+      db.insertMemory({ ...sampleMemory, id: "medium", strength: 0.6 });
+      db.insertMemory({ ...sampleMemory, id: "dead", strength: 0.02 }); // below threshold
+
+      const results = db.getTopByStrength(10);
+      expect(results).toHaveLength(3); // dead excluded
+      expect(results[0].id).toBe("strong");
+      expect(results[1].id).toBe("medium");
+      expect(results[2].id).toBe("weak");
+    });
+
+    it("getTopByStrength respects limit", () => {
+      db.insertMemory({ ...sampleMemory, id: "a", strength: 0.9 });
+      db.insertMemory({ ...sampleMemory, id: "b", strength: 0.8 });
+      db.insertMemory({ ...sampleMemory, id: "c", strength: 0.7 });
+
+      const results = db.getTopByStrength(2);
+      expect(results).toHaveLength(2);
+      expect(results[0].id).toBe("a");
+      expect(results[1].id).toBe("b");
     });
   });
 
@@ -157,19 +202,233 @@ describe("MemoryDatabase", () => {
     });
   });
 
-  describe("replaceMemoryId", () => {
-    it("replaces id in memories, FTS, embeddings and associations", () => {
-      db.insertMemory({
-        id: "old_id",
-        type: "fact",
-        temporal_state: "none",
-        temporal_anchor: null,
-        created_at: "2026-03-01",
-        strength: 0.8,
-        source: "agent_tool",
-        consolidated: false,
-        file_path: "working.md",
+  describe("schema migration", () => {
+    it("sets schema_version to 3", () => {
+      expect(db.getState("schema_version")).toBe("3");
+    });
+  });
+
+  describe("exposure (provenance)", () => {
+    const exposure = {
+      sessionId: "s1",
+      turnId: "t1",
+      memoryId: "mem1",
+      mode: "auto_injected" as const,
+      score: 0.85,
+      retrievalMode: "hybrid" as const,
+      createdAt: "2026-03-31T10:00:00Z",
+    };
+
+    it("inserts and retrieves exposure", () => {
+      db.insertExposure(exposure);
+      const rows = db.getExposures("s1", "t1");
+      expect(rows).toHaveLength(1);
+      expect(rows[0].memory_id).toBe("mem1");
+      expect(rows[0].mode).toBe("auto_injected");
+      expect(rows[0].score).toBe(0.85);
+      expect(rows[0].retrieval_mode).toBe("hybrid");
+    });
+
+    it("is idempotent (ON CONFLICT DO NOTHING on PK conflict)", () => {
+      db.insertExposure(exposure);
+      db.insertExposure(exposure); // same PK
+      expect(db.getExposures("s1", "t1")).toHaveLength(1);
+    });
+
+    it("allows multiple modes for same memory in same turn", () => {
+      db.insertExposure(exposure);
+      db.insertExposure({ ...exposure, mode: "tool_search_returned" });
+      expect(db.getExposures("s1", "t1")).toHaveLength(2);
+    });
+
+    it("queries by memory_id", () => {
+      db.insertExposure(exposure);
+      db.insertExposure({ ...exposure, sessionId: "s2", turnId: "t2" });
+      expect(db.getExposuresByMemory("mem1")).toHaveLength(2);
+    });
+
+    it("deletes exposures for session", () => {
+      db.insertExposure(exposure);
+      db.insertExposure({ ...exposure, sessionId: "s2", turnId: "t2" });
+      db.deleteExposuresForSession("s1");
+      expect(db.getExposuresByMemory("mem1")).toHaveLength(1);
+    });
+
+    it("deletes exposures older than cutoff", () => {
+      db.insertExposure(exposure);
+      db.insertExposure({ ...exposure, turnId: "t2", createdAt: "2026-04-30T10:00:00Z" });
+      db.deleteExposuresOlderThan("2026-04-01T00:00:00Z");
+      const remaining = db.getExposures("s1", "t2");
+      expect(remaining).toHaveLength(1);
+    });
+  });
+
+  describe("attribution (provenance)", () => {
+    const attribution = {
+      messageId: "msg1",
+      memoryId: "mem1",
+      evidence: "tool_search_returned" as const,
+      confidence: 0.3,
+      turnId: "t1",
+      createdAt: "2026-03-31T10:00:00Z",
+    };
+
+    it("inserts and retrieves attribution", () => {
+      db.upsertAttribution(attribution);
+      const rows = db.getAttributionsByMemory("mem1");
+      expect(rows).toHaveLength(1);
+      expect(rows[0].evidence).toBe("tool_search_returned");
+      expect(rows[0].confidence).toBe(0.3);
+    });
+
+    it("promotes to higher confidence on upsert", () => {
+      db.upsertAttribution(attribution); // 0.3
+      db.upsertAttribution({ ...attribution, evidence: "agent_feedback_positive", confidence: 0.95 });
+      const rows = db.getAttributionsByMemory("mem1");
+      expect(rows).toHaveLength(1);
+      expect(rows[0].evidence).toBe("agent_feedback_positive");
+      expect(rows[0].confidence).toBe(0.95);
+      expect(rows[0].updated_at).toBeTruthy();
+    });
+
+    it("does not demote to lower confidence on upsert", () => {
+      db.upsertAttribution({ ...attribution, evidence: "agent_feedback_positive", confidence: 0.95 });
+      db.upsertAttribution({ ...attribution, evidence: "tool_search_returned", confidence: 0.3 });
+      const rows = db.getAttributionsByMemory("mem1");
+      expect(rows).toHaveLength(1);
+      expect(rows[0].evidence).toBe("agent_feedback_positive");
+      expect(rows[0].confidence).toBe(0.95);
+    });
+
+    it("explicit negative feedback overrides implicit positive attribution", () => {
+      db.upsertAttribution({ ...attribution, evidence: "tool_get", confidence: 0.6 });
+      db.upsertAttribution({ ...attribution, evidence: "agent_feedback_negative", confidence: -0.5 });
+      const rows = db.getAttributionsByMemory("mem1");
+      expect(rows).toHaveLength(1);
+      expect(rows[0].evidence).toBe("agent_feedback_negative");
+      expect(rows[0].confidence).toBe(-0.5);
+    });
+
+    it("explicit negative feedback overrides auto_injected", () => {
+      db.upsertAttribution({ ...attribution, evidence: "auto_injected", confidence: 0.15 });
+      db.upsertAttribution({ ...attribution, evidence: "agent_feedback_negative", confidence: -0.5 });
+      const rows = db.getAttributionsByMemory("mem1");
+      expect(rows[0].evidence).toBe("agent_feedback_negative");
+      expect(rows[0].confidence).toBe(-0.5);
+    });
+
+    it("implicit attribution does not override explicit feedback", () => {
+      db.upsertAttribution({ ...attribution, evidence: "agent_feedback_negative", confidence: -0.5 });
+      db.upsertAttribution({ ...attribution, evidence: "tool_get", confidence: 0.6 });
+      const rows = db.getAttributionsByMemory("mem1");
+      expect(rows[0].evidence).toBe("agent_feedback_negative");
+      expect(rows[0].confidence).toBe(-0.5);
+    });
+
+    it("higher explicit feedback overrides lower explicit feedback", () => {
+      db.upsertAttribution({ ...attribution, evidence: "agent_feedback_negative", confidence: -0.5 });
+      db.upsertAttribution({ ...attribution, evidence: "agent_feedback_positive", confidence: 0.95 });
+      const rows = db.getAttributionsByMemory("mem1");
+      expect(rows[0].evidence).toBe("agent_feedback_positive");
+      expect(rows[0].confidence).toBe(0.95);
+    });
+
+    it("lower explicit feedback does not override higher explicit feedback", () => {
+      db.upsertAttribution({ ...attribution, evidence: "agent_feedback_positive", confidence: 0.95 });
+      db.upsertAttribution({ ...attribution, evidence: "agent_feedback_negative", confidence: -0.5 });
+      const rows = db.getAttributionsByMemory("mem1");
+      expect(rows[0].evidence).toBe("agent_feedback_positive");
+      expect(rows[0].confidence).toBe(0.95);
+    });
+
+    it("preserves original turn_id on cross-turn feedback promotion", () => {
+      db.upsertAttribution({ ...attribution, turnId: "turn1" });
+      db.upsertAttribution({
+        ...attribution,
+        evidence: "agent_feedback_positive",
+        confidence: 0.95,
+        turnId: "turn2",
       });
+      const rows = db.getAttributionsByMemory("mem1");
+      expect(rows[0].evidence).toBe("agent_feedback_positive");
+      expect(rows[0].confidence).toBe(0.95);
+      expect(rows[0].turn_id).toBe("turn1"); // original turn preserved
+    });
+
+    it("only sets updated_at on actual promotion, not rejected upsert", () => {
+      db.upsertAttribution({ ...attribution, evidence: "agent_feedback_positive", confidence: 0.95 });
+      const before = db.getAttributionsByMemory("mem1")[0].updated_at;
+
+      db.upsertAttribution({
+        ...attribution,
+        evidence: "tool_search_returned",
+        confidence: 0.3,
+        createdAt: "2026-04-01T00:00:00Z",
+      });
+      const after = db.getAttributionsByMemory("mem1")[0].updated_at;
+      expect(after).toBe(before); // not mutated
+    });
+
+    it("getAttributionsByMemory returns rows ordered by created_at ASC", () => {
+      db.upsertAttribution({ ...attribution, messageId: "msg1", createdAt: "2026-03-31T14:00:00Z" });
+      db.upsertAttribution({ ...attribution, messageId: "msg2", createdAt: "2026-03-31T12:00:00Z" });
+      db.upsertAttribution({ ...attribution, messageId: "msg3", createdAt: "2026-03-31T16:00:00Z" });
+      const rows = db.getAttributionsByMemory("mem1");
+      expect(rows).toHaveLength(3);
+      expect(rows[0].message_id).toBe("msg2"); // earliest
+      expect(rows[2].message_id).toBe("msg3"); // latest
+    });
+
+    it("getLatestAttributionByMemory returns most recent row", () => {
+      db.upsertAttribution({ ...attribution, messageId: "msg1", createdAt: "2026-03-31T14:00:00Z" });
+      db.upsertAttribution({ ...attribution, messageId: "msg2", createdAt: "2026-03-31T12:00:00Z" });
+      db.upsertAttribution({ ...attribution, messageId: "msg3", createdAt: "2026-03-31T16:00:00Z" });
+      const latest = db.getLatestAttributionByMemory("mem1");
+      expect(latest).not.toBeNull();
+      expect(latest!.message_id).toBe("msg3");
+    });
+
+    it("getLatestAttributionByMemory returns null for unknown memory", () => {
+      expect(db.getLatestAttributionByMemory("nonexistent")).toBeNull();
+    });
+
+    it("queries by turn_id", () => {
+      db.upsertAttribution(attribution);
+      db.upsertAttribution({ ...attribution, messageId: "msg2", memoryId: "mem2" });
+      expect(db.getAttributionsForTurn("t1")).toHaveLength(2);
+    });
+
+    it("deletes attributions for specific messages", () => {
+      db.upsertAttribution(attribution);
+      db.upsertAttribution({ ...attribution, messageId: "msg2" });
+      db.deleteAttributionsForMessages(["msg1"]);
+      const rows = db.getAttributionsByMemory("mem1");
+      expect(rows).toHaveLength(1);
+      expect(rows[0].message_id).toBe("msg2");
+    });
+
+    it("handles empty message list in delete", () => {
+      db.upsertAttribution(attribution);
+      db.deleteAttributionsForMessages([]);
+      expect(db.getAttributionsByMemory("mem1")).toHaveLength(1);
+    });
+  });
+
+  describe("replaceMemoryId", () => {
+    const oldMem = {
+      id: "old_id",
+      type: "fact",
+      content: "Some old memory content.",
+      temporal_state: "none" as const,
+      temporal_anchor: null,
+      created_at: "2026-03-01",
+      strength: 0.8,
+      source: "agent_tool" as const,
+      consolidated: false,
+    };
+
+    it("replaces id in memories, FTS, embeddings and associations", () => {
+      db.insertMemory(oldMem);
       db.setEmbedding("old_id", [1, 2, 3]);
       db.insertFts("old_id", "some content", "fact");
       db.upsertAssociation("old_id", "other_id", 0.5, "2026-03-01");
@@ -181,6 +440,75 @@ describe("MemoryDatabase", () => {
       expect(db.getEmbedding("new_id")).not.toBeNull();
       const assocs = db.getAssociations("new_id");
       expect(assocs).toHaveLength(1);
+    });
+
+    it("merges exposure provenance to new ID", () => {
+      db.insertMemory(oldMem);
+      db.insertExposure({
+        sessionId: "s1", turnId: "t1", memoryId: "old_id",
+        mode: "auto_injected", score: 0.8, retrievalMode: "hybrid",
+        createdAt: "2026-03-31T10:00:00Z",
+      });
+
+      db.replaceMemoryId("old_id", "new_id", "new content");
+
+      expect(db.getExposuresByMemory("old_id")).toHaveLength(0);
+      expect(db.getExposuresByMemory("new_id")).toHaveLength(1);
+    });
+
+    it("throws if target memory already exists", () => {
+      db.insertMemory(oldMem);
+      db.insertMemory({ ...oldMem, id: "new_id" });
+
+      expect(() => db.replaceMemoryId("old_id", "new_id", "new content"))
+        .toThrow("target memory already exists");
+    });
+
+    it("drops self-association when old_id was linked to new_id", () => {
+      db.insertMemory(oldMem);
+      db.upsertAssociation("old_id", "new_id", 0.5, "2026-03-01");
+
+      expect(() => db.replaceMemoryId("old_id", "new_id", "new content")).not.toThrow();
+      expect(db.getAssociations("new_id")).toHaveLength(0);
+    });
+
+    it("merges associations keeping max weight on collision", () => {
+      db.insertMemory(oldMem);
+      // old_id → other with weight 0.2
+      db.upsertAssociation("old_id", "other_id", 0.2, "2026-03-01");
+      // new_id → other with weight 0.9
+      db.upsertAssociation("new_id", "other_id", 0.9, "2026-03-01");
+
+      db.replaceMemoryId("old_id", "new_id", "new content");
+
+      const assocs = db.getAssociations("new_id");
+      expect(assocs).toHaveLength(1);
+      expect(assocs[0].weight).toBe(0.9); // kept stronger
+    });
+
+    it("merges attribution provenance, keeping higher confidence", () => {
+      db.insertMemory(oldMem);
+
+      // old_id has low confidence attribution
+      db.upsertAttribution({
+        messageId: "msg1", memoryId: "old_id",
+        evidence: "tool_search_returned", confidence: 0.3,
+        turnId: "t1", createdAt: "2026-03-31T10:00:00Z",
+      });
+      // Pre-insert high-confidence attribution for new_id (simulates merge target)
+      db.upsertAttribution({
+        messageId: "msg1", memoryId: "new_id",
+        evidence: "agent_feedback_positive", confidence: 0.95,
+        turnId: "t1", createdAt: "2026-03-31T10:00:00Z",
+      });
+
+      db.replaceMemoryId("old_id", "new_id", "new content");
+
+      expect(db.getAttributionsByMemory("old_id")).toHaveLength(0);
+      const attrs = db.getAttributionsByMemory("new_id");
+      expect(attrs).toHaveLength(1);
+      expect(attrs[0].confidence).toBe(0.95); // kept higher
+      expect(attrs[0].evidence).toBe("agent_feedback_positive");
     });
   });
 });

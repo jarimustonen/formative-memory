@@ -7,6 +7,9 @@
   "exports": {
     ".": "./dist/index.js"
   },
+  "bin": {
+    "memory": "./dist/cli.js"
+  },
   "scripts": {
     "build": "tsdown",
     "check": "pnpm format:check && pnpm tsgo && pnpm lint",
@@ -22,13 +25,14 @@
   },
   "dependencies": {
     "@sinclair/typebox": "0.34.48",
-    "better-sqlite3": "^12.6.2"
+    "markdown-it": "^14.1.1"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
+    "@rolldown/binding-darwin-arm64": "1.0.0-rc.12",
+    "@types/markdown-it": "^14.1.2",
     "@types/node": "^22.10.0",
     "@vitest/coverage-v8": "^4.0.18",
-    "openclaw": "^2026.3.24",
+    "openclaw": "^2026.4.5",
     "oxfmt": "0.35.0",
     "oxlint": "^1.50.0",
     "tsdown": "^0.20.3",
@@ -37,7 +41,7 @@
     "vitest": "^4.0.18"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.3.24"
+    "openclaw": ">=2026.4.5"
   },
   "engines": {
     "node": ">=22.12.0"
@@ -45,13 +49,12 @@
   "packageManager": "pnpm@10.23.0",
   "pnpm": {
     "onlyBuiltDependencies": [
-      "better-sqlite3",
       "esbuild"
     ]
   },
   "openclaw": {
     "extensions": [
-      "./index.ts"
+      "./dist/index.js"
     ]
   }
 }
