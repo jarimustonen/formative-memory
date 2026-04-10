@@ -213,13 +213,7 @@ export function updateCoRetrievalAssociations(db: MemoryDatabase): number {
 
     for (let i = 0; i < ids.length; i++) {
       for (let j = i + 1; j < ids.length; j++) {
-        const a = ids[i];
-        const b = ids[j];
-
-        const existing = db.getAssociationWeight(a, b);
-        const newWeight = existing + CO_RETRIEVAL_BASE_WEIGHT - existing * CO_RETRIEVAL_BASE_WEIGHT;
-
-        db.upsertAssociation(a, b, newWeight, now);
+        db.upsertAssociationProbOr(ids[i], ids[j], CO_RETRIEVAL_BASE_WEIGHT, now);
         count++;
       }
     }

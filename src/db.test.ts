@@ -203,8 +203,8 @@ describe("MemoryDatabase", () => {
   });
 
   describe("schema migration", () => {
-    it("sets schema_version to 3", () => {
-      expect(db.getState("schema_version")).toBe("3");
+    it("sets schema_version to 4", () => {
+      expect(db.getState("schema_version")).toBe("4");
     });
   });
 

@@ -575,6 +575,24 @@ export class MemoryDatabase {
       .run(sortedA, sortedB, weight, now, now, weight, now);
   }
 
+  /**
+   * Upsert association using probabilistic OR: new = old + delta - old*delta.
+   * Single SQL statement — no pre-read needed.
+   */
+  upsertAssociationProbOr(a: string, b: string, delta: number, now: string): void {
+    const [sortedA, sortedB] = a < b ? [a, b] : [b, a];
+    this.db
+      .prepare(
+        `INSERT INTO associations (memory_a, memory_b, weight, created_at, last_updated_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(memory_a, memory_b)
+         DO UPDATE SET
+           weight = associations.weight + excluded.weight - associations.weight * excluded.weight,
+           last_updated_at = excluded.last_updated_at`,
+      )
+      .run(sortedA, sortedB, delta, now, now);
+  }
+
   getAssociationWeight(a: string, b: string): number {
     const [sortedA, sortedB] = a < b ? [a, b] : [b, a];
     const row = this.db
