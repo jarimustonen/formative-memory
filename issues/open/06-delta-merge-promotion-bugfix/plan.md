@@ -192,6 +192,12 @@ Poista myös `promoted`-kenttä `ConsolidationSummary`:sta.
 
 **`src/consolidation-steps.ts`** — poista `promoteWorkingToConsolidated()` kokonaan tai merkitse `@deprecated`.
 
+### Muistielinkaarimalli (working vs consolidated)
+
+`consolidated`-tila tarkoittaa "syntynyt usean muiston yhdistämisestä (merge)". Yksittäiset agentin tallentamat muistot ovat ja pysyvät working-tilassa riippumatta siitä kuinka monta konsolidaatiosykliä ne ovat selvinneet.
+
+Working-muistot decayavat nopeammin (×0.906/sykli) kuin merge-tulokset (×0.977/sykli). Uniikki muisto jota ei koskaan haeta tai käytetä putoaa prune-kynnyksen (0.05) alle n. 30 syklin jälkeen. Tämä on tarkoituksellista: muistot jotka eivät ole relevantteja keskusteluissa unohtuvat luonnollisesti. Retrieval-reinforcement pitää aktiivisesti käytetyt muistot hengissä.
+
 ### Testit
 
 - Working-muistot säilyvät working-tilassa konsolidaation jälkeen

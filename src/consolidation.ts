@@ -14,13 +14,16 @@ import {
   applyPruning,
   applyReinforcement,
   applyTemporalTransitions,
-  promoteWorkingToConsolidated,
   provenanceGC,
   updateCoRetrievalAssociations,
   updateTransitiveAssociations,
 } from "./consolidation-steps.ts";
-import type { MemoryDatabase } from "./db.ts";
-import { findMergeCandidates, type MemoryCandidate } from "./merge-candidates.ts";
+import type { MemoryDatabase, MemoryRow } from "./db.ts";
+import {
+  findMergeCandidatesDelta,
+  MERGE_TARGET_MIN_STRENGTH,
+  type MemoryCandidate,
+} from "./merge-candidates.ts";
 import { executeMerges, type EmbedderFn, type MergeContentProducer } from "./merge-execution.ts";
 
 export type ConsolidationParams = {
@@ -39,7 +42,6 @@ export type ConsolidationSummary = {
   prunedAssociations: number;
   merged: number;
   transitioned: number;
-  promoted: number;
   exposuresGc: number;
 };
 
@@ -55,7 +57,13 @@ export type ConsolidationResult = {
  * Pre-merge steps (reinforcement, decay, associations, pruning) run
  * in a single transaction. Merge execution runs separately because
  * the content producer may be async (LLM call). Finalization
- * (promote, GC) runs in its own transaction.
+ * (GC, timestamp update) runs in its own transaction.
+ *
+ * Working memories stay working — only merge results get consolidated.
+ * This is intentional: consolidated status means "produced by merging
+ * multiple memories" and grants slower decay (0.977 vs 0.906).
+ * Unique unmerged memories remain working and depend on retrieval
+ * reinforcement to maintain their strength.
  *
  * If no mergeContentProducer is provided, the merge phase is skipped entirely.
  * Concatenation is not acceptable — merging requires an LLM to produce
@@ -74,7 +82,6 @@ export async function runConsolidation(
     prunedAssociations: 0,
     merged: 0,
     transitioned: 0,
-    promoted: 0,
     exposuresGc: 0,
   };
 
@@ -102,15 +109,27 @@ export async function runConsolidation(
     summary.prunedAssociations = pruneResult.associationsPruned;
   });
 
-  // Phase 4.4–4.5 — Merge (requires LLM content producer)
+  // Phase 4.4–4.5 — Merge (delta: new/exposed sources vs strength-filtered targets)
   if (params.mergeContentProducer) {
-    const allMemories = params.db.getAllMemories();
-    const candidates: MemoryCandidate[] = allMemories.map((m) => ({
-      id: m.id,
-      content: m.content,
-      embedding: params.db.getEmbedding(m.id),
-    }));
-    const pairs = findMergeCandidates(candidates);
+    const lastAt = params.db.getState("last_consolidation_at");
+
+    const sourceMems = params.db.getMergeSources(lastAt);
+    const targetMems = params.db.getMergeTargets(MERGE_TARGET_MIN_STRENGTH, lastAt);
+
+    // Bulk-load embeddings to avoid N+1 per-memory queries
+    const embeddingMap = new Map(
+      params.db.getAllEmbeddings().map((e) => [e.id, e.embedding]),
+    );
+
+    const toCandidate = (m: MemoryRow): MemoryCandidate => ({
+      id: m.id, content: m.content, type: m.type,
+      embedding: embeddingMap.get(m.id) ?? null,
+    });
+
+    const pairs = findMergeCandidatesDelta(
+      sourceMems.map(toCandidate),
+      targetMems.map(toCandidate),
+    );
 
     if (pairs.length > 0) {
       const mergeResults = await executeMerges(
@@ -122,8 +141,6 @@ export async function runConsolidation(
 
   // Transaction 2: Finalization
   params.db.transaction(() => {
-    // Phase 4.6 — Promote working → consolidated
-    summary.promoted = promoteWorkingToConsolidated(params.db);
     // Provenance GC
     summary.exposuresGc = provenanceGC(params.db);
     // Write completion timestamp

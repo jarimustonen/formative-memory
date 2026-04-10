@@ -60,7 +60,6 @@ describe("runConsolidation", () => {
       prunedAssociations: 0,
       merged: 0,
       transitioned: 0,
-      promoted: 0,
       exposuresGc: 0,
     });
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
@@ -176,5 +175,33 @@ describe("runConsolidation", () => {
     expect(result2.summary.reinforced).toBe(0);
     // Strength changes only due to decay on second run
     expect(strengthAfterSecond).toBeLessThan(strengthAfterFirst);
+  });
+
+  it("working memories remain working after consolidation (no promotion)", async () => {
+    insertMemory("mem-a", "content A", { strength: 0.8 });
+    insertMemory("mem-b", "content B", { strength: 0.6 });
+
+    await runConsolidation({ db });
+
+    // Both memories should still be working (consolidated=0)
+    const memA = db.getMemory("mem-a")!;
+    const memB = db.getMemory("mem-b")!;
+    expect(memA.consolidated).toBe(0);
+    expect(memB.consolidated).toBe(0);
+  });
+
+  it("applies correct decay rates: working ×0.906, consolidated ×0.977", async () => {
+    insertMemory("mem-working", "working content", { strength: 1.0, consolidated: false });
+    insertMemory("mem-consolidated", "consolidated content", { strength: 1.0, consolidated: true });
+
+    await runConsolidation({ db });
+
+    const working = db.getMemory("mem-working")!;
+    const consolidated = db.getMemory("mem-consolidated")!;
+
+    // Working decays faster than consolidated
+    expect(working.strength).toBeCloseTo(0.906, 3);
+    expect(consolidated.strength).toBeCloseTo(0.977, 3);
+    expect(working.strength).toBeLessThan(consolidated.strength);
   });
 });

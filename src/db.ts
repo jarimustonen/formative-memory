@@ -100,6 +100,10 @@ CREATE INDEX IF NOT EXISTS idx_exposure_created_at ON turn_memory_exposure(creat
 CREATE INDEX IF NOT EXISTS idx_attribution_memory_id ON message_memory_attribution(memory_id);
 CREATE INDEX IF NOT EXISTS idx_attribution_turn_id ON message_memory_attribution(turn_id);
 
+-- Merge candidate query indexes
+CREATE INDEX IF NOT EXISTS idx_memories_strength ON memories(strength);
+CREATE INDEX IF NOT EXISTS idx_memories_created_at ON memories(created_at);
+
 -- Alias table: maps deleted/merged memory IDs to their replacement
 CREATE TABLE IF NOT EXISTS memory_aliases (
   old_id TEXT PRIMARY KEY,
@@ -280,6 +284,56 @@ export class MemoryDatabase {
          LIMIT ?`,
       )
       .all(from, to, limit) as MemoryRow[];
+  }
+
+  /**
+   * Get merge sources: memories that changed since the last consolidation.
+   * A memory is a source if:
+   * - created after lastConsolidationAt (new memory)
+   * - exposed/retrieved after lastConsolidationAt (recently used)
+   *
+   * On first run (lastConsolidationAt is null), returns all memories
+   * capped at maxCount to prevent N² explosion on large imports.
+   */
+  getMergeSources(lastConsolidationAt: string | null, maxCount = 500): MemoryRow[] {
+    if (!lastConsolidationAt) {
+      return this.db
+        .prepare("SELECT * FROM memories ORDER BY strength DESC, created_at DESC LIMIT ?")
+        .all(maxCount) as MemoryRow[];
+    }
+    return this.db
+      .prepare(
+        `SELECT * FROM memories
+         WHERE created_at > ?
+            OR id IN (
+              SELECT DISTINCT memory_id FROM turn_memory_exposure
+              WHERE created_at > ?
+            )
+         ORDER BY created_at DESC`,
+      )
+      .all(lastConsolidationAt, lastConsolidationAt) as MemoryRow[];
+  }
+
+  /**
+   * Get merge targets: the broader corpus of memories to merge into.
+   * Filtered by minimum strength threshold.
+   *
+   * On first run (lastConsolidationAt is null), returns all memories
+   * capped at maxCount to prevent N² explosion on large imports.
+   */
+  getMergeTargets(minStrength: number, lastConsolidationAt: string | null, maxCount = 1000): MemoryRow[] {
+    if (!lastConsolidationAt) {
+      return this.db
+        .prepare("SELECT * FROM memories ORDER BY strength DESC, created_at DESC LIMIT ?")
+        .all(maxCount) as MemoryRow[];
+    }
+    return this.db
+      .prepare(
+        `SELECT * FROM memories
+         WHERE strength >= ?
+         ORDER BY created_at DESC`,
+      )
+      .all(minStrength) as MemoryRow[];
   }
 
   updateStrength(id: string, strength: number): void {

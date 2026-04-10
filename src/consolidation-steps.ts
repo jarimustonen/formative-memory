@@ -359,9 +359,11 @@ export function applyTemporalTransitions(db: MemoryDatabase): number {
  * Promote working memories to consolidated state.
  * Sets consolidated=1.
  * Preserves current strength — reinforcement/decay dynamics are not reset.
- * Run AFTER merge/prune so only surviving working memories are promoted.
  *
- * Returns count of memories promoted.
+ * @deprecated Do not call in normal consolidation. Blanket promotion gives
+ * all memories the slower consolidated decay rate (0.977) regardless of
+ * whether they were merged. Only merge results should be consolidated —
+ * this is handled by executeMerge() setting consolidated=true on new memories.
  */
 export function promoteWorkingToConsolidated(db: MemoryDatabase): number {
   const working = db.getWorkingMemories();

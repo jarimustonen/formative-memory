@@ -12,6 +12,7 @@
 export type MemoryCandidate = {
   id: string;
   content: string;
+  type: string;
   embedding: number[] | null;
 };
 
@@ -30,6 +31,12 @@ export const MERGE_THRESHOLD = 0.6;
 
 /** Maximum number of merge pairs returned per run. */
 export const MAX_MERGE_PAIRS = 20;
+
+/** Minimum strength for a memory to be a merge source. */
+export const MERGE_SOURCE_MIN_STRENGTH = 0.5;
+
+/** Minimum strength for a memory to be a merge target. */
+export const MERGE_TARGET_MIN_STRENGTH = 0.3;
 
 /** Weight for Jaccard in combined score when embedding is available. */
 const JACCARD_WEIGHT = 0.4;
@@ -62,13 +69,15 @@ export function findMergeCandidates(
       const a = memories[i];
       const b = memories[j];
 
+      if (a.type !== b.type) continue;
+
       const jaccardScore = jaccardFromSets(features[i], features[j]);
 
       let embeddingScore: number | null = null;
       let combinedScore = jaccardScore;
 
       if (a.embedding && b.embedding) {
-        embeddingScore = cosineSimilarity(a.embedding, b.embedding);
+        embeddingScore = Math.max(0, cosineSimilarity(a.embedding, b.embedding));
         combinedScore = JACCARD_WEIGHT * jaccardScore + EMBEDDING_WEIGHT * embeddingScore;
       }
 
@@ -85,6 +94,69 @@ export function findMergeCandidates(
   }
 
   // Sort by combined score descending, take top N
+  pairs.sort((x, y) => y.combinedScore - x.combinedScore);
+  return pairs.slice(0, maxPairs);
+}
+
+/**
+ * Find merge candidate pairs between source and target memories.
+ *
+ * Only compares sources against targets. Only pairs with matching
+ * `type` are considered. Complexity is O(S×T) where both S and T
+ * are pre-filtered subsets of the full memory set.
+ */
+export function findMergeCandidatesDelta(
+  sources: MemoryCandidate[],
+  targets: MemoryCandidate[],
+  maxPairs = MAX_MERGE_PAIRS,
+): MergePair[] {
+  if (sources.length === 0 || targets.length === 0) return [];
+
+  // Shared feature cache — avoids double extraction for memories in both sets
+  const featureCache = new Map<string, Set<string>>();
+  const getFeatures = (m: MemoryCandidate): Set<string> => {
+    let f = featureCache.get(m.id);
+    if (!f) { f = textFeatures(m.content); featureCache.set(m.id, f); }
+    return f;
+  };
+
+  const seen = new Set<string>();
+  const pairs: MergePair[] = [];
+
+  for (let i = 0; i < sources.length; i++) {
+    for (let j = 0; j < targets.length; j++) {
+      const aId = sources[i].id;
+      const bId = targets[j].id;
+      if (aId === bId) continue;
+      if (sources[i].type !== targets[j].type) continue;
+
+      // Deduplicate symmetric pairs (A,B) and (B,A)
+      const [lo, hi] = aId < bId ? [aId, bId] : [bId, aId];
+      const pairKey = `${lo}\0${hi}`;
+      if (seen.has(pairKey)) continue;
+      seen.add(pairKey);
+
+      const jaccardScore = jaccardFromSets(getFeatures(sources[i]), getFeatures(targets[j]));
+      let embeddingScore: number | null = null;
+      let combinedScore = jaccardScore;
+
+      if (sources[i].embedding && targets[j].embedding) {
+        embeddingScore = Math.max(0, cosineSimilarity(sources[i].embedding!, targets[j].embedding!));
+        combinedScore = JACCARD_WEIGHT * jaccardScore + EMBEDDING_WEIGHT * embeddingScore;
+      }
+
+      if (combinedScore >= MERGE_THRESHOLD) {
+        pairs.push({
+          a: lo,
+          b: hi,
+          jaccardScore,
+          embeddingScore,
+          combinedScore,
+        });
+      }
+    }
+  }
+
   pairs.sort((x, y) => y.combinedScore - x.combinedScore);
   return pairs.slice(0, maxPairs);
 }
@@ -133,6 +205,8 @@ export function textFeatures(text: string): Set<string> {
 
 /**
  * Cosine similarity between two vectors. Returns value in [-1, 1].
+ * Merge scoring clamps this to [0, 1] — negative values indicate
+ * no semantic similarity rather than useful anti-similarity.
  */
 export function cosineSimilarity(a: number[], b: number[]): number {
   if (a.length !== b.length || a.length === 0) return 0;

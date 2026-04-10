@@ -511,4 +511,101 @@ describe("MemoryDatabase", () => {
       expect(attrs[0].evidence).toBe("agent_feedback_positive");
     });
   });
+
+  describe("getMergeSources", () => {
+    function insertMem(id: string, strength: number, createdAt: string) {
+      db.insertMemory({
+        id,
+        type: "fact",
+        content: `content for ${id}`,
+        temporal_state: "none",
+        temporal_anchor: null,
+        created_at: createdAt,
+        strength,
+        source: "agent_tool",
+        consolidated: false,
+      });
+    }
+
+    it("returns capped memories on first run (null lastConsolidationAt)", () => {
+      insertMem("a", 0.1, "2026-03-01T00:00:00Z");
+      insertMem("b", 0.9, "2026-03-01T00:00:00Z");
+
+      const result = db.getMergeSources(null, 100);
+      expect(result).toHaveLength(2);
+      // Ordered by strength DESC
+      expect(result[0].id).toBe("b");
+    });
+
+    it("includes new memories since last consolidation", () => {
+      insertMem("new-weak", 0.1, "2026-03-02T00:00:00Z");
+
+      const result = db.getMergeSources("2026-03-01T00:00:00Z");
+      expect(result.map((m) => m.id)).toContain("new-weak");
+    });
+
+    it("includes recently exposed memories", () => {
+      insertMem("exposed", 0.1, "2026-01-01T00:00:00Z"); // old and weak
+
+      db.insertExposure({
+        sessionId: "s1",
+        turnId: "t1",
+        memoryId: "exposed",
+        mode: "tool_search_returned",
+        score: 0.5,
+        retrievalMode: "hybrid",
+        createdAt: "2026-03-02T00:00:00Z",
+      });
+
+      const result = db.getMergeSources("2026-03-01T00:00:00Z");
+      expect(result.map((m) => m.id)).toContain("exposed");
+    });
+
+    it("excludes old, unused memories (not new, not exposed)", () => {
+      insertMem("dead", 0.8, "2026-01-01T00:00:00Z"); // old, strong, but not new/exposed
+
+      const result = db.getMergeSources("2026-03-01T00:00:00Z");
+      expect(result).toHaveLength(0);
+    });
+  });
+
+  describe("getMergeTargets", () => {
+    function insertMem(id: string, strength: number, createdAt: string) {
+      db.insertMemory({
+        id,
+        type: "fact",
+        content: `content for ${id}`,
+        temporal_state: "none",
+        temporal_anchor: null,
+        created_at: createdAt,
+        strength,
+        source: "agent_tool",
+        consolidated: false,
+      });
+    }
+
+    it("returns capped memories on first run (null lastConsolidationAt)", () => {
+      insertMem("a", 0.1, "2026-03-01T00:00:00Z");
+      insertMem("b", 0.9, "2026-03-01T00:00:00Z");
+
+      const result = db.getMergeTargets(0.3, null, 100);
+      expect(result).toHaveLength(2);
+    });
+
+    it("includes memories above strength threshold", () => {
+      insertMem("strong", 0.8, "2026-01-01T00:00:00Z");
+      insertMem("weak", 0.1, "2026-01-01T00:00:00Z");
+
+      const result = db.getMergeTargets(0.3, "2026-03-01T00:00:00Z");
+      expect(result.map((m) => m.id)).toContain("strong");
+      expect(result.map((m) => m.id)).not.toContain("weak");
+    });
+
+    it("excludes weak memories", () => {
+      insertMem("dead", 0.1, "2026-01-01T00:00:00Z");
+
+      const result = db.getMergeTargets(0.3, "2026-03-01T00:00:00Z");
+      expect(result).toHaveLength(0);
+    });
+  });
 });

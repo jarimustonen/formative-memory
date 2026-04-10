@@ -157,7 +157,7 @@ describe("consolidation harness", () => {
       expect(result.summary.merged).toBe(0);
     });
 
-    it("single memory — decay + promote", async () => {
+    it("single memory — decay, stays working", async () => {
       loadFixture([
         { id: id("fct00001"), content: "Jarin lempiväri on vihreä." },
       ]);
@@ -165,12 +165,11 @@ describe("consolidation harness", () => {
       const result = await consolidate();
 
       expect(result.summary.decayed).toBeGreaterThan(0);
-      expect(result.summary.promoted).toBeGreaterThan(0);
 
       const mems = getMemories();
       expect(mems).toHaveLength(1);
       expect(mems[0].strength).toBeLessThan(1.0); // decayed
-      expect(mems[0].consolidated).toBe(true); // promoted
+      expect(mems[0].consolidated).toBe(false); // stays working — only merge results get consolidated
     });
   });
 
