@@ -1,10 +1,10 @@
 ---
 created: 2026-04-09
 updated: 2026-04-09
-closing_note: 9/10 phases complete. Phase 3.8 (markdown regeneration) deferred to E02 consolidation.
+closing_note: All phases complete. Phase 3.8 (markdown regeneration) removed — no markdown file generation.
 type: epic
 owner: jari
-status: done
+status: closed
 priority: high
 ---
 
@@ -58,9 +58,8 @@ Claim the `contextEngine` slot in OpenClaw by implementing the full context engi
 - [x] Deterministic logging
 - [x] Provenance writes (exposure, attribution)
 
-### Phase 3.8: Markdown regeneration
-- [ ] Regenerate working.md and consolidated.md from SQLite after mutations
-- _Deferred to E02 (consolidation) — regeneration belongs in the consolidation cycle_
+### Phase 3.8: ~~Markdown regeneration~~ — REMOVED
+- _No markdown file generation. SQLite is the sole data store; use CLI/tools to inspect._
 
 ### Phase 3.9: Hook removal
 - [x] Remove `before_prompt_build` hook (only after assemble() verified)

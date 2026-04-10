@@ -45,7 +45,7 @@ Implement the 10-phase consolidation process that strengthens, decays, associate
 ### Phase 4.5: Finalization
 - [x] Provenance GC
 - [x] Write consolidated memories
-- [ ] Regenerate working.md and consolidated.md — deferred from E01 Phase 3.8
+- ~~Regenerate working.md and consolidated.md~~ — REMOVED, no markdown file generation
 
 ## Issues
 

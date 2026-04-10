@@ -20,7 +20,7 @@ Key features of the memory model:
 - **Consolidation** ("sleep" process) — a 10-phase batch process that strengthens associations, decays unused memories, merges duplicates, and prunes dead memories. Consolidated memories are new memories; intermediates are removed, originals weakened.
 - **Hybrid retrieval** — embedding cosine similarity + BM25 keyword search, weighted by memory strength
 
-**Canonical data store:** SQLite is the single source of truth. Markdown files (working.md, consolidated.md) are derived views for human readability — a temporary bridge until a dedicated **memory viewer/analyzer** tool is built.
+**Canonical data store:** SQLite is the single source of truth. No markdown files are generated.
 
 ---
 
@@ -421,18 +421,16 @@ No hard floor. Zero injection is valid. A bad memory in a cramped context is wor
 
 All state lives in SQLite: memories, associations, embeddings, FTS, provenance, aliases.
 
-### Markdown files are derived views
+### No markdown files
 
-`working.md` and `consolidated.md` are generated from SQLite for human readability. Not edited by humans. Regenerated when needed.
+SQLite is the sole data store. No generated markdown files. Use CLI commands or memory tools to inspect contents.
 
-**Future:** A standalone **memory viewer/analyzer** tool will replace markdown files as the primary human interface:
+**Future:** A standalone **memory viewer/analyzer** tool:
 
 - Search and browse with full metadata
 - Association graph visualization
 - Retrieval log analysis
 - Consolidation history and strength curves
-
-Until the viewer exists, markdown files are a temporary bridge.
 
 ---
 
