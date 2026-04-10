@@ -9,6 +9,7 @@
  */
 
 import {
+  applyCatchUpDecay,
   applyDecay,
   applyPruning,
   applyReinforcement,
@@ -31,6 +32,7 @@ export type ConsolidationParams = {
 };
 
 export type ConsolidationSummary = {
+  catchUpDecayed: number;
   reinforced: number;
   decayed: number;
   pruned: number;
@@ -65,6 +67,7 @@ export async function runConsolidation(
   const start = Date.now();
 
   const summary: ConsolidationSummary = {
+    catchUpDecayed: 0,
     reinforced: 0,
     decayed: 0,
     pruned: 0,
@@ -77,6 +80,15 @@ export async function runConsolidation(
 
   // Transaction 1: Pre-merge deterministic steps
   params.db.transaction(() => {
+    // Phase 4.0 — Catch-up decay for missed cycles
+    const lastAt = params.db.getState("last_consolidation_at");
+    let lastConsolidationMs: number | null = null;
+    if (lastAt) {
+      const ms = new Date(lastAt).getTime();
+      if (Number.isFinite(ms)) lastConsolidationMs = ms;
+    }
+    summary.catchUpDecayed = applyCatchUpDecay(params.db, lastConsolidationMs);
+
     // Phase 4.1 — Reinforcement + decay
     summary.reinforced = applyReinforcement(params.db);
     summary.decayed = applyDecay(params.db);

@@ -30,6 +30,64 @@ export const MODE_WEIGHT_HYBRID = 1.0;
 /** Mode weight for BM25-only retrieval (degraded). */
 export const MODE_WEIGHT_BM25_ONLY = 0.5;
 
+// -- Step 0: Catch-up decay --
+
+/** Maximum catch-up cycles to prevent amnesia on very long gaps. */
+export const MAX_CATCHUP_CYCLES = 30;
+
+/**
+ * Apply catch-up decay for missed consolidation cycles.
+ *
+ * Computes per-memory effective missed cycles based on
+ * max(lastConsolidationMs, memory.created_at), so memories created
+ * after the last consolidation are not punished for old sleep debt.
+ *
+ * Uses pow() for efficiency instead of iterative loops.
+ * Capped at MAX_CATCHUP_CYCLES to prevent amnesia.
+ *
+ * @param lastConsolidationMs Timestamp (ms) of last consolidation run, or null if never run.
+ * @param nowMs Current time in ms (injectable for testing).
+ */
+export function applyCatchUpDecay(
+  db: MemoryDatabase,
+  lastConsolidationMs: number | null,
+  nowMs: number = Date.now(),
+): number {
+  if (lastConsolidationMs == null || !Number.isFinite(lastConsolidationMs)) return 0;
+
+  const allMemories = db.getAllMemories();
+  let count = 0;
+  const dayMs = 1000 * 60 * 60 * 24;
+
+  for (const mem of allMemories) {
+    // Per-memory baseline: the later of last consolidation or memory creation
+    const createdMs = new Date(mem.created_at).getTime();
+    const baselineMs = Number.isFinite(createdMs)
+      ? Math.max(lastConsolidationMs, createdMs)
+      : lastConsolidationMs;
+
+    const daysSince = (nowMs - baselineMs) / dayMs;
+    const cycles = Math.max(0, Math.floor(daysSince) - 1);
+    if (cycles <= 0) continue;
+
+    const effectiveCycles = Math.min(cycles, MAX_CATCHUP_CYCLES);
+    const factor = mem.consolidated ? DECAY_CONSOLIDATED : DECAY_WORKING;
+    const newStrength = mem.strength * Math.pow(factor, effectiveCycles);
+    db.updateStrength(mem.id, newStrength);
+    count++;
+  }
+
+  // Association catch-up uses the global cycle count (conservative: max possible)
+  const globalDaysSince = (nowMs - lastConsolidationMs) / dayMs;
+  const globalCycles = Math.max(0, Math.floor(globalDaysSince) - 1);
+  if (globalCycles > 0) {
+    const effectiveGlobal = Math.min(globalCycles, MAX_CATCHUP_CYCLES);
+    db.decayAllAssociationWeights(Math.pow(DECAY_ASSOCIATION, effectiveGlobal));
+  }
+
+  return count;
+}
+
 // -- Step 1: Retrieval reinforcement --
 
 /**

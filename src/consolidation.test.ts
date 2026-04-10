@@ -53,6 +53,7 @@ describe("runConsolidation", () => {
 
     expect(result.ok).toBe(true);
     expect(result.summary).toEqual({
+      catchUpDecayed: 0,
       reinforced: 0,
       decayed: 0,
       pruned: 0,
@@ -120,6 +121,35 @@ describe("runConsolidation", () => {
     expect(result.summary.pruned).toBeGreaterThanOrEqual(1); // mem-weak pruned
     // Merge depends on Jaccard similarity — these texts are similar enough
     // The exact merge count depends on threshold, but the pipeline runs without error
+  });
+
+  it("computes catch-up cycles from last_consolidation_at", async () => {
+    insertMemory("mem-a", "content A", { strength: 0.8 });
+
+    // Set last consolidation 5 days ago → 4 catch-up cycles
+    const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
+    db.setState("last_consolidation_at", fiveDaysAgo);
+
+    const result = await runConsolidation({ db });
+    expect(result.summary.catchUpDecayed).toBe(1); // 1 memory affected
+  });
+
+  it("no catch-up when last consolidation was recent", async () => {
+    insertMemory("mem-a", "content A");
+
+    // Set last consolidation 12 hours ago → 0 catch-up cycles (floor(0.5) - 1 < 0)
+    const halfDayAgo = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+    db.setState("last_consolidation_at", halfDayAgo);
+
+    const result = await runConsolidation({ db });
+    expect(result.summary.catchUpDecayed).toBe(0);
+  });
+
+  it("no catch-up on first consolidation (no last_consolidation_at)", async () => {
+    insertMemory("mem-a", "content A");
+
+    const result = await runConsolidation({ db });
+    expect(result.summary.catchUpDecayed).toBe(0);
   });
 
   it("is idempotent on second run (reinforcement not re-applied)", async () => {

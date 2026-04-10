@@ -23,6 +23,7 @@ import {
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
 import type { AssociativeMemoryConfig } from "./config.ts";
 import { memoryConfigSchema } from "./config.ts";
+import { applyTemporalTransitions } from "./consolidation-steps.ts";
 import { runConsolidation } from "./consolidation.ts";
 import { CONTEXT_ENGINE_ID, createAssociativeMemoryContextEngine } from "./context-engine.ts";
 import { EmbeddingCircuitBreaker } from "./embedding-circuit-breaker.ts";
@@ -689,8 +690,10 @@ const associativeMemoryPlugin = {
         });
 
         const s = result.summary;
+        const catchUpInfo = s.catchUpDecayed > 0 ? `Catch-up decayed: ${s.catchUpDecayed}, ` : "";
         return {
           text: `Memory consolidation complete (${result.durationMs}ms).\n` +
+            catchUpInfo +
             `Reinforced: ${s.reinforced}, Decayed: ${s.decayed}, ` +
             `Pruned: ${s.pruned} memories + ${s.prunedAssociations} associations, ` +
             `Merged: ${s.merged}, Transitioned: ${s.transitioned}, ` +
@@ -776,11 +779,190 @@ const associativeMemoryPlugin = {
       },
     });
 
+    // -- Scheduled consolidation via cron --
+
+    /** System event token for cron-triggered consolidation. */
+    const CONSOLIDATION_CRON_TRIGGER = "__associative_memory_consolidation__";
+    /** Cron job name (used to find/update managed jobs). */
+    const CONSOLIDATION_CRON_NAME = "Associative Memory Consolidation";
+    /** Tag in description to identify managed jobs. */
+    const CONSOLIDATION_CRON_TAG = "[managed-by=memory-associative.consolidation]";
+    /** Default cron expression: daily at 03:00. */
+    const DEFAULT_CONSOLIDATION_CRON = "0 3 * * *";
+
+    /** System event token for cron-triggered temporal transitions. */
+    const TEMPORAL_CRON_TRIGGER = "__associative_memory_temporal_transitions__";
+    /** Cron job name for temporal transitions. */
+    const TEMPORAL_CRON_NAME = "Associative Memory Temporal Transitions";
+    /** Tag to identify managed temporal jobs. */
+    const TEMPORAL_CRON_TAG = "[managed-by=memory-associative.temporal]";
+    /** Cron expression: daily at 15:00 (03:00 is covered by full consolidation). */
+    const DEFAULT_TEMPORAL_CRON = "0 15 * * *";
+
+    // Register cron job on gateway startup (same pattern as memory-core dreaming).
+    api.registerHook("gateway:startup", async (event: any) => {
+      try {
+        // Extract cron service (dual-path: context.cron or context.deps.cron)
+        const context = event?.context;
+        const cron = context?.cron ?? context?.deps?.cron;
+        if (!cron || typeof cron.list !== "function" || typeof cron.add !== "function") {
+          logger.warn("Cron service not available — scheduled consolidation disabled");
+          return;
+        }
+
+        // Capture stateDir from startup context if available
+        if (context?.stateDir) runtimePaths.stateDir = context.stateDir;
+
+        // Reconcile: find existing managed job or create one
+        const allJobs = await cron.list({ includeDisabled: true });
+        const managed = (allJobs as any[]).filter(
+          (j: any) => j.description?.includes(CONSOLIDATION_CRON_TAG),
+        );
+
+        const desired = {
+          name: CONSOLIDATION_CRON_NAME,
+          description: `${CONSOLIDATION_CRON_TAG} Full consolidation: decay, reinforce, merge, prune, promote.`,
+          enabled: true,
+          schedule: { kind: "cron" as const, expr: DEFAULT_CONSOLIDATION_CRON },
+          sessionTarget: "main" as const,
+          wakeMode: "next-heartbeat" as const,
+          payload: { kind: "systemEvent" as const, text: CONSOLIDATION_CRON_TRIGGER },
+        };
+
+        if (managed.length === 0) {
+          await cron.add(desired);
+          logger.info?.("Registered consolidation cron job");
+        } else {
+          // Update existing job if schedule changed
+          const existing = managed[0];
+          if (existing.schedule?.expr !== desired.schedule.expr) {
+            await cron.update(existing.id, { schedule: desired.schedule });
+            logger.info?.("Updated consolidation cron schedule");
+          }
+          // Remove duplicates
+          for (let i = 1; i < managed.length; i++) {
+            await cron.remove(managed[i].id);
+          }
+        }
+
+        // -- Temporal transitions cron (every 12h) --
+        const temporalManaged = (allJobs as any[]).filter(
+          (j: any) => j.description?.includes(TEMPORAL_CRON_TAG),
+        );
+        const desiredTemporal = {
+          name: TEMPORAL_CRON_NAME,
+          description: `${TEMPORAL_CRON_TAG} Transition temporal states: future→present→past.`,
+          enabled: true,
+          schedule: { kind: "cron" as const, expr: DEFAULT_TEMPORAL_CRON },
+          sessionTarget: "main" as const,
+          wakeMode: "next-heartbeat" as const,
+          payload: { kind: "systemEvent" as const, text: TEMPORAL_CRON_TRIGGER },
+        };
+
+        if (temporalManaged.length === 0) {
+          await cron.add(desiredTemporal);
+          logger.info?.("Registered temporal transitions cron job");
+        } else {
+          const existing = temporalManaged[0];
+          if (existing.schedule?.expr !== desiredTemporal.schedule.expr) {
+            await cron.update(existing.id, { schedule: desiredTemporal.schedule });
+            logger.info?.("Updated temporal transitions cron schedule");
+          }
+          for (let i = 1; i < temporalManaged.length; i++) {
+            await cron.remove(temporalManaged[i].id);
+          }
+        }
+      } catch (err) {
+        logger.warn(
+          `Failed to register consolidation cron: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }, { name: "memory-associative-consolidation-cron" } as any);
+
+    // Handle cron-triggered consolidation and temporal transitions via before_agent_reply hook.
+    // When cron fires, OpenClaw sends a systemEvent with our trigger text.
+    // We intercept it, run the appropriate operation, and return handled=true to skip the LLM.
+    api.on("before_agent_reply", async (event: any, ctx: any) => {
+      const body = event?.cleanedBody;
+      if (!body) return;
+
+      // Temporal transitions only (idempotent — harmless if consolidation also runs at 03:00)
+      if (body.includes(TEMPORAL_CRON_TRIGGER) && !body.includes(CONSOLIDATION_CRON_TRIGGER)) {
+        try {
+          const ws = getWorkspace(ctx?.workspaceDir ?? ".");
+          const db = ws.manager.getDatabase();
+          const count = db.transaction(() => applyTemporalTransitions(db));
+          if (count > 0) {
+            logger.info?.(`Scheduled temporal transitions: ${count} transitioned`);
+          }
+          return {
+            handled: true,
+            reply: { text: count > 0 ? `Temporal transitions: ${count} updated.` : "No temporal transitions needed." },
+            reason: "associative-memory-temporal",
+          };
+        } catch (err) {
+          logger.warn(`Scheduled temporal transitions failed: ${err instanceof Error ? err.message : String(err)}`);
+          return { handled: true, reply: { text: "Temporal transitions failed." }, reason: "associative-memory-temporal-error" };
+        }
+      }
+
+      // Full consolidation
+      if (!body.includes(CONSOLIDATION_CRON_TRIGGER)) return;
+
+      try {
+        const ws = getWorkspace(ctx?.workspaceDir ?? ".");
+        const llmConfig = resolveLlmConfig(runtimePaths.stateDir, runtimePaths.agentDir, logger);
+        const mergeContentProducer = llmConfig
+          ? async (
+              a: { id: string; content: string; type: string },
+              b: { id: string; content: string; type: string },
+            ) => {
+              const prompt = `Merge these two memory notes into a single, concise note that preserves all information. Return ONLY the merged content text, nothing else.\n\nMemory A (${a.type}):\n${a.content}\n\nMemory B (${b.type}):\n${b.content}`;
+              const content = await callLlm(prompt, llmConfig);
+              return { content: content.trim(), type: a.type };
+            }
+          : undefined;
+
+        // Also run temporal transitions as part of full consolidation
+        const db = ws.manager.getDatabase();
+        const temporalCount = db.transaction(() => applyTemporalTransitions(db));
+
+        const result = await runConsolidation({
+          db,
+          mergeContentProducer,
+        });
+
+        const s = result.summary;
+        const catchUpInfo = s.catchUpDecayed > 0 ? `Catch-up decayed: ${s.catchUpDecayed}, ` : "";
+        const temporalInfo = temporalCount > 0 ? `, Temporal transitions (extra): ${temporalCount}` : "";
+        logger.info?.(
+          `Scheduled consolidation complete (${result.durationMs}ms): ${catchUpInfo}` +
+          `Reinforced: ${s.reinforced}, Decayed: ${s.decayed}, ` +
+          `Pruned: ${s.pruned}+${s.prunedAssociations}, Merged: ${s.merged}, ` +
+          `Promoted: ${s.promoted}${temporalInfo}`,
+        );
+
+        return {
+          handled: true,
+          reply: {
+            text: `Memory consolidation complete (${result.durationMs}ms).`,
+          },
+          reason: "associative-memory-consolidation",
+        };
+      } catch (err) {
+        logger.warn(
+          `Scheduled consolidation failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return {
+          handled: true,
+          reply: { text: "Memory consolidation failed." },
+          reason: "associative-memory-consolidation-error",
+        };
+      }
+    });
+
     // -- Startup service --
-    // NOTE: OpenClaw does not currently call service.start() for memory-kind plugins
-    // (see history/proposal-plugin-service-start-for-memory-plugins.md).
-    // Migration and cleanup run lazily on first tool call instead.
-    // This service captures stateDir for auth-profile resolution in commands.
+    // Captures stateDir for auth-profile resolution in commands.
     api.registerService({
       id: "memory-associative-startup",
       async start(ctx) {

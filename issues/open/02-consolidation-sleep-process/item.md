@@ -1,6 +1,6 @@
 ---
 created: 2026-04-09
-updated: 2026-04-09
+updated: 2026-04-10
 type: epic
 owner: jari
 status: in-progress
@@ -23,8 +23,8 @@ Implement the 10-phase consolidation process that strengthens, decays, associate
 
 ### Phase 4.1: Foundation
 - [x] Implement `state.last_consolidation_at` persistence
-- [ ] Catch-up decay for missed cycles (pow() for efficiency, MAX_CATCHUP_CYCLES=30)
-- [ ] Sleep debt warning in assemble() (>72h since last consolidation)
+- [x] Catch-up decay for missed cycles (pow() for efficiency, MAX_CATCHUP_CYCLES=30) — #04
+- [x] Sleep debt warning in assemble() (>48h since last consolidation)
 
 ### Phase 4.2: Core cycle
 - [x] Reinforcement (retrieval-based strength boost)

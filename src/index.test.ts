@@ -142,6 +142,30 @@ describe("plugin registration", () => {
     expect(plugin.kind).toBe("memory");
   });
 
+  it("registers gateway:startup hook for cron scheduling", () => {
+    const api = fakeApi();
+    plugin.register(api as any);
+
+    const hookCalls = api.registerHook.mock.calls;
+    const startupHook = hookCalls.find(
+      (c: any) => c[0] === "gateway:startup",
+    );
+    expect(startupHook).toBeDefined();
+    expect(startupHook![1]).toBeTypeOf("function");
+  });
+
+  it("registers before_agent_reply hook for cron trigger handling", () => {
+    const api = fakeApi();
+    plugin.register(api as any);
+
+    const onCalls = api.on.mock.calls;
+    const replyHook = onCalls.find(
+      (c: any) => c[0] === "before_agent_reply",
+    );
+    expect(replyHook).toBeDefined();
+    expect(replyHook![1]).toBeTypeOf("function");
+  });
+
   it("registers /memory-sleep command", () => {
     const api = fakeApi();
     plugin.register(api as any);

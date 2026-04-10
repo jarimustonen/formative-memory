@@ -7,11 +7,13 @@ import {
   DECAY_CONSOLIDATED,
   DECAY_WORKING,
   ETA,
+  MAX_CATCHUP_CYCLES,
   MODE_WEIGHT_BM25_ONLY,
   MODE_WEIGHT_HYBRID,
   PRUNE_ASSOCIATION_THRESHOLD,
   PRUNE_STRENGTH_THRESHOLD,
   TRANSITIVE_WEIGHT_THRESHOLD,
+  applyCatchUpDecay,
   applyAssociationDecay,
   applyDecay,
   applyPruning,
@@ -53,6 +55,162 @@ function insertMemory(
     consolidated,
   });
 }
+
+// -- applyCatchUpDecay --
+
+describe("applyCatchUpDecay", () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  // Helper: create a lastConsolidationMs N days before nowMs
+  function daysAgo(n: number, now: number = Date.now()): number {
+    return now - n * DAY_MS;
+  }
+
+  it("returns 0 when lastConsolidationMs is null", () => {
+    insertMemory("mem-a", 0.8, false);
+    expect(applyCatchUpDecay(db, null)).toBe(0);
+    expect(db.getMemory("mem-a")!.strength).toBe(0.8);
+  });
+
+  it("returns 0 when lastConsolidationMs is NaN", () => {
+    insertMemory("mem-a", 0.8, false);
+    expect(applyCatchUpDecay(db, NaN)).toBe(0);
+    expect(db.getMemory("mem-a")!.strength).toBe(0.8);
+  });
+
+  it("returns 0 when consolidation was recent (< 2 days)", () => {
+    insertMemory("mem-a", 0.8, false);
+    const now = Date.now();
+    expect(applyCatchUpDecay(db, daysAgo(0.5, now), now)).toBe(0);
+    expect(db.getMemory("mem-a")!.strength).toBe(0.8);
+  });
+
+  it("applies pow()-based decay for working memories (4 days gap = 3 catch-up cycles)", () => {
+    const now = Date.now();
+    insertMemory("mem-a", 0.8, false);
+    const count = applyCatchUpDecay(db, daysAgo(4, now), now);
+    expect(count).toBe(1);
+    // floor(4) - 1 = 3 catch-up cycles
+    expect(db.getMemory("mem-a")!.strength).toBeCloseTo(0.8 * Math.pow(DECAY_WORKING, 3), 10);
+  });
+
+  it("applies pow()-based decay for consolidated memories", () => {
+    const now = Date.now();
+    insertMemory("mem-a", 0.8, true);
+    applyCatchUpDecay(db, daysAgo(4, now), now);
+    expect(db.getMemory("mem-a")!.strength).toBeCloseTo(0.8 * Math.pow(DECAY_CONSOLIDATED, 3), 10);
+  });
+
+  it("mathematical equivalence: pow(factor, N) equals N individual multiplications", () => {
+    const initial = 0.8;
+    const now = Date.now();
+    const cycles = 5;
+
+    // pow approach (6 days gap = 5 catch-up cycles)
+    insertMemory("mem-pow", initial, true);
+    applyCatchUpDecay(db, daysAgo(6, now), now);
+    const powResult = db.getMemory("mem-pow")!.strength;
+
+    // iterative approach
+    let iterative = initial;
+    for (let i = 0; i < cycles; i++) {
+      iterative *= DECAY_CONSOLIDATED;
+    }
+
+    expect(powResult).toBeCloseTo(iterative, 10);
+  });
+
+  it("caps at MAX_CATCHUP_CYCLES", () => {
+    const now = Date.now();
+    insertMemory("mem-a", 0.8, true);
+    // 100 days gap → capped at MAX_CATCHUP_CYCLES
+    applyCatchUpDecay(db, daysAgo(100, now), now);
+    expect(db.getMemory("mem-a")!.strength).toBeCloseTo(
+      0.8 * Math.pow(DECAY_CONSOLIDATED, MAX_CATCHUP_CYCLES),
+      10,
+    );
+  });
+
+  it("decays association weights with pow()", () => {
+    const now = Date.now();
+    insertMemory("mem-a", 0.5);
+    insertMemory("mem-b", 0.5);
+    db.upsertAssociation("mem-a", "mem-b", 0.8, "2026-03-01T00:00:00Z");
+
+    applyCatchUpDecay(db, daysAgo(4, now), now);
+
+    const assocs = db.getAssociations("mem-a");
+    expect(assocs[0].weight).toBeCloseTo(0.8 * Math.pow(DECAY_ASSOCIATION, 3), 10);
+  });
+
+  it("handles mixed working and consolidated memories", () => {
+    const now = Date.now();
+    insertMemory("working", 0.8, false);
+    insertMemory("consolidated", 0.8, true);
+    applyCatchUpDecay(db, daysAgo(3, now), now);
+
+    // floor(3) - 1 = 2 catch-up cycles
+    expect(db.getMemory("working")!.strength).toBeCloseTo(
+      0.8 * Math.pow(DECAY_WORKING, 2),
+      10,
+    );
+    expect(db.getMemory("consolidated")!.strength).toBeCloseTo(
+      0.8 * Math.pow(DECAY_CONSOLIDATED, 2),
+      10,
+    );
+  });
+
+  it("skips catch-up for memories created after last consolidation", () => {
+    const now = Date.now();
+    // Last consolidation 5 days ago
+    const lastConsolidation = daysAgo(5, now);
+
+    // Memory created 1 hour ago — should NOT get 5 days of catch-up
+    db.insertMemory({
+      id: "new-mem",
+      type: "fact",
+      content: "brand new memory",
+      temporal_state: "none",
+      temporal_anchor: null,
+      created_at: new Date(now - 60 * 60 * 1000).toISOString(), // 1h ago
+      strength: 0.8,
+      source: "agent_tool",
+      consolidated: false,
+    });
+
+    const count = applyCatchUpDecay(db, lastConsolidation, now);
+    // Memory is only 1h old → floor(0.04) - 1 = -1 → 0 cycles → skipped
+    expect(count).toBe(0);
+    expect(db.getMemory("new-mem")!.strength).toBe(0.8);
+  });
+
+  it("applies proportional catch-up for memories created mid-gap", () => {
+    const now = Date.now();
+    // Last consolidation 10 days ago
+    const lastConsolidation = daysAgo(10, now);
+
+    // Memory created 3 days ago — should get 2 catch-up cycles, not 9
+    db.insertMemory({
+      id: "mid-mem",
+      type: "fact",
+      content: "mid-gap memory",
+      temporal_state: "none",
+      temporal_anchor: null,
+      created_at: new Date(daysAgo(3, now)).toISOString(),
+      strength: 0.8,
+      source: "agent_tool",
+      consolidated: false,
+    });
+
+    applyCatchUpDecay(db, lastConsolidation, now);
+
+    // baseline = max(10 days ago, 3 days ago) = 3 days ago → floor(3) - 1 = 2 cycles
+    expect(db.getMemory("mid-mem")!.strength).toBeCloseTo(
+      0.8 * Math.pow(DECAY_WORKING, 2),
+      10,
+    );
+  });
+});
 
 // -- applyReinforcement --
 
