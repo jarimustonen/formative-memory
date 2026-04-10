@@ -110,15 +110,9 @@ Example memory row:
 
 All timestamps use UTC ISO-8601 for lexicographic SQL comparison.
 
-### Markdown files (diagnostic views)
+### No markdown files
 
-`working.md` and `consolidated.md` are human-readable views generated from SQLite during consolidation. They exist for debugging and inspection — the database is the canonical source. Each memory appears as:
-
-```markdown
-<!-- chunk:a1b2c3d4 type:fact created:2026-03-15T10:00:00.000Z strength:0.85 -->
-Alpha release deadline is April 15
-<!-- /chunk -->
-```
+SQLite is the sole data store. There are no generated markdown files (working.md, consolidated.md). Use CLI commands (`memory stats`, `memory inspect`) or the `memory_browse` / `memory_search` tools to inspect memory contents.
 
 ### retrieval.log (append-only)
 
@@ -233,7 +227,6 @@ The process runs in three database transactions:
 
 1. **Promotion** — surviving working memories become consolidated
 2. **Provenance GC** — exposure records older than 30 days are deleted
-3. **Markdown regeneration** — `working.md` and `consolidated.md` are rewritten from SQLite (outside transaction)
 
 ## Configuration
 

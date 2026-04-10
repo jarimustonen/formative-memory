@@ -53,7 +53,7 @@ export type ConsolidationResult = {
  * Pre-merge steps (reinforcement, decay, associations, pruning) run
  * in a single transaction. Merge execution runs separately because
  * the content producer may be async (LLM call). Finalization
- * (promote, GC, markdown regen) runs in its own transaction.
+ * (promote, GC) runs in its own transaction.
  *
  * If no mergeContentProducer is provided, the merge phase is skipped entirely.
  * Concatenation is not acceptable — merging requires an LLM to produce

@@ -574,7 +574,7 @@ MIT
 - Retrieval-based strengthening (Hebbian learning)
 - Temporal awareness (future/present/past states)
 - Zero DB writes during normal operation
-- Human-readable memory files (working.md + consolidated.md)
+- CLI inspection tools: `memory stats`, `memory inspect`, `memory_browse`
 - CLI: `memory stats`, `memory consolidate`, `memory inspect`
 
 ### Phase 2: Multi-Agent Support
