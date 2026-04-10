@@ -528,24 +528,40 @@ describe("MemoryDatabase", () => {
     }
 
     it("returns capped memories on first run (null lastConsolidationAt)", () => {
-      insertMem("a", 0.1, "2026-03-01T00:00:00Z");
+      insertMem("a", 0.6, "2026-03-01T00:00:00Z");
       insertMem("b", 0.9, "2026-03-01T00:00:00Z");
 
-      const result = db.getMergeSources(null, 100);
+      const result = db.getMergeSources(0.5, null, 100);
       expect(result).toHaveLength(2);
       // Ordered by strength DESC
       expect(result[0].id).toBe("b");
     });
 
-    it("includes new memories since last consolidation", () => {
-      insertMem("new-weak", 0.1, "2026-03-02T00:00:00Z");
+    it("filters by minStrength on first run", () => {
+      insertMem("strong", 0.8, "2026-03-01T00:00:00Z");
+      insertMem("weak", 0.2, "2026-03-01T00:00:00Z");
 
-      const result = db.getMergeSources("2026-03-01T00:00:00Z");
-      expect(result.map((m) => m.id)).toContain("new-weak");
+      const result = db.getMergeSources(0.5, null, 100);
+      expect(result.map((m) => m.id)).toContain("strong");
+      expect(result.map((m) => m.id)).not.toContain("weak");
     });
 
-    it("includes recently exposed memories", () => {
-      insertMem("exposed", 0.1, "2026-01-01T00:00:00Z"); // old and weak
+    it("includes new strong memories since last consolidation", () => {
+      insertMem("new-strong", 0.8, "2026-03-02T00:00:00Z");
+
+      const result = db.getMergeSources(0.5, "2026-03-01T00:00:00Z");
+      expect(result.map((m) => m.id)).toContain("new-strong");
+    });
+
+    it("excludes new weak memories below strength threshold", () => {
+      insertMem("new-weak", 0.1, "2026-03-02T00:00:00Z");
+
+      const result = db.getMergeSources(0.5, "2026-03-01T00:00:00Z");
+      expect(result).toHaveLength(0);
+    });
+
+    it("includes recently exposed memories above strength threshold", () => {
+      insertMem("exposed", 0.6, "2026-01-01T00:00:00Z");
 
       db.insertExposure({
         sessionId: "s1",
@@ -557,15 +573,23 @@ describe("MemoryDatabase", () => {
         createdAt: "2026-03-02T00:00:00Z",
       });
 
-      const result = db.getMergeSources("2026-03-01T00:00:00Z");
+      const result = db.getMergeSources(0.5, "2026-03-01T00:00:00Z");
       expect(result.map((m) => m.id)).toContain("exposed");
     });
 
-    it("excludes old, unused memories (not new, not exposed)", () => {
-      insertMem("dead", 0.8, "2026-01-01T00:00:00Z"); // old, strong, but not new/exposed
+    it("excludes old, unused memories even if strong", () => {
+      insertMem("dead", 0.8, "2026-01-01T00:00:00Z");
 
-      const result = db.getMergeSources("2026-03-01T00:00:00Z");
+      const result = db.getMergeSources(0.5, "2026-03-01T00:00:00Z");
       expect(result).toHaveLength(0);
+    });
+
+    it("respects maxCount on steady-state runs", () => {
+      for (let i = 0; i < 10; i++) {
+        insertMem(`m-${i}`, 0.9, "2026-03-02T00:00:00Z");
+      }
+      const result = db.getMergeSources(0.5, "2026-03-01T00:00:00Z", 3);
+      expect(result).toHaveLength(3);
     });
   });
 
@@ -584,19 +608,11 @@ describe("MemoryDatabase", () => {
       });
     }
 
-    it("returns capped memories on first run (null lastConsolidationAt)", () => {
-      insertMem("a", 0.1, "2026-03-01T00:00:00Z");
-      insertMem("b", 0.9, "2026-03-01T00:00:00Z");
-
-      const result = db.getMergeTargets(0.3, null, 100);
-      expect(result).toHaveLength(2);
-    });
-
     it("includes memories above strength threshold", () => {
       insertMem("strong", 0.8, "2026-01-01T00:00:00Z");
       insertMem("weak", 0.1, "2026-01-01T00:00:00Z");
 
-      const result = db.getMergeTargets(0.3, "2026-03-01T00:00:00Z");
+      const result = db.getMergeTargets(0.3);
       expect(result.map((m) => m.id)).toContain("strong");
       expect(result.map((m) => m.id)).not.toContain("weak");
     });
@@ -604,8 +620,64 @@ describe("MemoryDatabase", () => {
     it("excludes weak memories", () => {
       insertMem("dead", 0.1, "2026-01-01T00:00:00Z");
 
-      const result = db.getMergeTargets(0.3, "2026-03-01T00:00:00Z");
+      const result = db.getMergeTargets(0.3);
       expect(result).toHaveLength(0);
+    });
+
+    it("respects maxCount", () => {
+      for (let i = 0; i < 10; i++) {
+        insertMem(`m-${i}`, 0.9, "2026-03-01T00:00:00Z");
+      }
+      const result = db.getMergeTargets(0.3, 3);
+      expect(result).toHaveLength(3);
+    });
+
+    it("orders by strength DESC", () => {
+      insertMem("mid", 0.5, "2026-03-01T00:00:00Z");
+      insertMem("high", 0.9, "2026-03-01T00:00:00Z");
+      insertMem("low", 0.35, "2026-03-01T00:00:00Z");
+
+      const result = db.getMergeTargets(0.3);
+      expect(result[0].id).toBe("high");
+      expect(result[1].id).toBe("mid");
+      expect(result[2].id).toBe("low");
+    });
+  });
+
+  describe("getEmbeddingsByIds", () => {
+    it("returns embeddings for specified IDs only", () => {
+      db.insertMemory({
+        id: "a", type: "fact", content: "test", temporal_state: "none",
+        temporal_anchor: null, created_at: "2026-03-01T00:00:00Z",
+        strength: 1.0, source: "agent_tool", consolidated: false,
+      });
+      db.insertMemory({
+        id: "b", type: "fact", content: "test", temporal_state: "none",
+        temporal_anchor: null, created_at: "2026-03-01T00:00:00Z",
+        strength: 1.0, source: "agent_tool", consolidated: false,
+      });
+      db.setEmbedding("a", [1, 2, 3]);
+      db.setEmbedding("b", [4, 5, 6]);
+
+      const map = db.getEmbeddingsByIds(["a"]);
+      expect(map.size).toBe(1);
+      expect(map.has("a")).toBe(true);
+      expect(map.has("b")).toBe(false);
+    });
+
+    it("returns empty map for empty ID list", () => {
+      expect(db.getEmbeddingsByIds([]).size).toBe(0);
+    });
+
+    it("skips IDs without embeddings", () => {
+      db.insertMemory({
+        id: "noEmb", type: "fact", content: "test", temporal_state: "none",
+        temporal_anchor: null, created_at: "2026-03-01T00:00:00Z",
+        strength: 1.0, source: "agent_tool", consolidated: false,
+      });
+
+      const map = db.getEmbeddingsByIds(["noEmb"]);
+      expect(map.size).toBe(0);
     });
   });
 });

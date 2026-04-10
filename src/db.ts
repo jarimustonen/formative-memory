@@ -288,52 +288,51 @@ export class MemoryDatabase {
 
   /**
    * Get merge sources: memories that changed since the last consolidation.
-   * A memory is a source if:
+   * A memory is a source if it meets the strength threshold AND:
    * - created after lastConsolidationAt (new memory)
    * - exposed/retrieved after lastConsolidationAt (recently used)
    *
-   * On first run (lastConsolidationAt is null), returns all memories
+   * On first run (lastConsolidationAt is null), returns strongest memories
    * capped at maxCount to prevent N² explosion on large imports.
    */
-  getMergeSources(lastConsolidationAt: string | null, maxCount = 500): MemoryRow[] {
+  getMergeSources(minStrength: number, lastConsolidationAt: string | null, maxCount = 500): MemoryRow[] {
     if (!lastConsolidationAt) {
       return this.db
-        .prepare("SELECT * FROM memories ORDER BY strength DESC, created_at DESC LIMIT ?")
-        .all(maxCount) as MemoryRow[];
+        .prepare(
+          `SELECT * FROM memories
+           WHERE strength >= ?
+           ORDER BY strength DESC, created_at DESC
+           LIMIT ?`,
+        )
+        .all(minStrength, maxCount) as MemoryRow[];
     }
     return this.db
       .prepare(
         `SELECT * FROM memories
-         WHERE created_at > ?
-            OR id IN (
-              SELECT DISTINCT memory_id FROM turn_memory_exposure
-              WHERE created_at > ?
-            )
-         ORDER BY created_at DESC`,
+         WHERE strength >= ? AND id IN (
+           SELECT id FROM memories WHERE created_at > ?
+           UNION
+           SELECT memory_id FROM turn_memory_exposure WHERE created_at > ?
+         )
+         ORDER BY strength DESC, created_at DESC
+         LIMIT ?`,
       )
-      .all(lastConsolidationAt, lastConsolidationAt) as MemoryRow[];
+      .all(minStrength, lastConsolidationAt, lastConsolidationAt, maxCount) as MemoryRow[];
   }
 
   /**
    * Get merge targets: the broader corpus of memories to merge into.
-   * Filtered by minimum strength threshold.
-   *
-   * On first run (lastConsolidationAt is null), returns all memories
-   * capped at maxCount to prevent N² explosion on large imports.
+   * Filtered by minimum strength threshold, capped at maxCount.
    */
-  getMergeTargets(minStrength: number, lastConsolidationAt: string | null, maxCount = 1000): MemoryRow[] {
-    if (!lastConsolidationAt) {
-      return this.db
-        .prepare("SELECT * FROM memories ORDER BY strength DESC, created_at DESC LIMIT ?")
-        .all(maxCount) as MemoryRow[];
-    }
+  getMergeTargets(minStrength: number, maxCount = 1000): MemoryRow[] {
     return this.db
       .prepare(
         `SELECT * FROM memories
          WHERE strength >= ?
-         ORDER BY created_at DESC`,
+         ORDER BY strength DESC, created_at DESC
+         LIMIT ?`,
       )
-      .all(minStrength) as MemoryRow[];
+      .all(minStrength, maxCount) as MemoryRow[];
   }
 
   updateStrength(id: string, strength: number): void {
@@ -504,6 +503,30 @@ export class MemoryDatabase {
         ),
       ),
     }));
+  }
+
+  /** Bulk fetch embeddings for specific memory IDs. Single query instead of per-id lookups. */
+  getEmbeddingsByIds(ids: string[]): Map<string, number[]> {
+    if (ids.length === 0) return new Map();
+    const placeholders = ids.map(() => "?").join(",");
+    const rows = this.db
+      .prepare(`SELECT id, embedding FROM memory_embeddings WHERE id IN (${placeholders})`)
+      .all(...ids) as Array<{ id: string; embedding: Buffer }>;
+    const map = new Map<string, number[]>();
+    for (const row of rows) {
+      if (row.embedding.byteLength === 0 || row.embedding.byteLength % 4 !== 0) continue;
+      map.set(
+        row.id,
+        Array.from(
+          new Float32Array(
+            row.embedding.buffer,
+            row.embedding.byteOffset,
+            row.embedding.byteLength / 4,
+          ),
+        ),
+      );
+    }
+    return map;
   }
 
   /** Bulk fetch id→strength map for scoring. Single query instead of per-id lookups. */

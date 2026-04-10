@@ -21,6 +21,7 @@ import {
 import type { MemoryDatabase, MemoryRow } from "./db.ts";
 import {
   findMergeCandidatesDelta,
+  MERGE_SOURCE_MIN_STRENGTH,
   MERGE_TARGET_MIN_STRENGTH,
   type MemoryCandidate,
 } from "./merge-candidates.ts";
@@ -73,6 +74,9 @@ export async function runConsolidation(
   params: ConsolidationParams,
 ): Promise<ConsolidationResult> {
   const start = Date.now();
+  // Capture cutoff before any queries to prevent race with concurrent writes.
+  // Memories/exposures arriving after this point will be picked up next run.
+  const consolidationCutoff = new Date().toISOString();
 
   const summary: ConsolidationSummary = {
     catchUpDecayed: 0,
@@ -110,42 +114,46 @@ export async function runConsolidation(
   });
 
   // Phase 4.4–4.5 — Merge (delta: new/exposed sources vs strength-filtered targets)
-  if (params.mergeContentProducer) {
-    const lastAt = params.db.getState("last_consolidation_at");
+  // Wrapped in try/finally: finalization always runs to prevent double-decay on retry.
+  try {
+    if (params.mergeContentProducer) {
+      const lastAt = params.db.getState("last_consolidation_at");
 
-    const sourceMems = params.db.getMergeSources(lastAt);
-    const targetMems = params.db.getMergeTargets(MERGE_TARGET_MIN_STRENGTH, lastAt);
-
-    // Bulk-load embeddings to avoid N+1 per-memory queries
-    const embeddingMap = new Map(
-      params.db.getAllEmbeddings().map((e) => [e.id, e.embedding]),
-    );
-
-    const toCandidate = (m: MemoryRow): MemoryCandidate => ({
-      id: m.id, content: m.content, type: m.type,
-      embedding: embeddingMap.get(m.id) ?? null,
-    });
-
-    const pairs = findMergeCandidatesDelta(
-      sourceMems.map(toCandidate),
-      targetMems.map(toCandidate),
-    );
-
-    if (pairs.length > 0) {
-      const mergeResults = await executeMerges(
-        params.db, pairs, params.mergeContentProducer, params.embedder,
+      const sourceMems = params.db.getMergeSources(
+        MERGE_SOURCE_MIN_STRENGTH, lastAt,
       );
-      summary.merged = mergeResults.length;
-    }
-  }
+      const targetMems = params.db.getMergeTargets(MERGE_TARGET_MIN_STRENGTH);
 
-  // Transaction 2: Finalization
-  params.db.transaction(() => {
-    // Provenance GC
-    summary.exposuresGc = provenanceGC(params.db);
-    // Write completion timestamp
-    params.db.setState("last_consolidation_at", new Date().toISOString());
-  });
+      // Bulk-load embeddings only for relevant candidate IDs
+      const uniqueIds = [...new Set([...sourceMems, ...targetMems].map((m) => m.id))];
+      const embeddingMap = params.db.getEmbeddingsByIds(uniqueIds);
+
+      const toCandidate = (m: MemoryRow): MemoryCandidate => ({
+        id: m.id, content: m.content, type: m.type,
+        embedding: embeddingMap.get(m.id) ?? null,
+      });
+
+      const pairs = findMergeCandidatesDelta(
+        sourceMems.map(toCandidate),
+        targetMems.map(toCandidate),
+      );
+
+      if (pairs.length > 0) {
+        const mergeResults = await executeMerges(
+          params.db, pairs, params.mergeContentProducer, params.embedder,
+        );
+        summary.merged = mergeResults.length;
+      }
+    }
+  } finally {
+    // Transaction 2: Finalization — always runs to advance the clock.
+    // If merge failed, pre-merge steps are already applied; not advancing
+    // would cause double-decay on the next run.
+    params.db.transaction(() => {
+      summary.exposuresGc = provenanceGC(params.db);
+      params.db.setState("last_consolidation_at", consolidationCutoff);
+    });
+  }
 
   return {
     ok: true,

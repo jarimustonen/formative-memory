@@ -84,16 +84,17 @@ export function findMergeCandidates(
       let combinedScore = jaccardScore;
       let threshold = MERGE_THRESHOLD_JACCARD_ONLY;
 
-      if (a.embedding && b.embedding) {
+      if (a.embedding?.length && b.embedding?.length && a.embedding.length === b.embedding.length) {
         embeddingScore = Math.max(0, cosineSimilarity(a.embedding, b.embedding));
         combinedScore = JACCARD_WEIGHT * jaccardScore + EMBEDDING_WEIGHT * embeddingScore;
         threshold = MERGE_THRESHOLD_COMBINED;
       }
 
       if (combinedScore >= threshold) {
+        const [lo, hi] = a.id < b.id ? [a.id, b.id] : [b.id, a.id];
         pairs.push({
-          a: a.id,
-          b: b.id,
+          a: lo,
+          b: hi,
           jaccardScore,
           embeddingScore,
           combinedScore,
@@ -150,8 +151,10 @@ export function findMergeCandidatesDelta(
       let combinedScore = jaccardScore;
       let threshold = MERGE_THRESHOLD_JACCARD_ONLY;
 
-      if (sources[i].embedding && targets[j].embedding) {
-        embeddingScore = Math.max(0, cosineSimilarity(sources[i].embedding!, targets[j].embedding!));
+      const aEmb = sources[i].embedding;
+      const bEmb = targets[j].embedding;
+      if (aEmb?.length && bEmb?.length && aEmb.length === bEmb.length) {
+        embeddingScore = Math.max(0, cosineSimilarity(aEmb, bEmb));
         combinedScore = JACCARD_WEIGHT * jaccardScore + EMBEDDING_WEIGHT * embeddingScore;
         threshold = MERGE_THRESHOLD_COMBINED;
       }
@@ -200,9 +203,14 @@ export function jaccardFromSets(setA: Set<string>, setB: Set<string>): number {
  * Extract text features for similarity comparison.
  * Uses word trigrams for structural similarity, plus individual words
  * as fallback for short texts (< 3 words produce no trigrams).
+ * Punctuation is stripped so "database." matches "database".
  */
 export function textFeatures(text: string): Set<string> {
-  const words = text.toLowerCase().split(/\s+/).filter(Boolean);
+  const words = text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]+/gu, " ")
+    .split(/\s+/)
+    .filter(Boolean);
   const result = new Set<string>();
   for (let i = 0; i <= words.length - 3; i++) {
     result.add(`${words[i]} ${words[i + 1]} ${words[i + 2]}`);

@@ -37,6 +37,21 @@ describe("textFeatures", () => {
     expect(textFeatures("").size).toBe(0);
     expect(textFeatures("   ").size).toBe(0);
   });
+
+  it("strips punctuation so 'database.' matches 'database'", () => {
+    const a = textFeatures("The database.");
+    const b = textFeatures("The database");
+    // Both should contain the word "database" without trailing period
+    expect(a.has("database")).toBe(true);
+    expect(b.has("database")).toBe(true);
+  });
+
+  it("handles commas, colons, and quotes", () => {
+    const result = textFeatures('hello, "world": test!');
+    expect(result.has("hello")).toBe(true);
+    expect(result.has("world")).toBe(true);
+    expect(result.has("test")).toBe(true);
+  });
 });
 
 // -- jaccardSimilarity --
@@ -181,6 +196,17 @@ describe("findMergeCandidates", () => {
     if (pairs.length > 0) {
       expect(pairs[0].embeddingScore).toBeNull();
     }
+  });
+
+  it("falls back to Jaccard-only when embeddings are empty arrays", () => {
+    const memories: MemoryCandidate[] = [
+      { id: "a", content: "the team chose PostgreSQL for the database layer", type: "fact", embedding: [] },
+      { id: "b", content: "the team chose PostgreSQL for the database layer", type: "fact", embedding: [] },
+    ];
+
+    const pairs = findMergeCandidates(memories);
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0].embeddingScore).toBeNull(); // Jaccard-only, not combined
   });
 
   it("enforces type constraint — different types produce no pairs", () => {
