@@ -35,17 +35,12 @@ afterEach(() => {
 
 describe("MemoryManager", () => {
   describe("initialization", () => {
-    it("creates working.md and consolidated.md", () => {
-      const working = readFileSync(join(memDir, "working.md"), "utf8");
-      const consolidated = readFileSync(join(memDir, "consolidated.md"), "utf8");
-      expect(working).toContain("Working Memory");
-      expect(consolidated).toContain("Consolidated Memory");
-    });
-
-    it("creates .layout.json", () => {
-      const layout = JSON.parse(readFileSync(join(memDir, ".layout.json"), "utf8"));
-      expect(layout.layout).toBe("associative-memory-v1");
-      expect(layout.schema_version).toBe(1);
+    it("creates memory directory and DB", () => {
+      // DB is the canonical store — markdown files were removed in v4
+      const stats = manager.stats();
+      expect(stats.total).toBe(0);
+      expect(stats.working).toBe(0);
+      expect(stats.consolidated).toBe(0);
     });
   });
 
@@ -75,14 +70,17 @@ describe("MemoryManager", () => {
       expect(mem1.id).toBe(mem2.id);
     });
 
-    it("writes to working.md", async () => {
-      await manager.store({
-        content: "Test fact for file.",
+    it("stores memory in DB as working (not consolidated)", async () => {
+      const mem = await manager.store({
+        content: "Test fact for DB.",
         type: "fact",
         source: "agent_tool",
       });
-      const content = readFileSync(join(memDir, "working.md"), "utf8");
-      expect(content).toContain("Test fact for file.");
+      const stats = manager.stats();
+      expect(stats.total).toBe(1);
+      expect(stats.working).toBe(1);
+      expect(stats.consolidated).toBe(0);
+      expect(mem.consolidated).toBe(false);
     });
 
     it("writes to retrieval.log", async () => {
