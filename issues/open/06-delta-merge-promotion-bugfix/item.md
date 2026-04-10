@@ -1,11 +1,22 @@
 ---
 created: 2026-04-09
-updated: 2026-04-09
+updated: 2026-04-10
 type: improvement
 reporter: jari
 assignee: jari
-status: open
+status: done
 priority: normal
+commits:
+  - hash: b2571d3
+    summary: "fix: remove blanket promotion, add delta-merge with filtered candidates"
+  - hash: b8a0f9d
+    summary: "fix: split merge threshold for jaccard-only vs combined scoring"
+  - hash: c900350
+    summary: "fix: address review findings — bounded queries, targeted embeddings, race fix"
+  - hash: e1bb77b
+    summary: "fix: pre-existing bugs — schema version test, co-retrieval N+1"
+  - hash: af495e1
+    summary: "fix: remove stale memory-manager tests for deleted markdown files"
 ---
 
 # 06. Delta-merge optimization + promotion bugfix
