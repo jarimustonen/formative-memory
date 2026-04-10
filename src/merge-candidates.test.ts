@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  MERGE_THRESHOLD,
+  MERGE_THRESHOLD_JACCARD_ONLY,
   cosineSimilarity,
   findMergeCandidates,
   findMergeCandidatesDelta,
@@ -106,7 +106,7 @@ describe("findMergeCandidates", () => {
     // a and b should be similar, c should not match
     const abPair = pairs.find((p) => (p.a === "a" && p.b === "b") || (p.a === "b" && p.b === "a"));
     expect(abPair).toBeDefined();
-    expect(abPair!.combinedScore).toBeGreaterThanOrEqual(MERGE_THRESHOLD);
+    expect(abPair!.combinedScore).toBeGreaterThanOrEqual(MERGE_THRESHOLD_JACCARD_ONLY);
 
     // c should not pair with a or b
     const cPairs = pairs.filter((p) => p.a === "c" || p.b === "c");
@@ -209,7 +209,7 @@ describe("findMergeCandidatesDelta", () => {
     const pairs = findMergeCandidatesDelta(sources, targets);
     const abPair = pairs.find((p) => p.a === "a" && p.b === "b");
     expect(abPair).toBeDefined();
-    expect(abPair!.combinedScore).toBeGreaterThanOrEqual(MERGE_THRESHOLD);
+    expect(abPair!.combinedScore).toBeGreaterThanOrEqual(MERGE_THRESHOLD_JACCARD_ONLY);
 
     // c should not pair with a (content too different)
     const acPair = pairs.find((p) => p.a === "a" && p.b === "c");

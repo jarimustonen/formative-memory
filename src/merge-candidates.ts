@@ -26,8 +26,15 @@ export type MergePair = {
 
 // -- Constants --
 
-/** Minimum combined score to be considered a merge candidate. */
-export const MERGE_THRESHOLD = 0.6;
+/** Minimum Jaccard score when no embeddings are available. */
+export const MERGE_THRESHOLD_JACCARD_ONLY = 0.6;
+
+/**
+ * Minimum combined score when embeddings are available.
+ * Lower than Jaccard-only because two signals together provide more
+ * confidence — embedding adds semantic check on top of lexical overlap.
+ */
+export const MERGE_THRESHOLD_COMBINED = 0.5;
 
 /** Maximum number of merge pairs returned per run. */
 export const MAX_MERGE_PAIRS = 20;
@@ -75,13 +82,15 @@ export function findMergeCandidates(
 
       let embeddingScore: number | null = null;
       let combinedScore = jaccardScore;
+      let threshold = MERGE_THRESHOLD_JACCARD_ONLY;
 
       if (a.embedding && b.embedding) {
         embeddingScore = Math.max(0, cosineSimilarity(a.embedding, b.embedding));
         combinedScore = JACCARD_WEIGHT * jaccardScore + EMBEDDING_WEIGHT * embeddingScore;
+        threshold = MERGE_THRESHOLD_COMBINED;
       }
 
-      if (combinedScore >= MERGE_THRESHOLD) {
+      if (combinedScore >= threshold) {
         pairs.push({
           a: a.id,
           b: b.id,
@@ -139,13 +148,15 @@ export function findMergeCandidatesDelta(
       const jaccardScore = jaccardFromSets(getFeatures(sources[i]), getFeatures(targets[j]));
       let embeddingScore: number | null = null;
       let combinedScore = jaccardScore;
+      let threshold = MERGE_THRESHOLD_JACCARD_ONLY;
 
       if (sources[i].embedding && targets[j].embedding) {
         embeddingScore = Math.max(0, cosineSimilarity(sources[i].embedding!, targets[j].embedding!));
         combinedScore = JACCARD_WEIGHT * jaccardScore + EMBEDDING_WEIGHT * embeddingScore;
+        threshold = MERGE_THRESHOLD_COMBINED;
       }
 
-      if (combinedScore >= MERGE_THRESHOLD) {
+      if (combinedScore >= threshold) {
         pairs.push({
           a: lo,
           b: hi,
