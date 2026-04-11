@@ -31,7 +31,7 @@ Flat-file memory is a band-aid: an append-only text file with no structure, no p
 ### 1. Install
 
 ```bash
-npm install openclaw-associative-memory
+npm install formative-memory
 ```
 
 ### 2. Register
@@ -40,7 +40,7 @@ Add to your OpenClaw configuration:
 
 ```json
 {
-  "extensions": ["openclaw-associative-memory"]
+  "extensions": ["formative-memory"]
 }
 ```
 

@@ -8,7 +8,7 @@
 ## 1. Naming
 
 ### Current state
-- Package: `openclaw-associative-memory`
+- Package: `formative-memory`
 - Plugin ID: `memory-associative`
 - Plugin display name: "Memory (Associative)"
 - GTM branding: "Formative Memory"

@@ -55,5 +55,5 @@ Prepare the plugin for public release under the "Formative Memory" brand at form
 ## Notes
 
 - Domain: formativememory.ai
-- Package name stays "openclaw-associative-memory", brand is "Formative Memory"
+- Package name: "formative-memory", brand is "Formative Memory"
 - Website: Astro + Tailwind, static, CSS scroll-driven animation

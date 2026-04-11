@@ -58,7 +58,7 @@ Key insight: every successful README shows a runnable code snippet within the fi
 - **Tone**: Direct and technical. Developer audience — show architecture, show the algorithm, explain _why_ this is different. The biological metaphor is the hook, the engineering is the substance.
 - **Length**: Aim for ~300-400 lines. Long enough to be comprehensive, short enough to read in 5 minutes.
 - **Code examples**: Must be real and runnable, not pseudocode.
-- **Brand**: Package is "openclaw-associative-memory", public brand is "Formative Memory".
+- **Brand**: Package is "formative-memory", public brand is "Formative Memory".
 - **No marketing-speak**: Honest about scope ("OpenClaw plugin today, broader vision for tomorrow").
 
 ## Notes

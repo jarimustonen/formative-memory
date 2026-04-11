@@ -1,7 +1,7 @@
 {
-  "name": "openclaw-associative-memory",
+  "name": "formative-memory",
   "version": "0.1.0",
-  "description": "OpenClaw associative memory plugin — biologically-inspired memory with associations, consolidation, and temporal awareness",
+  "description": "Biologically-inspired associative memory plugin for OpenClaw — memories that form associations, strengthen through use, and consolidate during sleep.",
   "type": "module",
   "main": "dist/index.js",
   "exports": {
