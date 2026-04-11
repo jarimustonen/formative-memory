@@ -1,10 +1,11 @@
 ---
 created: 2026-04-09
-updated: 2026-04-10
+updated: 2026-04-11
 type: improvement
 reporter: jari
 assignee: jari
-status: done
+status: closed
+closing_note: "Delta-merge O(S×T) optimization and promotion bugfix implemented and merged to main."
 priority: normal
 commits:
   - hash: b2571d3

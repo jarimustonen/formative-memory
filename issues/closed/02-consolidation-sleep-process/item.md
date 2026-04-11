@@ -1,10 +1,11 @@
 ---
 created: 2026-04-09
-updated: 2026-04-10
+updated: 2026-04-11
 type: epic
 owner: jari
-status: in-progress
+status: closed
 priority: high
+closing_note: "All consolidation phases implemented: reinforcement, decay, associations, temporal transitions, pruning, delta-merge, provenance GC."
 ---
 
 # E02. Consolidation / sleep process (Phase 4)
@@ -37,7 +38,7 @@ Implement the 10-phase consolidation process that strengthens, decays, associate
 - [x] Pruning (dead memories below threshold)
 
 ### Phase 4.4: Merge
-- [ ] Delta-merge candidate search (O(S×T) filtered, not O(N²)) — see #06
+- [x] Delta-merge candidate search (O(S×T) filtered, not O(N²)) — #06
 - [x] LLM-based merge execution
 - [x] Association inheritance for merged memories
 - [x] Alias table updates
