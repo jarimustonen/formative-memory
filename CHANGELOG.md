@@ -39,4 +39,4 @@ Initial release. Feature-complete alpha with full memory lifecycle.
 - **Reinforcement**: η=0.7 learning rate, confidence × mode_weight (1.0 hybrid, 0.5 BM25-only)
 - **Requires**: Node.js >= 22.12.0, OpenClaw >= 2026.4.5
 
-[0.1.0]: https://github.com/jmustonen/openclaw-associative-memory/releases/tag/v0.1.0
+[0.1.0]: https://github.com/jarimustonen/formative-memory/releases/tag/v0.1.0
