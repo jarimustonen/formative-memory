@@ -22,7 +22,7 @@ Prepare the plugin for public release under the "Formative Memory" brand at form
 
 ## Issues
 
-_Child issues will be linked here._
+- **#11** Write public-facing README.md (open)
 
 ## Phases
 

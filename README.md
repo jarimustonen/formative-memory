@@ -1,14 +1,21 @@
 # Formative Memory
 
-**Long-term memory for OpenClaw that strengthens with use, fades with neglect, and consolidates during explicit sleep cycles.**
+**Your AI agent forgets everything. What if it didn't?**
 
-Formative Memory replaces flat-file memory with content-addressed memory objects stored in SQLite, retrieved through hybrid semantic + keyword search, and linked through weighted associations. It gives your AI coding agent a memory system that evolves over time instead of accumulating stale notes forever.
+Formative Memory is an open source plugin that gives [OpenClaw](https://openclaw.ai) agents biologically-inspired memory — memories that form associations, strengthen through use, decay without reinforcement, and consolidate during sleep.
 
-> **Package name:** `openclaw-associative-memory` · **Requires:** OpenClaw ≥ 2026.4.5
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue)
+![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A522.12-green)
+![OpenClaw](https://img.shields.io/badge/OpenClaw-%E2%89%A52026.4.5-purple)
 
 ---
 
-## Why not flat memory?
+## The Problem
+
+Every AI coding session starts from scratch. Your agent doesn't remember that you prefer Tailwind over styled-components, that the auth module was refactored last week, or that CI breaks on Node 18.
+
+Flat-file memory is a band-aid: an append-only text file with no structure, no prioritization, no forgetting. Everything is equally important. Nothing is connected. Stale information lives forever. You end up teaching the same lessons over and over.
 
 |                 | Flat-file memory        | Formative Memory                                      |
 |-----------------|-------------------------|-------------------------------------------------------|
@@ -19,18 +26,17 @@ Formative Memory replaces flat-file memory with content-addressed memory objects
 | **Connections** | None                    | Weighted bidirectional associations                   |
 | **Maintenance** | Manual pruning          | Automatic via consolidation                           |
 
-## Quick start
+## Quick Start
 
-### 1. Install the plugin
+### 1. Install
 
 ```bash
-# In your OpenClaw extensions directory
 npm install openclaw-associative-memory
 ```
 
-### 2. Register the extension
+### 2. Register
 
-Add to your OpenClaw configuration (`openclaw.json`):
+Add to your OpenClaw configuration:
 
 ```json
 {
@@ -38,165 +44,237 @@ Add to your OpenClaw configuration (`openclaw.json`):
 }
 ```
 
-### 3. Start using it
+### 3. Use
 
-The plugin works automatically once installed:
+That's it. The plugin works automatically:
 
-- **Auto-recall** surfaces relevant memories before every agent response
-- **Agent tools** let the agent store, search, and rate memories explicitly
+- **Auto-recall** surfaces relevant memories before every response
+- **Agent tools** let the agent store, search, and rate memories
 - **`/memory-sleep`** runs consolidation when you're ready
 
-No additional configuration needed — sensible defaults are built in.
+No configuration needed — sensible defaults are built in.
 
-### Optional configuration
+## How It Works
 
-```json
-{
-  "extensions": ["openclaw-associative-memory"],
-  "memory-associative": {
-    "autoRecall": true,
-    "autoCapture": true,
-    "embedding": {
-      "provider": "auto"
-    }
-  }
-}
+### Store
+
+When your agent learns something, it creates a content-addressed memory object (SHA-256). Typed, timestamped, with stable identity. Same content always produces the same ID — no duplicates.
+
+```
+Agent: "I'll remember that."
+→ memory_store(content: "Project uses Tailwind, not styled-components", type: "preference")
+→ id: a3f2c9e1, strength: 1.0, type: preference
 ```
 
-The `embedding.provider` defaults to `"auto"`, which selects the best available provider from your configured API keys.
+### Associate
 
-## How it works
+Memories don't exist in isolation. When two memories appear in the same conversation turn, they form a weighted bidirectional link. The more often they're retrieved together, the stronger the connection — Hebbian learning for AI agents.
 
-> **Mental model:** Formative Memory stores facts as durable memory objects. Retrieval is hybrid search weighted by strength. Usage is logged during chat. Consolidation later reinforces useful memories, decays neglected ones, updates associations, and prunes or merges as needed.
+```
+"Tailwind preference" ←0.7→ "Tailwind v4 migration"
+"Tailwind preference" ←0.4→ "tailwind.config.ts in project root"
+"Tailwind v4 migration" ←0.3→ "CSS specificity bug"
+```
 
-### During normal chat
+### Consolidate
 
-The plugin records but does not mutate memory state:
-
-- **Store** new memories via agent tool calls
-- **Recall** relevant memories automatically (token-budget-aware) or via `memory_search`
-- **Rate** memories via `memory_feedback` (1–5 usefulness score)
-- **Log** which memories were shown and how they influenced responses
-
-### During consolidation (`/memory-sleep`)
-
-All memory maintenance happens in a single explicit batch pass:
+A background "sleep" process maintains the memory system. Run it explicitly with `/memory-sleep`:
 
 | Step | What happens |
 |------|-------------|
 | **Reinforce** | Memories that influenced responses gain strength |
-| **Decay** | All strengths decrease; working memory decays faster than consolidated |
-| **Associate** | Co-retrieved memories form or strengthen weighted links |
-| **Temporal shift** | Future memories become present or past based on anchor dates |
-| **Prune** | Very weak memories and associations are deleted |
-| **Merge** | Similar memories are identified and combined (LLM-assisted) |
-| **Promote** | Surviving working memories become consolidated (strength resets to 1.0) |
-| **Cleanup** | Old exposure records are garbage collected |
+| **Decay** | All strengths decrease — working memory fades faster (half-life: 7 cycles) than consolidated (30 cycles) |
+| **Associate** | Co-retrieved memories form or strengthen weighted links; transitive paths are discovered |
+| **Temporal shift** | Future memories transition to present or past based on anchor dates |
+| **Prune** | Very weak memories (strength < 0.05) and associations are deleted |
+| **Merge** | Similar memories are identified and combined via LLM into coherent summaries |
+| **Cleanup** | Old provenance records are garbage collected |
 
-This separation is deliberate: live chat stays fast and predictable; maintenance is inspectable and explicit.
+This separation is deliberate: live chat stays fast and predictable. All mutation happens during inspectable, explicit sleep cycles.
 
-## Key features
+### Recall
 
-**Automatic recall** — Before every response, the context engine searches for relevant memories and injects them into the agent's context. The number of recalled memories adapts to the remaining token budget: more when space is plentiful, fewer when the context is tight.
+Retrieval is hybrid: embedding similarity (semantic) + BM25 full-text search (keyword), weighted by memory strength. Important memories surface first.
 
-**Hybrid search** — Combines embedding similarity (semantic) and BM25 full-text search (keyword), weighted by memory strength. Falls back to keyword-only if the embedding provider is unavailable.
+```
+Agent thinking: "What CSS framework do we use?"
+→ memory_search(query: "CSS framework")
+→ 1. "Project uses Tailwind exclusively" (strength: 0.92, score: 0.87)
+  2. "Migrated to Tailwind v4 last week"   (strength: 0.71, score: 0.64)
+  3. "tailwind.config.ts in project root"   (strength: 0.68, score: 0.51)
+```
 
-**Content-addressed identity** — Each memory's ID is derived from its content (SHA-256). Same content always produces the same identity, preventing exact duplicates at creation time.
+Every retrieval makes the memory stronger. Every miss lets it fade.
 
-**Weighted associations** — Memories that appear together in the same conversation turn form bidirectional links. These associations are currently used during consolidation (for merge candidate identification), not for retrieval ranking.
+## Memory Tools
 
-**Temporal awareness** — Memories can carry a time anchor and track whether they refer to the future, present, or past. Temporal transitions happen during consolidation.
+The plugin registers five tools the agent can use during conversation:
 
-**Provenance tracking** — The system records which memories were shown to the model (exposure) and how they influenced responses (attribution). Attribution history survives memory deletion and merging.
+| Tool | What it does |
+|------|-------------|
+| `memory_store` | Store a new memory with type (`fact`, `preference`, `decision`, `plan`, `observation`) and optional temporal anchor |
+| `memory_search` | Search by meaning and keywords, ranked by relevance × strength |
+| `memory_get` | Retrieve a specific memory by ID (full SHA-256 or 8-char prefix) |
+| `memory_feedback` | Rate a memory's usefulness (1–5) — feeds into consolidation reinforcement |
+| `memory_browse` | Browse all memories sorted by importance, with type diversity |
+
+And one user-facing command:
+
+| Command | What it does |
+|---------|-------------|
+| `/memory-sleep` | Run the full consolidation pipeline |
+
+## Configuration
+
+All settings are optional:
+
+```json
+{
+  "memory-associative": {
+    "autoRecall": true,
+    "autoCapture": false,
+    "embedding": {
+      "provider": "auto",
+      "model": null
+    },
+    "dbPath": "~/.openclaw/memory/associative"
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `autoRecall` | `true` | Inject relevant memories into context before every response |
+| `autoCapture` | `false` | Automatically capture conversations for consolidation |
+| `embedding.provider` | `"auto"` | Embedding provider: `auto`, `openai`, `gemini`, `voyage`, `mistral`, `ollama` |
+| `embedding.model` | — | Override the provider's default embedding model |
+| `dbPath` | `~/.openclaw/memory/associative` | SQLite database location |
+
+The `"auto"` provider selects the best available embedding provider from your configured API keys. If no provider is available, the plugin degrades gracefully to keyword-only search.
 
 ## Architecture
 
 ```
 OpenClaw Runtime
     │
-    ├── Context Engine (auto-recall)
-    │       └── MemoryManager.recall() → hybrid search → ranked results
+    ├── Context Engine ─── assemble() → auto-recall into context
+    │   (budget-aware)     afterTurn() → log exposures + attributions
     │
-    ├── Memory Tools (agent-initiated)
-    │       ├── memory_store    — save a new memory
-    │       ├── memory_search   — find by keyword or meaning
-    │       ├── memory_get      — retrieve by ID
-    │       └── memory_feedback — rate usefulness (1–5)
+    ├── Memory Tools ───── memory_store    — create memory
+    │   (agent-initiated)  memory_search   — hybrid search
+    │                      memory_get      — lookup by ID
+    │                      memory_feedback — rate usefulness
+    │                      memory_browse   — browse by importance
     │
-    └── /memory-sleep (user-initiated consolidation)
-            └── 8-step batch process
+    └── /memory-sleep ──── reinforce → decay → associate → transition
+        (user-initiated)   → prune → merge (LLM) → cleanup
 ```
 
-**Storage:** SQLite with FTS5 (full-text search) and sqlite-vec (vector similarity). Single file, no external services required.
+**Storage:** SQLite with FTS5 for full-text search. Single file, no external services.
 
-**Embedding:** Supports OpenAI, Gemini, and local providers. Auto-detection from configured API keys. Degrades gracefully to keyword-only search.
+**Embedding:** Auto-detected from configured API keys. Supports OpenAI, Gemini, Voyage, Mistral, Ollama. Circuit breaker with 3-second timeout and graceful fallback to BM25-only.
 
-**Consolidation LLM:** Uses Anthropic (Claude Haiku) or OpenAI (GPT-4o-mini) for memory merging. Requires an API key in `auth-profiles.json`.
+**Consolidation LLM:** Uses Anthropic (Claude) or OpenAI for memory merging. Runs only during `/memory-sleep`, not during normal chat.
 
-## Trust model
+## Trust Model
 
 Automatically recalled memories are framed as reference data, not instructions. This reduces prompt injection risk from stored memory content, but memory remains untrusted input — the framing is probabilistic, not a hard security boundary.
 
 Do not store secrets (API keys, passwords) in memories. They will be surfaced to the model during recall.
 
-## Current limitations
+## CLI
 
-- **Blocking consolidation** — `/memory-sleep` is synchronous. Run it between sessions, not during active work.
-- **Associations don't drive retrieval** — Association weights are recorded and used during consolidation (merge identification), but do not currently affect search ranking.
-- **Embedding dependency** — Semantic search requires an external embedding provider. Keyword-only fallback works but reduces recall quality.
-- **Parameter tuning** — Decay rates, pruning thresholds, and search weights are subject to ongoing tuning.
-
-## CLI tool
-
-A standalone diagnostic CLI operates directly on the SQLite database (no OpenClaw runtime needed):
+A standalone diagnostic CLI operates directly on the SQLite database — no OpenClaw runtime needed:
 
 ```bash
-memory stats <memory-dir>       # Overview of memory database
-memory list <memory-dir>        # List memories (filterable)
-memory inspect <memory-dir> <id> # Detailed view of a single memory
-memory search <memory-dir> <q>  # Search memories by content
-memory export <memory-dir>      # Export database to JSON
+memory stats <memory-dir>         # Database overview
+memory list <memory-dir>          # List memories (filterable)
+memory inspect <memory-dir> <id>  # Detailed view of a single memory
+memory search <memory-dir> <q>    # Search by content
+memory export <memory-dir>        # Export to JSON
+memory history <memory-dir>       # Retrieval history
+memory graph <memory-dir>         # Association graph
 ```
 
-## Docs
+## The Biological Metaphor
 
-- [How Associative Memory Works](docs/how-memory-works.md) — conceptual guide
-- [Architecture](docs/architecture.md) — storage, retrieval, provenance, consolidation details
-- [Glossary](docs/glossary.md) — terminology reference
+The memory model draws from neuroscience — but with explicit, inspectable mechanics:
 
-## Biological inspiration
-
-The memory model draws from neuroscience, but with explicit, inspectable mechanics:
-
-| Biological concept | Implementation |
-|--------------------|---------------|
+| Human memory | Formative Memory |
+|-------------|-----------------|
 | Strengthening through recall | Attribution-driven reinforcement during consolidation |
-| Forgetting through neglect | Exponential strength decay and threshold pruning |
-| Association formation | Co-retrieval logging and weighted bidirectional links |
-| Sleep consolidation | Explicit synchronous maintenance pipeline |
-| Working → long-term memory | Promotion with strength reset after surviving consolidation |
+| Forgetting through neglect | Exponential decay (0.906/cycle working, 0.977/cycle consolidated) |
+| Association formation | Co-retrieval tracking + weighted bidirectional links |
+| Sleep consolidation | Explicit `/memory-sleep` batch pipeline |
+| Working → long-term memory | Working → consolidated via merging (strength resets to 1.0) |
 | Temporal memory | Anchor-based future/present/past state transitions |
+| Pruning | Hard deletion below strength threshold (< 0.05) |
 
 These are engineering decisions inspired by biology, not a simulation of it.
 
+## Limitations
+
+- **Blocking consolidation** — `/memory-sleep` is synchronous. Run it between sessions.
+- **Associations don't drive retrieval yet** — Weights are used during merge identification, but don't yet affect search ranking.
+- **Embedding dependency** — Semantic search requires an external provider. Keyword-only fallback works but with reduced recall quality.
+- **Single workspace** — One database per workspace. Cross-project sharing is on the roadmap.
+
 ## Roadmap
 
-- [x] OpenClaw plugin with full memory lifecycle
-- [ ] Association-boosted retrieval (use graph structure during search)
+### Now: OpenClaw Plugin
+
+- [x] Content-addressed memory storage (SHA-256)
+- [x] Weighted bidirectional associations (co-retrieval + transitive)
+- [x] 7-step consolidation pipeline with LLM-assisted merging
+- [x] Hybrid search: embedding + BM25, strength-weighted
+- [x] Retrieval-based reinforcement (Hebbian learning)
+- [x] Temporal awareness (future/present/past transitions)
+- [x] Token-budget-aware auto-recall
+- [x] Provenance tracking (exposure, attribution, retrieval log)
+- [x] CLI diagnostic tools
+- [x] 700+ test cases
+
+### Next: Deeper Integration
+
+- [ ] Association-boosted retrieval (graph structure during search)
 - [ ] Async / non-blocking consolidation
-- [ ] Adapters for other AI coding agents (Roo, Aider, OpenCode)
+- [ ] Memory-type-specific search strategies
+
+### Future: Multi-Agent
+
+- [ ] Adapters for Roo, Aider, OpenCode, Cline
+- [ ] Agent-agnostic core library
 - [ ] Visual memory graph explorer
+- [ ] Cross-project memory sharing
 - [ ] Generic memory SDK for any AI agent
+
+## Documentation
+
+- [How Associative Memory Works](docs/how-memory-works.md) — conceptual guide
+- [Architecture](docs/architecture.md) — storage, retrieval, provenance, consolidation
+- [Glossary](docs/glossary.md) — terminology
+
+## Development
+
+```bash
+pnpm install          # Install dependencies
+pnpm build            # Build (tsdown)
+pnpm test             # Run tests (vitest)
+pnpm lint             # Lint (oxlint)
+pnpm check            # Full check (format + typecheck + lint)
+```
+
+Requires Node.js >= 22.12.0, pnpm 10.x.
 
 ## Contributing
 
-Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup.
+Contributions welcome. Areas where help is especially useful:
 
-Areas where help is especially useful:
 - Consolidation algorithm tuning and evaluation
 - Embedding model benchmarks
 - Adapters for other AI coding agents
+- Documentation and examples
 
 ## License
 
-MIT
+[MIT](LICENSE)
