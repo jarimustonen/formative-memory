@@ -1,7 +1,7 @@
 {
   "name": "formative-memory",
   "version": "0.1.0",
-  "description": "Biologically-inspired associative memory plugin for OpenClaw — memories that form associations, strengthen through use, and consolidate during sleep.",
+  "description": "Memory that forgets, so it remembers better what matters. It forms with you and your needs.",
   "license": "MIT",
   "repository": {
     "type": "git",
