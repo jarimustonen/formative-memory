@@ -2,6 +2,17 @@
   "name": "formative-memory",
   "version": "0.1.0",
   "description": "Biologically-inspired associative memory plugin for OpenClaw — memories that form associations, strengthen through use, and consolidate during sleep.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jarimustonen/formative-memory.git"
+  },
+  "keywords": [
+    "openclaw",
+    "memory",
+    "associative-memory",
+    "plugin"
+  ],
   "type": "module",
   "main": "dist/index.js",
   "exports": {
@@ -52,6 +63,9 @@
       "esbuild"
     ]
   },
+  "files": [
+    "dist"
+  ],
   "openclaw": {
     "extensions": [
       "./dist/index.js"
