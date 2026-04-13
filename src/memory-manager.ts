@@ -204,7 +204,13 @@ export class MemoryManager {
       }
     }
 
-    const queryInfo = this.logQueries ? ` query="${query.slice(0, 80)}${query.length > 80 ? "..." : ""}"` : "";
+    const queryInfo = this.logQueries
+      ? (() => {
+          const sanitized = query.replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ");
+          const preview = Array.from(sanitized).slice(0, 80).join("");
+          return ` query="${preview}${sanitized.length > 80 ? "..." : ""}"`;
+        })()
+      : "";
     this.logger?.debug(
       `search: queryLen=${query.length}${queryInfo} results=${results.length} mode=${queryEmbedding ? "hybrid" : "bm25-only"} topScore=${results[0]?.score?.toFixed(3) ?? "n/a"}`,
     );

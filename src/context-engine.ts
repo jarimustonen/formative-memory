@@ -17,6 +17,7 @@ import { delegateCompactionToRuntime } from "openclaw/plugin-sdk";
 import { processAfterTurn } from "./after-turn.ts";
 import type { MemoryDatabase } from "./db.ts";
 import type { MemoryManager, SearchResult } from "./memory-manager.ts";
+import type { Logger } from "./logger.ts";
 import type { TurnMemoryLedger } from "./turn-memory-ledger.ts";
 
 export const CONTEXT_ENGINE_ID = "associative-memory";
@@ -236,15 +237,6 @@ export type AssembleCacheEntry = {
   systemPromptAddition: string | undefined;
 };
 
-export type AssembleCacheDebugInfo = {
-  cacheHit: boolean;
-  transcriptChanged: boolean;
-  messageCount: number;
-  n1Changed: boolean;
-  configuredWindowChanged: boolean;
-  fingerprintWindow: number;
-};
-
 export function buildCacheKey(
   messages: readonly unknown[],
   budgetClass: BudgetClass,
@@ -273,10 +265,9 @@ function cacheKeysMatch(a: AssembleCacheKey, b: AssembleCacheKey): boolean {
 
 // -- Engine options --
 
-export type ContextEngineLogger = {
-  warn: (msg: string, meta?: unknown) => void;
-  info?: (msg: string, meta?: unknown) => void;
-  debug?: (msg: string, meta?: unknown) => void;
+export type ContextEngineLogger = Pick<Logger, "warn" | "isDebugEnabled"> & {
+  info?: Logger["info"];
+  debug?: Logger["debug"];
 };
 
 export type AssociativeMemoryContextEngineOptions = {
@@ -347,7 +338,7 @@ export function createAssociativeMemoryContextEngine(
       // Only computed when debug logger is present to avoid unnecessary hashing.
       let n1Changed = false;
       let configuredWindowChanged = false;
-      const debugEnabled = !!options.logger?.debug;
+      const debugEnabled = options.logger?.isDebugEnabled() ?? false;
       if (debugEnabled) {
         const fpN1 = transcriptFingerprint(params.messages, 1);
         const fpConfigured = cacheKey.fingerprint;
@@ -359,15 +350,9 @@ export function createAssociativeMemoryContextEngine(
 
       // Cache hit check
       if (cachedEntry && cacheKeysMatch(cachedEntry.key, cacheKey)) {
-        options.logger?.debug?.(`assemble: cache=hit budget=${budgetClass}`);
-        options.logger?.debug?.("assemble cache hit detail", {
-          cacheHit: true,
-          transcriptChanged: false,
-          messageCount: cacheKey.messageCount,
-          n1Changed: false,
-          configuredWindowChanged: false,
-          fingerprintWindow: fpN,
-        } satisfies AssembleCacheDebugInfo);
+        options.logger?.debug?.(
+          `assemble: cache=hit budget=${budgetClass} messageCount=${cacheKey.messageCount} fpWindow=${fpN}`,
+        );
         return {
           messages: params.messages,
           estimatedTokens: 0,
@@ -376,14 +361,9 @@ export function createAssociativeMemoryContextEngine(
       }
 
       // Cache miss — perform recall
-      options.logger?.debug?.("assemble cache miss", {
-        cacheHit: false,
-        transcriptChanged: configuredWindowChanged,
-        messageCount: cacheKey.messageCount,
-        n1Changed,
-        configuredWindowChanged,
-        fingerprintWindow: fpN,
-      } satisfies AssembleCacheDebugInfo);
+      options.logger?.debug?.(
+        `assemble: cache=miss budget=${budgetClass} messageCount=${cacheKey.messageCount} n1Changed=${n1Changed} configuredWindowChanged=${configuredWindowChanged} fpWindow=${fpN}`,
+      );
 
       const query = extractLastUserMessage(params.messages) ?? params.prompt ?? null;
       if (!query) {

@@ -26,6 +26,8 @@ export interface Logger {
   info: LogFn;
   warn: LogFn;
   error: LogFn;
+  /** True when debug-level messages will actually be emitted. */
+  isDebugEnabled: () => boolean;
 }
 
 /** Host logger shape — matches OpenClaw's PluginLogger (debug is optional). */
@@ -91,6 +93,7 @@ export function createLogger(opts: {
     info: (msg, ...args) => emit("info", msg, args),
     warn: (msg, ...args) => emit("warn", msg, args),
     error: (msg, ...args) => emit("error", msg, args),
+    isDebugEnabled: () => minOrder === LEVEL_ORDER.debug,
   };
 }
 
@@ -100,4 +103,5 @@ export const nullLogger: Logger = {
   info: () => {},
   warn: () => {},
   error: () => {},
+  isDebugEnabled: () => false,
 };

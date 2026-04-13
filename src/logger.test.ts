@@ -192,14 +192,33 @@ describe("createLogger", () => {
       expect(host.warn.mock.calls[0][0]).toContain("[warn]");
     });
   });
+
+  describe("isDebugEnabled", () => {
+    it("returns false at default info level", () => {
+      const log = createLogger({ host: makeHost() });
+      expect(log.isDebugEnabled()).toBe(false);
+    });
+
+    it("returns true when verbose is true", () => {
+      const log = createLogger({ verbose: true, host: makeHost() });
+      expect(log.isDebugEnabled()).toBe(true);
+    });
+
+    it("returns true when FORMATIVE_MEMORY_DEBUG=1", () => {
+      process.env.FORMATIVE_MEMORY_DEBUG = "1";
+      const log = createLogger({ host: makeHost() });
+      expect(log.isDebugEnabled()).toBe(true);
+    });
+  });
 });
 
 describe("nullLogger", () => {
-  it("has all four log methods", () => {
+  it("has all methods and isDebugEnabled", () => {
     expect(typeof nullLogger.debug).toBe("function");
     expect(typeof nullLogger.info).toBe("function");
     expect(typeof nullLogger.warn).toBe("function");
     expect(typeof nullLogger.error).toBe("function");
+    expect(nullLogger.isDebugEnabled()).toBe(false);
   });
 
   it("does not throw when called", () => {

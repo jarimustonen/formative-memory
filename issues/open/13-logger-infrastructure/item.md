@@ -23,3 +23,7 @@ For the soft launch we need to see what each bot is doing during normal operatio
 - Replace existing ad-hoc console.warn/console.log calls with the logger
 - Normal operation: log what auto-recall injects, what gets stored
 - Import: already uses a logger interface — wire it to the new system
+
+## Notes
+
+Review found that `autoRecall` config option is parsed and documented but does not gate context engine recall behavior. This is a separate bug outside the scope of this issue — should be tracked independently.

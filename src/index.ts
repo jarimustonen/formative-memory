@@ -282,7 +282,7 @@ function createWorkspace(
       if (to === "OPEN") {
         logger?.warn(`Circuit breaker: ${from} → OPEN — switching to BM25-only mode`);
       } else if (to === "HALF_OPEN") {
-        logger?.info(`Circuit breaker: ${from} → HALF_OPEN — probing recovery`);
+        logger?.debug(`Circuit breaker: ${from} → HALF_OPEN — probing recovery`);
       } else {
         logger?.info(`Circuit breaker: ${from} → ${to}`);
       }
@@ -694,23 +694,28 @@ const associativeMemoryPlugin = {
           return { content: content.trim(), type: a.type };
         };
 
-        log.debug("consolidation: starting trigger=command");
-        const result = await runConsolidation({
-          db: ws.manager.getDatabase(),
-          mergeContentProducer,
-        });
-        log.debug(`consolidation: completed trigger=command durationMs=${result.durationMs}`);
+        try {
+          log.debug("consolidation: starting trigger=command");
+          const result = await runConsolidation({
+            db: ws.manager.getDatabase(),
+            mergeContentProducer,
+          });
+          log.debug(`consolidation: completed trigger=command durationMs=${result.durationMs}`);
 
-        const s = result.summary;
-        const catchUpInfo = s.catchUpDecayed > 0 ? `Catch-up decayed: ${s.catchUpDecayed}, ` : "";
-        return {
-          text: `Memory consolidation complete (${result.durationMs}ms).\n` +
-            catchUpInfo +
-            `Reinforced: ${s.reinforced}, Decayed: ${s.decayed}, ` +
-            `Pruned: ${s.pruned} memories + ${s.prunedAssociations} associations, ` +
-            `Merged: ${s.merged}, Transitioned: ${s.transitioned}, ` +
-            `Exposure GC: ${s.exposuresGc}`,
-        };
+          const s = result.summary;
+          const catchUpInfo = s.catchUpDecayed > 0 ? `Catch-up decayed: ${s.catchUpDecayed}, ` : "";
+          return {
+            text: `Memory consolidation complete (${result.durationMs}ms).\n` +
+              catchUpInfo +
+              `Reinforced: ${s.reinforced}, Decayed: ${s.decayed}, ` +
+              `Pruned: ${s.pruned} memories + ${s.prunedAssociations} associations, ` +
+              `Merged: ${s.merged}, Transitioned: ${s.transitioned}, ` +
+              `Exposure GC: ${s.exposuresGc}`,
+          };
+        } catch (err) {
+          log.warn(`Consolidation command failed: ${err instanceof Error ? err.message : String(err)}`, err);
+          return { text: `Memory consolidation failed: ${err instanceof Error ? err.message : String(err)}` };
+        }
       },
     });
 

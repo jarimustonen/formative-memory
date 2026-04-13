@@ -156,7 +156,7 @@ FORMATIVE_MEMORY_DEBUG=1
 | Level | What |
 |-------|------|
 | **info** | Memory stored, memories injected into context, circuit breaker state changes |
-| **debug** | Search results and scores, embedding fallback reasons, cache hit/miss, consolidation timing, provenance counts, duplicate store skips |
+| **debug** | Search result count and top score, embedding fallback reasons, cache hit/miss, consolidation timing, provenance counts, duplicate store skips |
 | **warn** | Circuit breaker opening (degraded to keyword-only), recall failures, migration issues |
 
 All log lines are prefixed with `[formative-memory] [level]` for easy filtering.
