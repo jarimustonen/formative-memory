@@ -116,7 +116,9 @@ All settings are optional:
       "provider": "auto",
       "model": null
     },
-    "dbPath": "~/.openclaw/memory/associative"
+    "dbPath": "~/.openclaw/memory/associative",
+    "verbose": false,
+    "logQueries": false
   }
 }
 ```
@@ -128,8 +130,38 @@ All settings are optional:
 | `embedding.provider` | `"auto"` | Embedding provider: `auto`, `openai`, `gemini`, `voyage`, `mistral`, `ollama` |
 | `embedding.model` | — | Override the provider's default embedding model |
 | `dbPath` | `~/.openclaw/memory/associative` | SQLite database location |
+| `verbose` | `false` | Enable debug-level logging (also via `FORMATIVE_MEMORY_DEBUG=1`) |
+| `logQueries` | `false` | Include raw query text in debug logs (disabled by default for privacy) |
 
 The `"auto"` provider selects the best available embedding provider from your configured API keys. If no provider is available, the plugin degrades gracefully to keyword-only search.
+
+### Logging
+
+The plugin has centralized logging with configurable verbosity. By default only significant events are logged (info level): memory stores, context injection, and circuit breaker state changes.
+
+Enable debug logging for full diagnostics:
+
+```json
+{ "verbose": true }
+```
+
+Or via environment variable (no config change needed):
+
+```bash
+FORMATIVE_MEMORY_DEBUG=1
+```
+
+**What gets logged at each level:**
+
+| Level | What |
+|-------|------|
+| **info** | Memory stored, memories injected into context, circuit breaker state changes |
+| **debug** | Search results and scores, embedding fallback reasons, cache hit/miss, consolidation timing, provenance counts, duplicate store skips |
+| **warn** | Circuit breaker opening (degraded to keyword-only), recall failures, migration issues |
+
+All log lines are prefixed with `[formative-memory] [level]` for easy filtering.
+
+**Privacy:** Query text is never included in logs by default. Set `logQueries: true` to opt in — useful for debugging retrieval quality, but queries may contain personal data.
 
 ## Architecture
 
