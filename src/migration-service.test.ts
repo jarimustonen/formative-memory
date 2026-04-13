@@ -432,7 +432,7 @@ Use weather to check forecasts.`,
     expect(result.filesModified).toContain("AGENTS.md");
     expect(deps.llm).toHaveBeenCalledOnce();
     // Backup should exist
-    expect(existsSync(join(tmpDir, "AGENTS.md.pre-associative-memory"))).toBe(true);
+    expect(existsSync(join(tmpDir, "AGENTS.md.pre-formative-memory"))).toBe(true);
   });
 
   it("cleans both AGENTS.md and SOUL.md", async () => {
@@ -502,13 +502,13 @@ Use weather to check forecasts.`,
   it("does not overwrite existing backup", async () => {
     const originalContent = "Update MEMORY.md with original instructions";
     writeFileSync(join(tmpDir, "AGENTS.md"), originalContent);
-    writeFileSync(join(tmpDir, "AGENTS.md.pre-associative-memory"), "Previous backup");
+    writeFileSync(join(tmpDir, "AGENTS.md.pre-formative-memory"), "Previous backup");
     const deps = createCleanupDeps();
 
     await cleanupWorkspaceFiles(deps);
 
     // Backup should still contain the previous backup, not overwritten
-    const backup = readFileSync(join(tmpDir, "AGENTS.md.pre-associative-memory"), "utf-8");
+    const backup = readFileSync(join(tmpDir, "AGENTS.md.pre-formative-memory"), "utf-8");
     expect(backup).toBe("Previous backup");
   });
 });

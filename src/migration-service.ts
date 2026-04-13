@@ -496,14 +496,14 @@ export async function cleanupWorkspaceFiles(
       }
 
       // Backup original
-      const backupPath = `${file.path}.pre-associative-memory`;
+      const backupPath = `${file.path}.pre-formative-memory`;
       if (!existsSync(backupPath)) {
         copyFileSync(file.path, backupPath);
       }
 
       writeFileSync(file.path, cleaned, "utf-8");
       modified.push(file.name);
-      logger.info(`Cleaned ${file.name} (backup: ${file.name}.pre-associative-memory)`);
+      logger.info(`Cleaned ${file.name} (backup: ${file.name}.pre-formative-memory)`);
     } catch (err) {
       logger.warn(
         `Failed to clean ${file.name}: ${err instanceof Error ? err.message : String(err)}`,

@@ -23,7 +23,7 @@ if [[ "${1:-}" == "--clean-slate" ]]; then
     echo "=== Clean slate: removing all associative memory data ==="
     echo "This will delete:"
     echo "  - $MEMORY_DIR (DB, logs, all data)"
-    echo "  - Workspace backups (.pre-associative-memory)"
+    echo "  - Workspace backups (.pre-formative-memory)"
     echo "  - Restore AGENTS.md and SOUL.md from backups"
     echo ""
     read -rp "Are you sure? [y/N] " confirm
@@ -38,9 +38,9 @@ if [[ "${1:-}" == "--clean-slate" ]]; then
 
     echo "--- Restoring workspace backups ---"
     ssh "$REMOTE" "podman unshare bash -c '
-        for f in \"$WORKSPACE_DIR\"/*.pre-associative-memory; do
+        for f in \"$WORKSPACE_DIR\"/*.pre-formative-memory; do
             [ -f \"\$f\" ] || continue
-            orig=\"\${f%.pre-associative-memory}\"
+            orig=\"\${f%.pre-formative-memory}\"
             echo \"Restoring \$(basename \"\$orig\") from backup\"
             mv \"\$f\" \"\$orig\"
         done
