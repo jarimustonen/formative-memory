@@ -4,7 +4,7 @@ updated: 2026-04-13
 type: bug
 reporter: jari
 assignee: jari
-status: open
+status: closed
 priority: normal
 ---
 

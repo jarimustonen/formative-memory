@@ -697,7 +697,7 @@ const associativeMemoryPlugin = {
             `Reinforced: ${s.reinforced}, Decayed: ${s.decayed}, ` +
             `Pruned: ${s.pruned} memories + ${s.prunedAssociations} associations, ` +
             `Merged: ${s.merged}, Transitioned: ${s.transitioned}, ` +
-            `Promoted: ${s.promoted}, Exposure GC: ${s.exposuresGc}`,
+            `Exposure GC: ${s.exposuresGc}`,
         };
       },
     });
@@ -938,8 +938,7 @@ const associativeMemoryPlugin = {
         logger.info?.(
           `Scheduled consolidation complete (${result.durationMs}ms): ${catchUpInfo}` +
           `Reinforced: ${s.reinforced}, Decayed: ${s.decayed}, ` +
-          `Pruned: ${s.pruned}+${s.prunedAssociations}, Merged: ${s.merged}, ` +
-          `Promoted: ${s.promoted}${temporalInfo}`,
+          `Pruned: ${s.pruned}+${s.prunedAssociations}, Merged: ${s.merged}${temporalInfo}`,
         );
 
         return {
