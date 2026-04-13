@@ -37,12 +37,14 @@ export class MemoryManager {
   private logPath: string;
   private embedder: EmbeddingProvider;
   private logger?: Logger;
+  private logQueries: boolean;
 
-  constructor(memoryDir: string, embedder: EmbeddingProvider, logger?: Logger) {
+  constructor(memoryDir: string, embedder: EmbeddingProvider, logger?: Logger, logQueries = false) {
     this.memoryDir = memoryDir;
     this.logPath = join(memoryDir, "retrieval.log");
     this.embedder = embedder;
     this.logger = logger;
+    this.logQueries = logQueries;
 
     mkdirSync(memoryDir, { recursive: true });
 
@@ -65,6 +67,7 @@ export class MemoryManager {
     // Check for duplicate — row was written by us, so rowToMemory cannot return null
     const existing = this.db.getMemory(id);
     if (existing) {
+      this.logger?.debug(`memory store skipped: id=${id.slice(0, 8)} reason=duplicate`);
       return this.rowToMemory(existing)!;
     }
 
@@ -77,10 +80,11 @@ export class MemoryManager {
     } catch (error) {
       // Expected breaker/timeout errors → store without embedding.
       // Unexpected errors (auth, config, bugs) → rethrow.
-      if (
-        !(error instanceof EmbeddingCircuitOpenError) &&
-        !(error instanceof EmbeddingTimeoutError)
-      ) {
+      if (error instanceof EmbeddingCircuitOpenError) {
+        this.logger?.debug("store: embedding unavailable reason=circuit-open");
+      } else if (error instanceof EmbeddingTimeoutError) {
+        this.logger?.debug("store: embedding unavailable reason=timeout");
+      } else {
         throw error;
       }
     }
@@ -103,6 +107,8 @@ export class MemoryManager {
       }
       this.db.insertFts(id, params.content, params.type);
     });
+
+    this.logger?.info(`memory stored: id=${id.slice(0, 8)} type=${params.type} contentLen=${params.content.length} hasEmbedding=${embedding ? "yes" : "no"}`);
 
     // Log store event
     appendStoreEvent(this.logPath, id, params.context_ids ?? []);
@@ -129,12 +135,13 @@ export class MemoryManager {
     try {
       queryEmbedding = await this.embedder.embed(query);
     } catch (error) {
-      // Expected breaker/timeout errors → silent BM25 fallback.
+      // Expected breaker/timeout errors → BM25 fallback.
       // Unexpected errors (auth, config, bugs) → rethrow so callers notice.
-      if (
-        !(error instanceof EmbeddingCircuitOpenError) &&
-        !(error instanceof EmbeddingTimeoutError)
-      ) {
+      if (error instanceof EmbeddingCircuitOpenError) {
+        this.logger?.debug("search: semantic unavailable reason=circuit-open, falling back to BM25");
+      } else if (error instanceof EmbeddingTimeoutError) {
+        this.logger?.debug("search: semantic unavailable reason=timeout, falling back to BM25");
+      } else {
         throw error;
       }
     }
@@ -197,6 +204,11 @@ export class MemoryManager {
       }
     }
 
+    const queryInfo = this.logQueries ? ` query="${query.slice(0, 80)}${query.length > 80 ? "..." : ""}"` : "";
+    this.logger?.debug(
+      `search: queryLen=${query.length}${queryInfo} results=${results.length} mode=${queryEmbedding ? "hybrid" : "bm25-only"} topScore=${results[0]?.score?.toFixed(3) ?? "n/a"}`,
+    );
+
     return results;
   }
 
@@ -227,6 +239,8 @@ export class MemoryManager {
       this.logPath,
       results.map((r) => r.memory.id),
     );
+
+    this.logger?.debug(`recall: results=${results.length} limit=${limit}`);
 
     return results;
   }
@@ -297,6 +311,8 @@ export class MemoryManager {
     if (results.length > 0) {
       appendRecallEvent(this.logPath, results.map((r) => r.memory.id));
     }
+
+    this.logger?.debug(`broadRecall: pool=${candidates.length} selected=${results.length} limit=${limit}`);
 
     return results;
   }

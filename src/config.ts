@@ -9,6 +9,7 @@ export type AssociativeMemoryConfig = {
   autoCapture: boolean;
   autoRecall: boolean;
   verbose: boolean;
+  logQueries: boolean;
 };
 
 function assertAllowedKeys(value: Record<string, unknown>, allowed: string[], label: string) {
@@ -25,7 +26,7 @@ export const memoryConfigSchema = {
       throw new Error("memory config required");
     }
     const cfg = value as Record<string, unknown>;
-    assertAllowedKeys(cfg, ["embedding", "dbPath", "autoCapture", "autoRecall", "verbose"], "memory config");
+    assertAllowedKeys(cfg, ["embedding", "dbPath", "autoCapture", "autoRecall", "verbose", "logQueries"], "memory config");
 
     let provider = "auto";
     let model: string | undefined;
@@ -51,6 +52,7 @@ export const memoryConfigSchema = {
       autoCapture: cfg.autoCapture === true,
       autoRecall: cfg.autoRecall !== false,
       verbose: cfg.verbose === true,
+      logQueries: cfg.logQueries === true,
     };
   },
 };

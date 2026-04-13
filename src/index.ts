@@ -278,6 +278,15 @@ function createWorkspace(
 ): ManagedWorkspace {
   const memoryDir = resolveMemoryDir(config, workspaceDir, pathResolver);
   const circuitBreaker = new EmbeddingCircuitBreaker({
+    onStateChange: (from, to) => {
+      if (to === "OPEN") {
+        logger?.warn(`Circuit breaker: ${from} → OPEN — switching to BM25-only mode`);
+      } else if (to === "HALF_OPEN") {
+        logger?.info(`Circuit breaker: ${from} → HALF_OPEN — probing recovery`);
+      } else {
+        logger?.info(`Circuit breaker: ${from} → ${to}`);
+      }
+    },
     onLateSettlement: (outcome, err) => {
       logger?.warn(
         `Embedding call settled after timeout (${outcome}) — consider increasing timeoutMs`,
@@ -316,7 +325,7 @@ function createWorkspace(
     },
   };
 
-  const ws: ManagedWorkspace = { manager: new MemoryManager(memoryDir, embedder, logger), circuitBreaker, memoryDir };
+  const ws: ManagedWorkspace = { manager: new MemoryManager(memoryDir, embedder, logger, config.logQueries), circuitBreaker, memoryDir };
 
   // One-time startup tasks (migration + workspace cleanup).
   // Runs asynchronously on first workspace creation — does not block tool calls.
@@ -685,10 +694,12 @@ const associativeMemoryPlugin = {
           return { content: content.trim(), type: a.type };
         };
 
+        log.debug("consolidation: starting trigger=command");
         const result = await runConsolidation({
           db: ws.manager.getDatabase(),
           mergeContentProducer,
         });
+        log.debug(`consolidation: completed trigger=command durationMs=${result.durationMs}`);
 
         const s = result.summary;
         const catchUpInfo = s.catchUpDecayed > 0 ? `Catch-up decayed: ${s.catchUpDecayed}, ` : "";
@@ -928,10 +939,12 @@ const associativeMemoryPlugin = {
         const db = ws.manager.getDatabase();
         const temporalCount = db.transaction(() => applyTemporalTransitions(db));
 
+        log.debug("consolidation: starting trigger=cron");
         const result = await runConsolidation({
           db,
           mergeContentProducer,
         });
+        log.debug(`consolidation: completed trigger=cron durationMs=${result.durationMs}`);
 
         const s = result.summary;
         const catchUpInfo = s.catchUpDecayed > 0 ? `Catch-up decayed: ${s.catchUpDecayed}, ` : "";

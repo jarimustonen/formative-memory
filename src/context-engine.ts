@@ -275,6 +275,7 @@ function cacheKeysMatch(a: AssembleCacheKey, b: AssembleCacheKey): boolean {
 
 export type ContextEngineLogger = {
   warn: (msg: string, meta?: unknown) => void;
+  info?: (msg: string, meta?: unknown) => void;
   debug?: (msg: string, meta?: unknown) => void;
 };
 
@@ -324,6 +325,7 @@ export function createAssociativeMemoryContextEngine(
       const budgetClass = classifyBudget(params.tokenBudget, params.messages);
 
       if (budgetClass === "none") {
+        options.logger?.debug?.("assemble: skipped reason=budget-none");
         return { messages: params.messages, estimatedTokens: 0 };
       }
 
@@ -357,7 +359,8 @@ export function createAssociativeMemoryContextEngine(
 
       // Cache hit check
       if (cachedEntry && cacheKeysMatch(cachedEntry.key, cacheKey)) {
-        options.logger?.debug?.("assemble cache hit", {
+        options.logger?.debug?.(`assemble: cache=hit budget=${budgetClass}`);
+        options.logger?.debug?.("assemble cache hit detail", {
           cacheHit: true,
           transcriptChanged: false,
           messageCount: cacheKey.messageCount,
@@ -461,6 +464,13 @@ export function createAssociativeMemoryContextEngine(
       const systemPromptAddition = memoryBlock + bm25Notice + sleepDebtNotice;
       cachedEntry = { key: cacheKey, systemPromptAddition };
 
+      const injected = results.length + temporalMemories.length;
+      if (injected > 0) {
+        options.logger?.info?.(`assemble: recalled=${results.length} temporal=${temporalMemories.length} budget=${budgetClass} cache=miss`);
+      } else {
+        options.logger?.debug?.(`assemble: recalled=0 temporal=0 budget=${budgetClass} cache=miss`);
+      }
+
       return {
         messages: params.messages,
         estimatedTokens: 0,
@@ -491,6 +501,9 @@ export function createAssociativeMemoryContextEngine(
           logPath: options.getLogPath?.(),
           isBm25Only: options.isBm25Only?.() ?? false,
         });
+        options.logger?.debug?.(
+          `afterTurn: autoInjected=${options.ledger.autoInjected.size} searchResults=${options.ledger.searchResults.size} explicitlyOpened=${options.ledger.explicitlyOpened.size} storedThisTurn=${options.ledger.storedThisTurn.size}`,
+        );
       } catch (error) {
         options.logger?.warn("afterTurn() provenance write failed", error);
       }

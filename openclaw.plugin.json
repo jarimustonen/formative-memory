@@ -31,6 +31,9 @@
       },
       "verbose": {
         "type": "boolean"
+      },
+      "logQueries": {
+        "type": "boolean"
       }
     }
   },
@@ -60,6 +63,11 @@
     "verbose": {
       "label": "Verbose Logging",
       "help": "Enable debug-level logging. Can also be enabled via FORMATIVE_MEMORY_DEBUG=1 environment variable."
+    },
+    "logQueries": {
+      "label": "Log Query Text",
+      "help": "Include raw query text in debug logs. Disabled by default for privacy — queries may contain personal data.",
+      "advanced": true
     }
   }
 }
