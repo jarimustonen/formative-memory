@@ -4,8 +4,19 @@ updated: 2026-04-13
 type: feature
 reporter: jari
 assignee: jari
-status: done
+status: closed
 priority: normal
+commits:
+  - hash: 1f8d3cf
+    summary: "feat: add centralized logger with configurable verbosity"
+  - hash: 3f49200
+    summary: "fix: align logger with PluginLogger type, harden serialization"
+  - hash: aa91549
+    summary: "feat: instrument logging across store, search, assemble, and circuit breaker"
+  - hash: c6edca2
+    summary: "docs: add logging configuration and verbosity guide to README"
+  - hash: 5f3cd0c
+    summary: "fix: address review findings in logging instrumentation"
 ---
 
 # 13. Add logger infrastructure with configurable verbosity
