@@ -565,8 +565,8 @@ function createMemoryTools(
 // -- Plugin --
 
 const associativeMemoryPlugin = {
-  id: "memory-associative",
-  name: "Memory (Associative)",
+  id: "formative-memory",
+  name: "Formative Memory",
   description: "Biologically-inspired associative memory with consolidation and temporal awareness",
   kind: "memory" as const,
   configSchema: memoryConfigSchema,
@@ -803,7 +803,7 @@ const associativeMemoryPlugin = {
     /** Cron job name (used to find/update managed jobs). */
     const CONSOLIDATION_CRON_NAME = "Associative Memory Consolidation";
     /** Tag in description to identify managed jobs. */
-    const CONSOLIDATION_CRON_TAG = "[managed-by=memory-associative.consolidation]";
+    const CONSOLIDATION_CRON_TAG = "[managed-by=formative-memory.consolidation]";
     /** Default cron expression: daily at 03:00. */
     const DEFAULT_CONSOLIDATION_CRON = "0 3 * * *";
 
@@ -812,7 +812,7 @@ const associativeMemoryPlugin = {
     /** Cron job name for temporal transitions. */
     const TEMPORAL_CRON_NAME = "Associative Memory Temporal Transitions";
     /** Tag to identify managed temporal jobs. */
-    const TEMPORAL_CRON_TAG = "[managed-by=memory-associative.temporal]";
+    const TEMPORAL_CRON_TAG = "[managed-by=formative-memory.temporal]";
     /** Cron expression: daily at 15:00 (03:00 is covered by full consolidation). */
     const DEFAULT_TEMPORAL_CRON = "0 15 * * *";
 
@@ -894,7 +894,7 @@ const associativeMemoryPlugin = {
           `Failed to register consolidation cron: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
-    }, { name: "memory-associative-consolidation-cron" } as any);
+    }, { name: "formative-memory-consolidation-cron" } as any);
 
     // Handle cron-triggered consolidation and temporal transitions via before_agent_reply hook.
     // When cron fires, OpenClaw sends a systemEvent with our trigger text.
@@ -982,7 +982,7 @@ const associativeMemoryPlugin = {
     // -- Startup service --
     // Captures stateDir for auth-profile resolution in commands.
     api.registerService({
-      id: "memory-associative-startup",
+      id: "formative-memory-startup",
       async start(ctx) {
         runtimePaths.stateDir = ctx.stateDir;
       },

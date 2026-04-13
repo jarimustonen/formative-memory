@@ -13,7 +13,7 @@ Formative Memory is an open source memory plugin for [OpenClaw](https://openclaw
 
 ## Why
 
-Traditional memory systems treat all information equally and rely on recency to decide what's relevant. Over time, noise accumulates: duplicates pile up, outdated facts coexist with corrections, and important patterns get buried under recent but trivial details. The more you use memory, the harder it becomes to find what matters. You end up teaching the same lessons over and over.
+OpenClaw's default memory system treats all information equally and relies on recency to decide what's relevant. Over time, noise accumulates: duplicates pile up, outdated facts coexist with corrections, and important patterns get buried under recent but trivial details. The more you use memory, the harder it becomes to find what matters. You end up teaching the same lessons over and over.
 
 Formative Memory inverts this. Memories that prove useful get stronger. Unused ones fade. Related memories form connections. The system maintains itself through automatic consolidation — no manual curation needed.
 
@@ -109,7 +109,7 @@ All settings are optional:
 
 ```json
 {
-  "memory-associative": {
+  "formative-memory": {
     "autoRecall": true,
     "autoCapture": false,
     "embedding": {

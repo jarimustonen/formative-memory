@@ -20,7 +20,7 @@ DB_PATH="/srv/storage/openclaw/jari/memory/associative/associations.db"
 # Container paths
 CONTAINER="openclaw-jari"
 MEMORY_DIR_CONTAINER="/home/node/.openclaw/memory/associative"
-CLI="/home/node/.openclaw/extensions/memory-associative/dist/cli.js"
+CLI="/home/node/.openclaw/extensions/formative-memory/dist/cli.js"
 
 cmd="${1:-help}"
 shift 2>/dev/null || true

@@ -1,6 +1,6 @@
 {
-  "id": "memory-associative",
-  "name": "Memory (Associative)",
+  "id": "formative-memory",
+  "name": "Formative Memory",
   "kind": ["memory", "context-engine"],
   "description": "Biologically-inspired associative memory with consolidation, temporal awareness, and retrieval-based strengthening.",
   "configSchema": {

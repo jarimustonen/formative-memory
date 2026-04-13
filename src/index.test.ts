@@ -53,8 +53,8 @@ let registeredTools: Array<{ factory?: Function; opts?: Record<string, unknown>;
 let tmpDir: string;
 
 const fakeApi = (pluginConfig?: Record<string, unknown>) => ({
-  id: "memory-associative",
-  name: "Memory (Associative)",
+  id: "formative-memory",
+  name: "Formative Memory",
   pluginConfig: {
     dbPath: join(tmpDir, "memory"),
     ...pluginConfig,
@@ -138,7 +138,7 @@ function getTools(api: ReturnType<typeof fakeApi>, ctx?: Record<string, unknown>
 
 describe("plugin registration", () => {
   it("has correct metadata", () => {
-    expect(plugin.id).toBe("memory-associative");
+    expect(plugin.id).toBe("formative-memory");
     expect(plugin.kind).toBe("memory");
   });
 

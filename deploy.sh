@@ -13,7 +13,7 @@
 set -euo pipefail
 
 REMOTE="haapa"
-PLUGIN_DIR="/srv/storage/openclaw/jari/extensions/memory-associative"
+PLUGIN_DIR="/srv/storage/openclaw/jari/extensions/formative-memory"
 MEMORY_DIR="/srv/storage/openclaw/jari/memory/associative"
 WORKSPACE_DIR="/srv/storage/openclaw/jari/workspace"
 CONTAINER="openclaw-jari"
@@ -68,20 +68,20 @@ echo "=== Building plugin ==="
 pnpm build
 
 echo "=== Copying files to $REMOTE ==="
-ssh "$REMOTE" 'mkdir -p /tmp/memory-associative-deploy'
+ssh "$REMOTE" 'mkdir -p /tmp/formative-memory-deploy'
 scp dist/index.js dist/db-*.js openclaw.plugin.json package.json \
-    "$REMOTE:/tmp/memory-associative-deploy/"
+    "$REMOTE:/tmp/formative-memory-deploy/"
 
 echo "=== Deploying to $PLUGIN_DIR ==="
 ssh "$REMOTE" "podman unshare bash -c '
     mkdir -p $PLUGIN_DIR/dist &&
-    cp /tmp/memory-associative-deploy/index.js $PLUGIN_DIR/dist/ &&
-    cp /tmp/memory-associative-deploy/db-*.js $PLUGIN_DIR/dist/ &&
-    cp /tmp/memory-associative-deploy/openclaw.plugin.json $PLUGIN_DIR/ &&
-    cp /tmp/memory-associative-deploy/package.json $PLUGIN_DIR/ &&
+    cp /tmp/formative-memory-deploy/index.js $PLUGIN_DIR/dist/ &&
+    cp /tmp/formative-memory-deploy/db-*.js $PLUGIN_DIR/dist/ &&
+    cp /tmp/formative-memory-deploy/openclaw.plugin.json $PLUGIN_DIR/ &&
+    cp /tmp/formative-memory-deploy/package.json $PLUGIN_DIR/ &&
     chown -R 1000:1000 $PLUGIN_DIR/
 '"
-ssh "$REMOTE" 'rm -rf /tmp/memory-associative-deploy'
+ssh "$REMOTE" 'rm -rf /tmp/formative-memory-deploy'
 
 echo "=== Deploy complete ==="
 
