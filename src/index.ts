@@ -37,6 +37,7 @@ import {
   type EnrichFn,
 } from "./migration-service.ts";
 import { appendFeedbackEvent } from "./retrieval-log.ts";
+import { createLogger, type Logger } from "./logger.ts";
 import { TurnMemoryLedger } from "./turn-memory-ledger.ts";
 
 // -- Auth profile resolution --
@@ -268,7 +269,7 @@ function createWorkspace(
   workspaceDir: string,
   openclawConfig: OpenClawConfig,
   agentDir?: string,
-  logger?: { warn: (...args: unknown[]) => void; info?: (msg: string) => void },
+  logger?: Logger,
   pathResolver?: (input: string) => string,
   initDeps?: {
     stateDir?: string;
@@ -315,13 +316,12 @@ function createWorkspace(
     },
   };
 
-  const ws: ManagedWorkspace = { manager: new MemoryManager(memoryDir, embedder), circuitBreaker, memoryDir };
+  const ws: ManagedWorkspace = { manager: new MemoryManager(memoryDir, embedder, logger), circuitBreaker, memoryDir };
 
   // One-time startup tasks (migration + workspace cleanup).
   // Runs asynchronously on first workspace creation — does not block tool calls.
   // Guarded by DB state keys so each task runs at most once.
   if (initDeps) {
-    const log = logger as { warn: (msg: string) => void; info?: (msg: string) => void } | undefined;
     void (async () => {
       const db = ws.manager.getDatabase();
       const dbState = {
@@ -336,13 +336,13 @@ function createWorkspace(
             workspaceDir,
             dbState,
             llm: (prompt) => callLlm(prompt, initDeps.llmConfig!),
-            logger: log ?? { info: () => {}, warn: () => {} },
+            logger: logger ?? { info: () => {}, warn: () => {} },
           });
           if (result.status === "cleaned") {
-            log?.info?.(`Workspace cleanup: modified ${result.filesModified?.join(", ")}`);
+            logger?.info(`Workspace cleanup: modified ${result.filesModified?.join(", ")}`);
           }
         } catch (err) {
-          log?.warn(`Workspace cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
+          logger?.warn(`Workspace cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
 
@@ -366,16 +366,16 @@ function createWorkspace(
           updateStrength: (id, strength) => ws.manager.getDatabase().updateStrength(id, strength),
           dbState,
           enrich: enrichFn,
-          logger: log ?? { info: () => {}, warn: () => {}, error: () => {} },
+          logger: logger ?? { info: () => {}, warn: () => {}, error: () => {} },
         });
 
         if (migrationResult.status === "completed") {
-          log?.info?.(
+          logger?.info(
             `Migration: imported ${migrationResult.segmentsImported} memories from ${migrationResult.filesFound} files`,
           );
         }
       } catch (err) {
-        log?.warn(`Migration failed: ${err instanceof Error ? err.message : String(err)}`);
+        logger?.warn(`Migration failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     })();
   }
@@ -565,7 +565,7 @@ const associativeMemoryPlugin = {
   register(api: OpenClawPluginApi) {
     const config = memoryConfigSchema.parse(api.pluginConfig);
     const openclawConfig = api.config;
-    const logger = api.logger;
+    const log = createLogger({ verbose: config.verbose, host: api.logger });
     const ledger = new TurnMemoryLedger();
 
     // Runtime state captured from tool contexts for use by commands.
@@ -579,9 +579,9 @@ const associativeMemoryPlugin = {
 
     const getWorkspace = (workspaceDir: string, agentDir?: string, triggerInit = false): ManagedWorkspace => {
       if (!workspace) {
-        const llmConfig = resolveLlmConfig(runtimePaths.stateDir, agentDir, logger);
+        const llmConfig = resolveLlmConfig(runtimePaths.stateDir, agentDir, log);
         workspace = createWorkspace(
-          config, workspaceDir, openclawConfig, agentDir, logger, api.resolvePath,
+          config, workspaceDir, openclawConfig, agentDir, log, api.resolvePath,
           triggerInit ? { stateDir: runtimePaths.stateDir, llmConfig } : undefined,
         );
       }
@@ -654,6 +654,7 @@ const associativeMemoryPlugin = {
       createAssociativeMemoryContextEngine({
         getManager: () => getWorkspace(".").manager,
         isBm25Only: () => getWorkspace(".").circuitBreaker.isBm25Only(),
+        logger: log,
         ledger,
         getDb: () => getWorkspace(".").manager.getDatabase(),
         getLogPath: () => join(getWorkspace(".").memoryDir, "retrieval.log"),
@@ -666,7 +667,7 @@ const associativeMemoryPlugin = {
       async handler() {
         const ws = getWorkspace(".");
 
-        const llmConfig = resolveLlmConfig(runtimePaths.stateDir, runtimePaths.agentDir, logger);
+        const llmConfig = resolveLlmConfig(runtimePaths.stateDir, runtimePaths.agentDir, log);
         if (!llmConfig) {
           return {
             text: "Memory consolidation failed: no LLM API key found.\n" +
@@ -709,7 +710,7 @@ const associativeMemoryPlugin = {
       async handler() {
         const ws = getWorkspace(".");
         const db = ws.manager.getDatabase();
-        const llmConfig = resolveLlmConfig(runtimePaths.stateDir, runtimePaths.agentDir, logger);
+        const llmConfig = resolveLlmConfig(runtimePaths.stateDir, runtimePaths.agentDir, log);
         const userLanguage = detectUserLanguage(".");
         const enrichFn: EnrichFn = llmConfig
           ? createDirectLlmEnrichFn(llmConfig, userLanguage)
@@ -734,7 +735,7 @@ const associativeMemoryPlugin = {
             set: (key, value) => db.setState(key, value),
           },
           enrich: enrichFn,
-          logger,
+          logger: log,
         });
 
         if (result.status === "completed") {
@@ -754,7 +755,7 @@ const associativeMemoryPlugin = {
       async handler() {
         const ws = getWorkspace(".");
         const db = ws.manager.getDatabase();
-        const llmConfig = resolveLlmConfig(runtimePaths.stateDir, runtimePaths.agentDir, logger);
+        const llmConfig = resolveLlmConfig(runtimePaths.stateDir, runtimePaths.agentDir, log);
         if (!llmConfig) {
           return { text: "Workspace cleanup failed: no LLM API key found." };
         }
@@ -769,7 +770,7 @@ const associativeMemoryPlugin = {
             set: (key, value) => db.setState(key, value),
           },
           llm: (prompt) => callLlm(prompt, llmConfig),
-          logger,
+          logger: log,
         });
 
         if (result.status === "cleaned") {
@@ -806,7 +807,7 @@ const associativeMemoryPlugin = {
         const context = event?.context;
         const cron = context?.cron ?? context?.deps?.cron;
         if (!cron || typeof cron.list !== "function" || typeof cron.add !== "function") {
-          logger.warn("Cron service not available — scheduled consolidation disabled");
+          log.warn("Cron service not available — scheduled consolidation disabled");
           return;
         }
 
@@ -831,13 +832,13 @@ const associativeMemoryPlugin = {
 
         if (managed.length === 0) {
           await cron.add(desired);
-          logger.info?.("Registered consolidation cron job");
+          log.info("Registered consolidation cron job");
         } else {
           // Update existing job if schedule changed
           const existing = managed[0];
           if (existing.schedule?.expr !== desired.schedule.expr) {
             await cron.update(existing.id, { schedule: desired.schedule });
-            logger.info?.("Updated consolidation cron schedule");
+            log.info("Updated consolidation cron schedule");
           }
           // Remove duplicates
           for (let i = 1; i < managed.length; i++) {
@@ -861,19 +862,19 @@ const associativeMemoryPlugin = {
 
         if (temporalManaged.length === 0) {
           await cron.add(desiredTemporal);
-          logger.info?.("Registered temporal transitions cron job");
+          log.info("Registered temporal transitions cron job");
         } else {
           const existing = temporalManaged[0];
           if (existing.schedule?.expr !== desiredTemporal.schedule.expr) {
             await cron.update(existing.id, { schedule: desiredTemporal.schedule });
-            logger.info?.("Updated temporal transitions cron schedule");
+            log.info("Updated temporal transitions cron schedule");
           }
           for (let i = 1; i < temporalManaged.length; i++) {
             await cron.remove(temporalManaged[i].id);
           }
         }
       } catch (err) {
-        logger.warn(
+        log.warn(
           `Failed to register consolidation cron: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
@@ -893,7 +894,7 @@ const associativeMemoryPlugin = {
           const db = ws.manager.getDatabase();
           const count = db.transaction(() => applyTemporalTransitions(db));
           if (count > 0) {
-            logger.info?.(`Scheduled temporal transitions: ${count} transitioned`);
+            log.info(`Scheduled temporal transitions: ${count} transitioned`);
           }
           return {
             handled: true,
@@ -901,7 +902,7 @@ const associativeMemoryPlugin = {
             reason: "associative-memory-temporal",
           };
         } catch (err) {
-          logger.warn(`Scheduled temporal transitions failed: ${err instanceof Error ? err.message : String(err)}`);
+          log.warn(`Scheduled temporal transitions failed: ${err instanceof Error ? err.message : String(err)}`);
           return { handled: true, reply: { text: "Temporal transitions failed." }, reason: "associative-memory-temporal-error" };
         }
       }
@@ -911,7 +912,7 @@ const associativeMemoryPlugin = {
 
       try {
         const ws = getWorkspace(ctx?.workspaceDir ?? ".");
-        const llmConfig = resolveLlmConfig(runtimePaths.stateDir, runtimePaths.agentDir, logger);
+        const llmConfig = resolveLlmConfig(runtimePaths.stateDir, runtimePaths.agentDir, log);
         const mergeContentProducer = llmConfig
           ? async (
               a: { id: string; content: string; type: string },
@@ -935,7 +936,7 @@ const associativeMemoryPlugin = {
         const s = result.summary;
         const catchUpInfo = s.catchUpDecayed > 0 ? `Catch-up decayed: ${s.catchUpDecayed}, ` : "";
         const temporalInfo = temporalCount > 0 ? `, Temporal transitions (extra): ${temporalCount}` : "";
-        logger.info?.(
+        log.info(
           `Scheduled consolidation complete (${result.durationMs}ms): ${catchUpInfo}` +
           `Reinforced: ${s.reinforced}, Decayed: ${s.decayed}, ` +
           `Pruned: ${s.pruned}+${s.prunedAssociations}, Merged: ${s.merged}${temporalInfo}`,
@@ -949,7 +950,7 @@ const associativeMemoryPlugin = {
           reason: "associative-memory-consolidation",
         };
       } catch (err) {
-        logger.warn(
+        log.warn(
           `Scheduled consolidation failed: ${err instanceof Error ? err.message : String(err)}`,
         );
         return {

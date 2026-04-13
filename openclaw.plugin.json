@@ -28,6 +28,9 @@
       },
       "autoRecall": {
         "type": "boolean"
+      },
+      "verbose": {
+        "type": "boolean"
       }
     }
   },
@@ -53,6 +56,10 @@
     "autoRecall": {
       "label": "Auto-Recall",
       "help": "Automatically inject associated memories into context"
+    },
+    "verbose": {
+      "label": "Verbose Logging",
+      "help": "Enable debug-level logging. Can also be enabled via FORMATIVE_MEMORY_DEBUG=1 environment variable."
     }
   }
 }

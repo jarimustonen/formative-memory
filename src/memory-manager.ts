@@ -7,6 +7,7 @@ import {
 } from "./embedding-circuit-breaker.ts";
 import { contentHash } from "./hash.ts";
 import { appendRecallEvent, appendSearchEvent, appendStoreEvent } from "./retrieval-log.ts";
+import type { Logger } from "./logger.ts";
 import {
   MemorySourceGuard,
   TemporalStateGuard,
@@ -35,11 +36,13 @@ export class MemoryManager {
   private memoryDir: string;
   private logPath: string;
   private embedder: EmbeddingProvider;
+  private logger?: Logger;
 
-  constructor(memoryDir: string, embedder: EmbeddingProvider) {
+  constructor(memoryDir: string, embedder: EmbeddingProvider, logger?: Logger) {
     this.memoryDir = memoryDir;
     this.logPath = join(memoryDir, "retrieval.log");
     this.embedder = embedder;
+    this.logger = logger;
 
     mkdirSync(memoryDir, { recursive: true });
 
@@ -331,11 +334,11 @@ export class MemoryManager {
    */
   private rowToMemory(row: MemoryRow): Memory | null {
     if (!TemporalStateGuard.is(row.temporal_state)) {
-      console.warn(`Skipping memory ${row.id}: invalid temporal_state "${row.temporal_state}"`);
+      this.logger?.warn(`Skipping memory ${row.id}: invalid temporal_state "${row.temporal_state}"`);
       return null;
     }
     if (!MemorySourceGuard.is(row.source)) {
-      console.warn(`Skipping memory ${row.id}: invalid source "${row.source}"`);
+      this.logger?.warn(`Skipping memory ${row.id}: invalid source "${row.source}"`);
       return null;
     }
     return {
