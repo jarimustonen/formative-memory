@@ -64,7 +64,8 @@
     ]
   },
   "files": [
-    "dist"
+    "dist",
+    "openclaw.plugin.json"
   ],
   "openclaw": {
     "extensions": [
