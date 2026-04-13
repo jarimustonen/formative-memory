@@ -28,11 +28,12 @@ export interface Logger {
   error: LogFn;
 }
 
-/** Host logger shape — matches OpenClaw's api.logger (info may be optional). */
+/** Host logger shape — matches OpenClaw's PluginLogger (debug is optional). */
 export type HostLogger = {
-  warn: (message: string, ...args: unknown[]) => void;
-  info?: (msg: string) => void;
-  error?: (msg: string) => void;
+  debug?: (message: string) => void;
+  info: (message: string) => void;
+  warn: (message: string) => void;
+  error: (message: string) => void;
 };
 
 /**
@@ -48,26 +49,33 @@ export function createLogger(opts: {
   const minOrder = LEVEL_ORDER[minLevel];
   const host = opts.host;
 
+  function stringifyArg(a: unknown): string {
+    if (a instanceof Error) return a.stack || a.message;
+    if (typeof a === "object" && a !== null) {
+      try { return JSON.stringify(a); } catch { return "[Unserializable]"; }
+    }
+    return String(a);
+  }
+
   function emit(level: LogLevel, msg: string, args: unknown[]) {
     if (LEVEL_ORDER[level] < minOrder) return;
 
     const prefix = `[formative-memory] [${level}]`;
-    const line = `${prefix} ${msg}`;
 
     if (host) {
-      // Route through host logger when available
-      if (level === "error" && host.error) {
-        host.error(line);
-      } else if (level === "warn") {
-        host.warn(line, ...args);
-      } else if (host.info) {
-        host.info(line);
+      // Host logger accepts a single string — inline extra args.
+      const suffix = args.length > 0
+        ? " " + args.map(stringifyArg).join(" ")
+        : "";
+      const line = `${prefix} ${msg}${suffix}`;
+      if (level === "debug") {
+        (host.debug ?? host.info)(line);
       } else {
-        // Fallback: host only has warn — use it for info/debug too
-        host.warn(line, ...args);
+        host[level](line);
       }
     } else {
-      // No host logger — use console
+      // Console — pass raw args for native formatting.
+      const line = `${prefix} ${msg}`;
       if (level === "error") {
         console.error(line, ...args);
       } else if (level === "warn") {
