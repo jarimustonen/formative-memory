@@ -18,6 +18,8 @@
 
 import type { MemoryDatabase, MemoryRow } from "./db.ts";
 import { contentHash } from "./hash.ts";
+import type { Logger } from "./logger.ts";
+import { nullLogger } from "./logger.ts";
 import type { MergePair } from "./merge-candidates.ts";
 import type { MemorySource } from "./types.ts";
 
@@ -57,6 +59,7 @@ export async function executeMerge(
   pair: MergePair,
   contentProducer: MergeContentProducer,
   embedder?: EmbedderFn,
+  log: Logger = nullLogger,
 ): Promise<MergeResult> {
   if (pair.a === pair.b) {
     throw new Error(`Merge failed: cannot merge memory with itself (${pair.a})`);
@@ -68,6 +71,8 @@ export async function executeMerge(
   if (!memA || !memB) {
     throw new Error(`Merge failed: memory not found (${pair.a}, ${pair.b})`);
   }
+
+  log.debug(`merge: combining:\n  A: "${memA.content.slice(0, 100)}"\n  B: "${memB.content.slice(0, 100)}"`);
 
   // 1. Produce merged content (async, outside transaction)
   const merged = await contentProducer(
@@ -156,6 +161,17 @@ export async function executeMerge(
     // Inherit associations from absorbed/weakened sources into canonical
     inheritAssociations(db, [memA.id, memB.id], canonicalId, now);
 
+    const outcome = isAbsorption ? "absorption" : "new";
+    log.info(
+      `merge: ${outcome} → "${merged.content.slice(0, 80)}" (${canonicalId.slice(0, 8)}…)`,
+    );
+    if (originalsWeakened.length > 0) {
+      log.debug(`merge: weakened originals: ${originalsWeakened.map((id) => id.slice(0, 8) + "…").join(", ")}`);
+    }
+    if (intermediatesDeleted.length > 0) {
+      log.debug(`merge: deleted intermediates: ${intermediatesDeleted.map((id) => id.slice(0, 8) + "…").join(", ")}`);
+    }
+
     return {
       newMemoryId: canonicalId,
       mergedFrom: [pair.a, pair.b] as [string, string],
@@ -177,6 +193,7 @@ export async function executeMerges(
   pairs: MergePair[],
   contentProducer: MergeContentProducer,
   embedder?: EmbedderFn,
+  log: Logger = nullLogger,
 ): Promise<MergeResult[]> {
   const consumed = new Set<string>();
   const results: MergeResult[] = [];
@@ -185,12 +202,16 @@ export async function executeMerges(
     if (consumed.has(pair.a) || consumed.has(pair.b)) continue;
     if (!db.getMemory(pair.a) || !db.getMemory(pair.b)) continue;
 
-    const result = await executeMerge(db, pair, contentProducer, embedder);
+    const result = await executeMerge(db, pair, contentProducer, embedder, log);
     results.push(result);
 
     consumed.add(pair.a);
     consumed.add(pair.b);
     consumed.add(result.newMemoryId);
+  }
+
+  if (results.length > 0) {
+    log.info(`merge: ${results.length} merges completed`);
   }
 
   return results;

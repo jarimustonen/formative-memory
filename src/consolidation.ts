@@ -19,6 +19,8 @@ import {
   updateTransitiveAssociations,
 } from "./consolidation-steps.ts";
 import type { MemoryDatabase, MemoryRow } from "./db.ts";
+import type { Logger } from "./logger.ts";
+import { nullLogger } from "./logger.ts";
 import {
   findMergeCandidatesDelta,
   MERGE_SOURCE_MIN_STRENGTH,
@@ -33,6 +35,8 @@ export type ConsolidationParams = {
   mergeContentProducer?: MergeContentProducer;
   /** Embedding generator for merged memories. */
   embedder?: EmbedderFn;
+  /** Logger instance. Falls back to nullLogger (silent). */
+  logger?: Logger;
 };
 
 export type ConsolidationSummary = {
@@ -74,6 +78,7 @@ export async function runConsolidation(
   params: ConsolidationParams,
 ): Promise<ConsolidationResult> {
   const start = Date.now();
+  const log = params.logger ?? nullLogger;
   // Capture cutoff before any queries to prevent race with concurrent writes.
   // Memories/exposures arriving after this point will be picked up next run.
   const consolidationCutoff = new Date().toISOString();
@@ -89,6 +94,8 @@ export async function runConsolidation(
     exposuresGc: 0,
   };
 
+  log.info("consolidation: starting");
+
   // Transaction 1: Pre-merge deterministic steps
   params.db.transaction(() => {
     // Phase 4.0 — Catch-up decay for missed cycles
@@ -98,17 +105,17 @@ export async function runConsolidation(
       const ms = new Date(lastAt).getTime();
       if (Number.isFinite(ms)) lastConsolidationMs = ms;
     }
-    summary.catchUpDecayed = applyCatchUpDecay(params.db, lastConsolidationMs);
+    summary.catchUpDecayed = applyCatchUpDecay(params.db, lastConsolidationMs, Date.now(), log);
 
     // Phase 4.1 — Reinforcement + decay
-    summary.reinforced = applyReinforcement(params.db);
-    summary.decayed = applyDecay(params.db);
+    summary.reinforced = applyReinforcement(params.db, log);
+    summary.decayed = applyDecay(params.db, log);
     // Phase 4.2 — Associations + temporal transitions
-    updateCoRetrievalAssociations(params.db);
-    updateTransitiveAssociations(params.db);
-    summary.transitioned = applyTemporalTransitions(params.db);
+    updateCoRetrievalAssociations(params.db, log);
+    updateTransitiveAssociations(params.db, 100, log);
+    summary.transitioned = applyTemporalTransitions(params.db, log);
     // Phase 4.3 — Pre-merge pruning
-    const pruneResult = applyPruning(params.db);
+    const pruneResult = applyPruning(params.db, log);
     summary.pruned = pruneResult.memoriesPruned;
     summary.prunedAssociations = pruneResult.associationsPruned;
   });
@@ -123,6 +130,8 @@ export async function runConsolidation(
         MERGE_SOURCE_MIN_STRENGTH, lastAt,
       );
       const targetMems = params.db.getMergeTargets(MERGE_TARGET_MIN_STRENGTH);
+
+      log.debug(`merge: ${sourceMems.length} sources, ${targetMems.length} targets`);
 
       // Bulk-load embeddings only for relevant candidate IDs
       const uniqueIds = [...new Set([...sourceMems, ...targetMems].map((m) => m.id))];
@@ -139,8 +148,9 @@ export async function runConsolidation(
       );
 
       if (pairs.length > 0) {
+        log.info(`merge: ${pairs.length} candidate pairs found`);
         const mergeResults = await executeMerges(
-          params.db, pairs, params.mergeContentProducer, params.embedder,
+          params.db, pairs, params.mergeContentProducer, params.embedder, log,
         );
         summary.merged = mergeResults.length;
       }
@@ -150,10 +160,15 @@ export async function runConsolidation(
     // If merge failed, pre-merge steps are already applied; not advancing
     // would cause double-decay on the next run.
     params.db.transaction(() => {
-      summary.exposuresGc = provenanceGC(params.db);
+      summary.exposuresGc = provenanceGC(params.db, 30, log);
       params.db.setState("last_consolidation_at", consolidationCutoff);
     });
   }
+
+  const s = summary;
+  log.info(
+    `consolidation: done in ${Date.now() - start}ms — reinforced=${s.reinforced} decayed=${s.decayed} pruned=${s.pruned}+${s.prunedAssociations} merged=${s.merged} transitioned=${s.transitioned}`,
+  );
 
   return {
     ok: true,

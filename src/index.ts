@@ -731,8 +731,8 @@ const associativeMemoryPlugin = {
           const result = await runConsolidation({
             db: ws.manager.getDatabase(),
             mergeContentProducer,
+            logger: log,
           });
-          log.debug(`consolidation: completed trigger=command durationMs=${result.durationMs}`);
 
           const s = result.summary;
           const catchUpInfo = s.catchUpDecayed > 0 ? `Catch-up decayed: ${s.catchUpDecayed}, ` : "";
@@ -983,8 +983,8 @@ const associativeMemoryPlugin = {
         const result = await runConsolidation({
           db,
           mergeContentProducer,
+          logger: log,
         });
-        log.debug(`consolidation: completed trigger=cron durationMs=${result.durationMs}`);
 
         const s = result.summary;
         const catchUpInfo = s.catchUpDecayed > 0 ? `Catch-up decayed: ${s.catchUpDecayed}, ` : "";
