@@ -2,7 +2,7 @@
   "id": "formative-memory",
   "name": "Formative Memory",
   "kind": ["memory", "context-engine"],
-  "description": "Biologically-inspired associative memory with consolidation, temporal awareness, and retrieval-based strengthening.",
+  "description": "Self-optimizing memory that strengthens relevant context through use, builds associations, and consolidates during sleep.",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
