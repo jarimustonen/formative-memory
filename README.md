@@ -161,7 +161,7 @@ Configuration goes in `openclaw.json` under the plugin entry:
 | `embedding.provider` | `"auto"` | Embedding provider: `auto`, `openai`, `gemini`, `voyage`, `mistral`, `ollama`, `local` |
 | `embedding.model` | — | Override the provider's default embedding model |
 | `dbPath` | `~/.openclaw/memory/associative` | SQLite database location |
-| `verbose` | `false` | Enable debug logging (also via `FORMATIVE_MEMORY_DEBUG=1`) |
+| `verbose` | `false` | Enable debug logging |
 | `logQueries` | `false` | Include raw query text in debug logs (disabled by default for privacy) |
 
 The `"auto"` provider selects the best available embedding provider from
@@ -231,12 +231,6 @@ Enable debug logging:
 
 ```json
 { "verbose": true }
-```
-
-Or via environment variable:
-
-```bash
-FORMATIVE_MEMORY_DEBUG=1
 ```
 
 | Level | What |

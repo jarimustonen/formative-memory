@@ -1,10 +1,8 @@
 /**
  * Centralized logger with configurable verbosity.
  *
- * Log level is determined by (in priority order):
- * 1. Environment variable FORMATIVE_MEMORY_DEBUG=1 → debug
- * 2. Plugin config `verbose: true` → debug
- * 3. Default → info
+ * Log level is determined by plugin config `verbose: true` → debug,
+ * otherwise defaults to info.
  *
  * All output goes through the host logger (OpenClaw's api.logger) when
  * available, falling back to console.
@@ -46,8 +44,7 @@ export function createLogger(opts: {
   verbose?: boolean;
   host?: HostLogger;
 }): Logger {
-  const envDebug = process.env.FORMATIVE_MEMORY_DEBUG === "1";
-  const minLevel: LogLevel = opts.verbose || envDebug ? "debug" : "info";
+  const minLevel: LogLevel = opts.verbose ? "debug" : "info";
   const minOrder = LEVEL_ORDER[minLevel];
   const host = opts.host;
 

@@ -12,16 +12,6 @@ function makeHost() {
 }
 
 describe("createLogger", () => {
-  const originalEnv = process.env.FORMATIVE_MEMORY_DEBUG;
-
-  afterEach(() => {
-    if (originalEnv === undefined) {
-      delete process.env.FORMATIVE_MEMORY_DEBUG;
-    } else {
-      process.env.FORMATIVE_MEMORY_DEBUG = originalEnv;
-    }
-  });
-
   describe("level filtering", () => {
     it("defaults to info level (suppresses debug)", () => {
       const host = makeHost();
@@ -41,26 +31,6 @@ describe("createLogger", () => {
       log.debug("should appear");
       expect(host.debug).toHaveBeenCalledOnce();
       expect((host.debug as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain("should appear");
-    });
-
-    it("emits debug when FORMATIVE_MEMORY_DEBUG=1", () => {
-      process.env.FORMATIVE_MEMORY_DEBUG = "1";
-      const host = makeHost();
-      const log = createLogger({ host });
-
-      log.debug("env debug");
-      expect(host.debug).toHaveBeenCalledOnce();
-      expect((host.debug as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain("env debug");
-    });
-
-    it("does not enable debug for other env values", () => {
-      process.env.FORMATIVE_MEMORY_DEBUG = "true";
-      const host = makeHost();
-      const log = createLogger({ host });
-
-      log.debug("suppressed");
-      expect(host.debug).not.toHaveBeenCalled();
-      expect(host.info).not.toHaveBeenCalled();
     });
 
     it("always emits warn and error regardless of level", () => {
@@ -204,11 +174,6 @@ describe("createLogger", () => {
       expect(log.isDebugEnabled()).toBe(true);
     });
 
-    it("returns true when FORMATIVE_MEMORY_DEBUG=1", () => {
-      process.env.FORMATIVE_MEMORY_DEBUG = "1";
-      const log = createLogger({ host: makeHost() });
-      expect(log.isDebugEnabled()).toBe(true);
-    });
   });
 });
 
