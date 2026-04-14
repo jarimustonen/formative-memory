@@ -4,7 +4,7 @@ updated: 2026-04-14
 type: feature
 reporter: jari
 assignee: jari
-status: in-progress
+status: closed
 priority: normal
 ---
 
