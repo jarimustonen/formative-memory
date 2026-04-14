@@ -311,8 +311,8 @@ function applyImportDecay(
 /**
  * Process JSONL session segments by extracting facts via LLM.
  * Uses the same extraction pipeline as autoCapture (buildExtractionPrompt/parseExtractionResponse).
- * Each segment's conversation content is sent to the LLM, which distills durable facts.
- * Falls back to storing raw content as "observation" if LLM is unavailable.
+ * Each segment's conversation exchange is sent to the LLM, which distills durable facts.
+ * Requires llmCall — session import is skipped without LLM.
  */
 async function extractSessionSegments(
   segments: ImportSegment[],
@@ -321,48 +321,39 @@ async function extractSessionSegments(
   logger: MigrationDeps["logger"],
   updateStrength?: (id: string, strength: number) => void,
 ): Promise<{ stored: number; errors: string[] }> {
+  if (!llmCall) {
+    logger.warn("Session import skipped: LLM extraction required but llmCall not available");
+    return { stored: 0, errors: [] };
+  }
+
   let stored = 0;
   const errors: string[] = [];
 
   for (const seg of segments) {
     try {
-      if (llmCall) {
-        // LLM extraction: distill facts from conversation
-        const prompt = buildExtractionPrompt(seg.content);
-        const response = await llmCall(prompt);
-        const facts = parseExtractionResponse(response);
+      const prompt = buildExtractionPrompt(seg.content);
+      const response = await llmCall(prompt);
+      const facts = parseExtractionResponse(response);
 
-        if (facts.length === 0) {
-          // LLM found nothing worth remembering — this is expected for many turns
-          continue;
-        }
+      if (facts.length === 0) {
+        // LLM found nothing worth remembering — expected for many exchanges
+        continue;
+      }
 
-        for (const fact of facts) {
-          try {
-            const result = await store({
-              content: fact.content,
-              type: fact.type,
-              source: "import",
-              temporal_state: seg.date ? "past" as TemporalState : "none" as TemporalState,
-              temporal_anchor: seg.date,
-            });
-            applyImportDecay(result.id, seg.date, updateStrength);
-            stored++;
-          } catch (err) {
-            logger.warn(`Failed to store extracted fact from segment ${seg.id}: ${err instanceof Error ? err.message : String(err)}`);
-          }
+      for (const fact of facts) {
+        try {
+          const result = await store({
+            content: fact.content,
+            type: fact.type,
+            source: "import",
+            temporal_state: seg.date ? "past" as TemporalState : "none" as TemporalState,
+            temporal_anchor: seg.date,
+          });
+          applyImportDecay(result.id, seg.date, updateStrength);
+          stored++;
+        } catch (err) {
+          logger.warn(`Failed to store extracted fact from segment ${seg.id}: ${err instanceof Error ? err.message : String(err)}`);
         }
-      } else {
-        // No LLM: store raw session content with heuristic defaults
-        const result = await store({
-          content: seg.content,
-          type: "observation",
-          source: "import",
-          temporal_state: seg.date ? "past" as TemporalState : "none" as TemporalState,
-          temporal_anchor: seg.date,
-        });
-        applyImportDecay(result.id, seg.date, updateStrength);
-        stored++;
       }
     } catch (err) {
       const msg = `Session segment ${seg.id} extraction failed: ${err instanceof Error ? err.message : String(err)}`;

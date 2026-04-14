@@ -363,8 +363,9 @@ function mergeSmallSegments(
 
 /**
  * Discover JSONL session files in the agent's sessions directory.
- * Looks for *.jsonl files, skipping backups (.jsonl.bak.*), lock files (.jsonl.lock),
- * and compaction backups. Includes .jsonl.reset.* and .jsonl.deleted.* per OpenClaw convention.
+ * Only imports canonical live session files (*.jsonl).
+ * Excludes archive variants (.reset.*, .deleted.*), backups (.bak.*),
+ * and lock files to avoid duplicate extraction from the same session.
  */
 export function discoverSessionFiles(sessionsDir: string): string[] {
   if (!existsSync(sessionsDir) || !statSync(sessionsDir).isDirectory()) {
@@ -384,10 +385,8 @@ export function discoverSessionFiles(sessionsDir: string): string[] {
     if (!entry.isFile()) continue;
     const name = entry.name;
 
-    // Include: *.jsonl, *.jsonl.reset.*, *.jsonl.deleted.*
-    // Exclude: *.jsonl.bak.*, *.jsonl.lock, sessions.json
-    if (name.endsWith(".jsonl") || /\.jsonl\.(reset|deleted)\.\d+$/.test(name)) {
-      if (name.endsWith(".lock") || name.includes(".bak.")) continue;
+    // Only include canonical *.jsonl files — not archive/backup/lock variants
+    if (name.endsWith(".jsonl") && name !== "sessions.json") {
       found.push(join(sessionsDir, name));
     }
   }
@@ -473,8 +472,8 @@ export function parseSessionJsonl(
 
   if (turns.length === 0) return [];
 
-  // Group turns into conversation chunks respecting MAX_SEGMENT_CHARS
-  const segments = groupTurnsIntoSegments(turns, relPath, sessionDate);
+  // Group turns into exchanges (user message + assistant reply)
+  const segments = groupTurnsIntoExchanges(turns, relPath, sessionDate);
   return segments;
 }
 
@@ -490,134 +489,81 @@ function extractTextFromContent(content: JsonlContentBlock[] | string | undefine
 }
 
 /**
- * Group conversation turns into segments that respect size limits.
- * Each segment is formatted as a conversation transcript with role prefixes.
+ * A conversation exchange: one user message + following assistant reply(ies).
+ * This is the natural semantic unit for fact extraction from session histories.
  */
-function groupTurnsIntoSegments(
+type Exchange = {
+  userText: string;
+  assistantText: string;
+  timestamp: string | null;
+};
+
+/**
+ * Group parsed turns into exchanges and produce one ImportSegment per exchange.
+ *
+ * An exchange starts at each user turn and collects all following assistant turns
+ * until the next user turn. Consecutive user turns without an assistant reply
+ * are merged into a single exchange with the next assistant response.
+ *
+ * Each exchange becomes one segment formatted as "User: ...\n\nAssistant: ..."
+ * — preserving the natural conversational boundary for LLM fact extraction.
+ */
+function groupTurnsIntoExchanges(
   turns: Array<{ role: string; text: string; timestamp: string | null }>,
   relPath: string,
   sessionDate: string | null,
 ): ImportSegment[] {
-  const segments: ImportSegment[] = [];
-  let currentChunk = "";
-  let segmentId = 0;
-  let chunkTimestamp: string | null = null;
+  // Build exchanges: user message(s) + assistant reply(ies)
+  const exchanges: Exchange[] = [];
+  let currentUserParts: string[] = [];
+  let currentAssistantParts: string[] = [];
+  let exchangeTimestamp: string | null = null;
 
-  const flushChunk = () => {
-    const trimmed = currentChunk.trim();
-    if (trimmed.length >= MIN_SEGMENT_CHARS) {
-      segments.push({
-        id: segmentId++,
-        source_file: relPath,
-        heading: null,
-        heading_level: null,
-        date: extractDateFromTimestamp(chunkTimestamp) ?? sessionDate,
-        evergreen: false,
-        session: true,
-        content: trimmed,
-        char_count: trimmed.length,
-      });
-    } else if (trimmed.length > 0 && segments.length > 0) {
-      // Merge small trailing chunk into previous segment
-      const prev = segments[segments.length - 1];
-      prev.content += "\n\n" + trimmed;
-      prev.char_count = prev.content.length;
-    } else if (trimmed.length > 0) {
-      // First chunk is small — still emit it, it may get merged later
-      segments.push({
-        id: segmentId++,
-        source_file: relPath,
-        heading: null,
-        heading_level: null,
-        date: extractDateFromTimestamp(chunkTimestamp) ?? sessionDate,
-        evergreen: false,
-        session: true,
-        content: trimmed,
-        char_count: trimmed.length,
+  const flushExchange = () => {
+    if (currentUserParts.length > 0 && currentAssistantParts.length > 0) {
+      exchanges.push({
+        userText: currentUserParts.join("\n\n"),
+        assistantText: currentAssistantParts.join("\n\n"),
+        timestamp: exchangeTimestamp,
       });
     }
-    currentChunk = "";
-    chunkTimestamp = null;
+    // Orphan user messages without assistant reply are dropped —
+    // they contain no completed exchange for fact extraction.
+    currentUserParts = [];
+    currentAssistantParts = [];
+    exchangeTimestamp = null;
   };
 
   for (const turn of turns) {
-    const prefix = turn.role === "user" ? "User" : "Assistant";
-    const formatted = `${prefix}: ${turn.text}`;
-
-    // If single turn exceeds max, flush current chunk and split the turn
-    if (formatted.length > MAX_SEGMENT_CHARS) {
-      if (currentChunk) flushChunk();
-
-      // Split oversized turn by paragraphs or word boundaries
-      const parts = splitLongText(formatted, MAX_SEGMENT_CHARS);
-      for (const part of parts) {
-        segments.push({
-          id: segmentId++,
-          source_file: relPath,
-          heading: null,
-          heading_level: null,
-          date: extractDateFromTimestamp(turn.timestamp) ?? sessionDate,
-          evergreen: false,
-          session: true,
-          content: part,
-          char_count: part.length,
-        });
+    if (turn.role === "user") {
+      // New user turn: flush previous exchange if we had an assistant reply
+      if (currentAssistantParts.length > 0) {
+        flushExchange();
       }
-      continue;
-    }
-
-    const candidate = currentChunk ? `${currentChunk}\n\n${formatted}` : formatted;
-
-    if (candidate.length > MAX_SEGMENT_CHARS) {
-      flushChunk();
-      currentChunk = formatted;
-      chunkTimestamp = turn.timestamp;
+      currentUserParts.push(turn.text);
+      if (!exchangeTimestamp) exchangeTimestamp = turn.timestamp;
     } else {
-      if (!chunkTimestamp) chunkTimestamp = turn.timestamp;
-      currentChunk = candidate;
+      // Assistant reply: accumulate
+      currentAssistantParts.push(turn.text);
     }
   }
+  flushExchange();
 
-  if (currentChunk) flushChunk();
-
-  return segments;
-}
-
-/** Split long text into chunks at paragraph or word boundaries. */
-function splitLongText(text: string, maxSize: number): string[] {
-  const result: string[] = [];
-  const paragraphs = text.split(/\n\s*\n/).filter((p) => p.trim());
-
-  let current = "";
-  for (const para of paragraphs) {
-    if (para.length > maxSize) {
-      if (current) {
-        result.push(current.trim());
-        current = "";
-      }
-      // Word-boundary split
-      let rest = para;
-      while (rest.length > maxSize) {
-        let splitAt = rest.lastIndexOf(" ", maxSize);
-        if (splitAt <= 0) splitAt = maxSize;
-        result.push(rest.slice(0, splitAt).trim());
-        rest = rest.slice(splitAt).trim();
-      }
-      if (rest) result.push(rest);
-      continue;
-    }
-
-    const candidate = current ? `${current}\n\n${para}` : para;
-    if (candidate.length > maxSize && current) {
-      result.push(current.trim());
-      current = para;
-    } else {
-      current = candidate;
-    }
-  }
-
-  if (current) result.push(current.trim());
-  return result.length > 0 ? result : [text.trim()];
+  // Convert exchanges to segments
+  return exchanges.map((ex, i) => {
+    const content = `User: ${ex.userText}\n\nAssistant: ${ex.assistantText}`;
+    return {
+      id: i,
+      source_file: relPath,
+      heading: null,
+      heading_level: null,
+      date: extractDateFromTimestamp(ex.timestamp) ?? sessionDate,
+      evergreen: false,
+      session: true,
+      content,
+      char_count: content.length,
+    };
+  });
 }
 
 function extractDateFromTimestamp(timestamp: string | null): string | null {

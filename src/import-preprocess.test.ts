@@ -604,21 +604,12 @@ describe("discoverSessionFiles", () => {
     expect(files).toHaveLength(2);
   });
 
-  it("includes .jsonl.reset.* and .jsonl.deleted.* files", () => {
+  it("excludes .jsonl.reset.*, .jsonl.deleted.*, .jsonl.bak.*, and .jsonl.lock files", () => {
     const sessDir = join(tmpDir, "sessions");
     mkdirSync(sessDir, { recursive: true });
     writeFileSync(join(sessDir, "abc.jsonl"), "{}");
     writeFileSync(join(sessDir, "abc.jsonl.reset.1700000000"), "{}");
     writeFileSync(join(sessDir, "abc.jsonl.deleted.1700000001"), "{}");
-
-    const files = discoverSessionFiles(sessDir);
-    expect(files).toHaveLength(3);
-  });
-
-  it("excludes .jsonl.bak.* and .jsonl.lock files", () => {
-    const sessDir = join(tmpDir, "sessions");
-    mkdirSync(sessDir, { recursive: true });
-    writeFileSync(join(sessDir, "abc.jsonl"), "{}");
     writeFileSync(join(sessDir, "abc.jsonl.bak.1700000000"), "{}");
     writeFileSync(join(sessDir, "abc.jsonl.lock"), "{}");
 
@@ -756,25 +747,25 @@ describe("parseSessionJsonl", () => {
     expect(segments[0].content).toContain("Plain string content");
   });
 
-  it("splits large sessions into multiple segments", () => {
+  it("produces one segment per exchange (user+assistant pair)", () => {
     const sessDir = join(tmpDir, "sessions");
     mkdirSync(sessDir, { recursive: true });
 
     const lines = [sessionHeader("sess1", "2026-03-15T10:00:00Z")];
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 5; i++) {
       lines.push(
-        messageLine("user", `Question ${i}: ${"Context detail. ".repeat(10)}`, `2026-03-15T10:${String(i).padStart(2, "0")}:01Z`),
-        messageLine("assistant", `Answer ${i}: ${"Explanation detail. ".repeat(10)}`, `2026-03-15T10:${String(i).padStart(2, "0")}:02Z`),
+        messageLine("user", `Question ${i}`, `2026-03-15T10:${String(i).padStart(2, "0")}:01Z`),
+        messageLine("assistant", `Answer ${i}`, `2026-03-15T10:${String(i).padStart(2, "0")}:02Z`),
       );
     }
 
     const filePath = join(sessDir, "sess1.jsonl");
     const segments = parseSessionJsonl(lines.join("\n"), filePath, sessDir);
 
-    expect(segments.length).toBeGreaterThan(1);
-    for (const seg of segments) {
-      expect(seg.char_count).toBeLessThanOrEqual(2500); // Allow some tolerance
-    }
+    // 5 exchanges → 5 segments
+    expect(segments).toHaveLength(5);
+    expect(segments[0].content).toBe("User: Question 0\n\nAssistant: Answer 0");
+    expect(segments[4].content).toBe("User: Question 4\n\nAssistant: Answer 4");
   });
 
   it("handles empty session (only header)", () => {
@@ -835,7 +826,7 @@ describe("parseSessionJsonl", () => {
     expect(segments[0].source_file).not.toContain("\\");
   });
 
-  it("handles oversized single messages", () => {
+  it("keeps oversized exchanges as single segments (no char-splitting)", () => {
     const sessDir = join(tmpDir, "sessions");
     mkdirSync(sessDir, { recursive: true });
 
@@ -849,10 +840,10 @@ describe("parseSessionJsonl", () => {
     const filePath = join(sessDir, "sess1.jsonl");
     const segments = parseSessionJsonl(content, filePath, sessDir);
 
-    expect(segments.length).toBeGreaterThan(1);
-    for (const seg of segments) {
-      expect(seg.char_count).toBeLessThanOrEqual(2100);
-    }
+    // One exchange → one segment, even if large
+    expect(segments).toHaveLength(1);
+    expect(segments[0].content).toContain("User: Short question");
+    expect(segments[0].content).toContain("Assistant: word");
   });
 });
 
@@ -1046,7 +1037,7 @@ describe("parseSessionJsonl edge cases", () => {
     expect(segments).toHaveLength(0);
   });
 
-  it("handles messages with empty content array", () => {
+  it("drops exchanges where user message has empty content array", () => {
     const sessDir = join(tmpDir, "sessions");
     mkdirSync(sessDir, { recursive: true });
 
@@ -1057,20 +1048,17 @@ describe("parseSessionJsonl edge cases", () => {
         timestamp: "2026-03-15T10:00:01Z",
         message: { role: "user", content: [] },
       }),
-      messageLine("assistant", "Response after empty user message with enough content to be useful.", "2026-03-15T10:00:02Z"),
+      messageLine("assistant", "Response after empty user message.", "2026-03-15T10:00:02Z"),
     ].join("\n");
 
     const filePath = join(sessDir, "sess1.jsonl");
     const segments = parseSessionJsonl(content, filePath, sessDir);
 
-    // Empty user message is skipped; only assistant message remains
-    expect(segments.length).toBeGreaterThanOrEqual(1);
-    const allContent = segments.map((s) => s.content).join("\n");
-    expect(allContent).toContain("Assistant:");
-    expect(allContent).not.toContain("User:");
+    // Empty user content is filtered out → assistant-only → no complete exchange
+    expect(segments).toHaveLength(0);
   });
 
-  it("handles messages with null content", () => {
+  it("drops exchanges where user message has null content", () => {
     const sessDir = join(tmpDir, "sessions");
     mkdirSync(sessDir, { recursive: true });
 
@@ -1081,24 +1069,26 @@ describe("parseSessionJsonl edge cases", () => {
         timestamp: "2026-03-15T10:00:01Z",
         message: { role: "user", content: null },
       }),
-      messageLine("assistant", "Responding to null content message with enough text.", "2026-03-15T10:00:02Z"),
+      messageLine("assistant", "Responding to null content message.", "2026-03-15T10:00:02Z"),
     ].join("\n");
 
     const filePath = join(sessDir, "sess1.jsonl");
     const segments = parseSessionJsonl(content, filePath, sessDir);
 
-    expect(segments.length).toBeGreaterThanOrEqual(1);
+    // Null user content is filtered → no complete exchange
+    expect(segments).toHaveLength(0);
   });
 
-  it("handles content blocks with empty text", () => {
+  it("handles content blocks with empty text mixed with real text", () => {
     const sessDir = join(tmpDir, "sessions");
     mkdirSync(sessDir, { recursive: true });
 
     const content = [
       sessionHeader("sess1", "2026-03-15T10:00:00Z"),
+      messageLine("user", "Question about the system", "2026-03-15T10:00:01Z"),
       JSON.stringify({
         type: "message",
-        timestamp: "2026-03-15T10:00:01Z",
+        timestamp: "2026-03-15T10:00:02Z",
         message: {
           role: "assistant",
           content: [
@@ -1112,7 +1102,7 @@ describe("parseSessionJsonl edge cases", () => {
     const filePath = join(sessDir, "sess1.jsonl");
     const segments = parseSessionJsonl(content, filePath, sessDir);
 
-    expect(segments.length).toBeGreaterThanOrEqual(1);
+    expect(segments).toHaveLength(1);
     expect(segments[0].content).toContain("Actual content");
   });
 
@@ -1227,28 +1217,64 @@ describe("parseSessionJsonl edge cases", () => {
     expect(segments[0].date).toBe("2026-04-01");
   });
 
-  it("merges small trailing chunk into previous segment", () => {
+  it("drops orphan user messages without assistant reply", () => {
     const sessDir = join(tmpDir, "sessions");
     mkdirSync(sessDir, { recursive: true });
 
-    // Create a session where the last message is very short
-    const lines = [sessionHeader("sess1", "2026-03-15T10:00:00Z")];
-    // Add enough turns to make a full segment
-    for (let i = 0; i < 5; i++) {
-      lines.push(
-        messageLine("user", `Question ${i}: ${"Detail. ".repeat(15)}`, `2026-03-15T10:${String(i).padStart(2, "0")}:01Z`),
-        messageLine("assistant", `Answer ${i}: ${"Explanation. ".repeat(15)}`, `2026-03-15T10:${String(i).padStart(2, "0")}:02Z`),
-      );
-    }
-    // Add a tiny trailing message
-    lines.push(messageLine("user", "Thanks!", "2026-03-15T10:10:01Z"));
+    const content = [
+      sessionHeader("sess1", "2026-03-15T10:00:00Z"),
+      messageLine("user", "First question", "2026-03-15T10:00:01Z"),
+      messageLine("assistant", "First answer", "2026-03-15T10:00:02Z"),
+      messageLine("user", "Thanks!", "2026-03-15T10:00:03Z"),
+      // No assistant reply → orphan user message
+    ].join("\n");
 
     const filePath = join(sessDir, "sess1.jsonl");
-    const segments = parseSessionJsonl(lines.join("\n"), filePath, sessDir);
+    const segments = parseSessionJsonl(content, filePath, sessDir);
 
-    // "Thanks!" should be merged into a segment, not lost
-    const allContent = segments.map((s) => s.content).join("\n");
-    expect(allContent).toContain("Thanks!");
+    // Only the complete exchange is kept
+    expect(segments).toHaveLength(1);
+    expect(segments[0].content).toContain("First question");
+    expect(segments[0].content).not.toContain("Thanks!");
+  });
+
+  it("merges consecutive user messages into one exchange", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+
+    const content = [
+      sessionHeader("sess1", "2026-03-15T10:00:00Z"),
+      messageLine("user", "First part of my question", "2026-03-15T10:00:01Z"),
+      messageLine("user", "Actually, let me rephrase that", "2026-03-15T10:00:02Z"),
+      messageLine("assistant", "Here is the answer to your rephrased question.", "2026-03-15T10:00:03Z"),
+    ].join("\n");
+
+    const filePath = join(sessDir, "sess1.jsonl");
+    const segments = parseSessionJsonl(content, filePath, sessDir);
+
+    expect(segments).toHaveLength(1);
+    expect(segments[0].content).toContain("First part");
+    expect(segments[0].content).toContain("rephrase");
+    expect(segments[0].content).toContain("answer");
+  });
+
+  it("merges consecutive assistant messages into one exchange", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+
+    const content = [
+      sessionHeader("sess1", "2026-03-15T10:00:00Z"),
+      messageLine("user", "Tell me about the architecture", "2026-03-15T10:00:01Z"),
+      messageLine("assistant", "The system uses a layered design.", "2026-03-15T10:00:02Z"),
+      messageLine("assistant", "Each layer has clear responsibilities.", "2026-03-15T10:00:03Z"),
+    ].join("\n");
+
+    const filePath = join(sessDir, "sess1.jsonl");
+    const segments = parseSessionJsonl(content, filePath, sessDir);
+
+    expect(segments).toHaveLength(1);
+    expect(segments[0].content).toContain("layered design");
+    expect(segments[0].content).toContain("clear responsibilities");
   });
 });
 
@@ -1385,7 +1411,7 @@ describe("runMigration with sessionsDir", () => {
     expect(stored).toHaveLength(0);
   });
 
-  it("falls back to raw content when llmCall is not provided", async () => {
+  it("skips session import when llmCall is not provided", async () => {
     const sessDir = join(tmpDir, "sessions");
     mkdirSync(sessDir, { recursive: true });
     const sessionContent = [
@@ -1395,10 +1421,10 @@ describe("runMigration with sessionsDir", () => {
     ].join("\n");
     writeFileSync(join(sessDir, "sess1.jsonl"), sessionContent);
 
-    const stored: Array<{ content: string; type: string }> = [];
+    const stored: Array<{ content: string }> = [];
     const deps = baseDeps();
 
-    await runMigration({
+    const result = await runMigration({
       workspaceDir: tmpDir,
       stateDir: tmpDir,
       store: async (params) => {
@@ -1407,13 +1433,11 @@ describe("runMigration with sessionsDir", () => {
       },
       ...deps,
       sessionsDir: sessDir,
-      // No llmCall → fallback to raw storage
+      // No llmCall → sessions skipped entirely
     });
 
-    // Raw dialogue stored as "observation"
-    expect(stored.length).toBeGreaterThanOrEqual(1);
-    expect(stored[0].content).toContain("User:");
-    expect(stored[0].type).toBe("observation");
+    // No raw dialogue stored — session import requires LLM
+    expect(stored).toHaveLength(0);
   });
 
   it("applies age-based decay to extracted session facts", async () => {

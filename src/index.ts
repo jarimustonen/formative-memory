@@ -773,6 +773,7 @@ const associativeMemoryPlugin = {
         // Reset migration state to allow re-run
         db.setState("migration_completed_at", "");
 
+        const sessionsDir = runtimePaths.agentDir ? join(runtimePaths.agentDir, "sessions") : undefined;
         const result = await runMigration({
           workspaceDir: ".",
           stateDir: runtimePaths.stateDir ?? ".",
@@ -784,6 +785,8 @@ const associativeMemoryPlugin = {
           },
           enrich: enrichFn,
           logger: log,
+          sessionsDir,
+          llmCall: llmConfig ? (prompt) => callLlm(prompt, llmConfig) : undefined,
         });
 
         if (result.status === "completed") {
