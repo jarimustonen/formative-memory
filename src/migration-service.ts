@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { existsSync, readFileSync, writeFileSync, copyFileSync } from "node:fs";
 import type { ImportSegment, PrepareResult } from "./import-preprocess.ts";
 import { prepareImport } from "./import-preprocess.ts";
+import { buildExtractionPrompt, parseExtractionResponse } from "./context-engine.ts";
 import { TemporalStateGuard, type TemporalState } from "./types.ts";
 
 // -- Types --
@@ -67,6 +68,8 @@ export type MigrationDeps = {
   extraPaths?: string[];
   /** Path to OpenClaw sessions directory for JSONL session import. */
   sessionsDir?: string;
+  /** Raw LLM call function for session fact extraction. Required when sessionsDir is set. */
+  llmCall?: LlmCallFn;
 };
 
 export type MigrationResult = {
@@ -137,12 +140,16 @@ export async function runMigration(deps: MigrationDeps): Promise<MigrationResult
     `Found ${result.files.length} files, ${result.totalSegments} segments. Starting migration...`,
   );
 
-  // 3. Process in batches: enrich with LLM, then store
+  // 3. Split segments by source type
+  const mdSegments = result.segments.filter((s) => !s.session);
+  const sessionSegments = result.segments.filter((s) => s.session);
+
   let importedCount = 0;
   const importErrors: string[] = [];
 
-  for (let i = 0; i < result.segments.length; i += BATCH_SIZE) {
-    const batch = result.segments.slice(i, i + BATCH_SIZE);
+  // 3a. Markdown segments: enrich with LLM (type classification), then store
+  for (let i = 0; i < mdSegments.length; i += BATCH_SIZE) {
+    const batch = mdSegments.slice(i, i + BATCH_SIZE);
 
     try {
       const enriched = await enrichBatch(batch, enrich, logger);
@@ -162,6 +169,21 @@ export async function runMigration(deps: MigrationDeps): Promise<MigrationResult
         logger.error(fallbackMsg);
         importErrors.push(fallbackMsg);
       }
+    }
+  }
+
+  // 3b. Session segments: extract facts via LLM (same pipeline as autoCapture)
+  if (sessionSegments.length > 0) {
+    const extracted = await extractSessionSegments(
+      sessionSegments,
+      store,
+      deps.llmCall,
+      logger,
+      deps.updateStrength,
+    );
+    importedCount += extracted.stored;
+    if (extracted.errors.length > 0) {
+      importErrors.push(...extracted.errors);
     }
   }
 
@@ -282,6 +304,74 @@ function applyImportDecay(
   if (strength < 1.0) {
     updateStrength(id, strength);
   }
+}
+
+// -- Session fact extraction --
+
+/**
+ * Process JSONL session segments by extracting facts via LLM.
+ * Uses the same extraction pipeline as autoCapture (buildExtractionPrompt/parseExtractionResponse).
+ * Each segment's conversation content is sent to the LLM, which distills durable facts.
+ * Falls back to storing raw content as "observation" if LLM is unavailable.
+ */
+async function extractSessionSegments(
+  segments: ImportSegment[],
+  store: StoreMemoryFn,
+  llmCall: LlmCallFn | undefined,
+  logger: MigrationDeps["logger"],
+  updateStrength?: (id: string, strength: number) => void,
+): Promise<{ stored: number; errors: string[] }> {
+  let stored = 0;
+  const errors: string[] = [];
+
+  for (const seg of segments) {
+    try {
+      if (llmCall) {
+        // LLM extraction: distill facts from conversation
+        const prompt = buildExtractionPrompt(seg.content);
+        const response = await llmCall(prompt);
+        const facts = parseExtractionResponse(response);
+
+        if (facts.length === 0) {
+          // LLM found nothing worth remembering — this is expected for many turns
+          continue;
+        }
+
+        for (const fact of facts) {
+          try {
+            const result = await store({
+              content: fact.content,
+              type: fact.type,
+              source: "import",
+              temporal_state: seg.date ? "past" as TemporalState : "none" as TemporalState,
+              temporal_anchor: seg.date,
+            });
+            applyImportDecay(result.id, seg.date, updateStrength);
+            stored++;
+          } catch (err) {
+            logger.warn(`Failed to store extracted fact from segment ${seg.id}: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+      } else {
+        // No LLM: store raw session content with heuristic defaults
+        const result = await store({
+          content: seg.content,
+          type: "observation",
+          source: "import",
+          temporal_state: seg.date ? "past" as TemporalState : "none" as TemporalState,
+          temporal_anchor: seg.date,
+        });
+        applyImportDecay(result.id, seg.date, updateStrength);
+        stored++;
+      }
+    } catch (err) {
+      const msg = `Session segment ${seg.id} extraction failed: ${err instanceof Error ? err.message : String(err)}`;
+      logger.error(msg);
+      errors.push(msg);
+    }
+  }
+
+  return { stored, errors };
 }
 
 // -- Heuristic inference (fallback when LLM unavailable) --

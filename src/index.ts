@@ -403,6 +403,9 @@ function createWorkspace(
           enrich: enrichFn,
           logger: logger ?? { info: () => {}, warn: () => {}, error: () => {} },
           sessionsDir,
+          llmCall: initDeps.llmConfig
+            ? (prompt) => callLlm(prompt, initDeps.llmConfig!)
+            : undefined,
         });
 
         if (migrationResult.status === "completed") {

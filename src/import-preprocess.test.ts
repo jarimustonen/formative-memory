@@ -1255,14 +1255,33 @@ describe("parseSessionJsonl edge cases", () => {
 // -- migration-service integration with sessionsDir --
 
 describe("runMigration with sessionsDir", () => {
+  /** Simulate LLM extraction — returns a canned JSON array of facts. */
+  function fakeLlmCall(facts: Array<{ type: string; content: string }>): (prompt: string) => Promise<string> {
+    return async () => JSON.stringify(facts);
+  }
 
-  it("imports JSONL sessions alongside markdown files", async () => {
-    // Set up markdown
-    writeFileSync(
-      join(tmpDir, "MEMORY.md"),
-      "# Facts\n\nThe project uses TypeScript and pnpm for package management across all workspaces.",
-    );
+  const baseDeps = () => {
+    const state = new Map<string, string>();
+    let nextId = 0;
+    return {
+      stateDir: "",  // overridden per test
+      dbState: {
+        get: (k: string) => state.get(k) ?? null,
+        set: (k: string, v: string) => state.set(k, v),
+      },
+      enrich: async (segments: any[]) =>
+        segments.map((seg: any) => ({
+          id: seg.id,
+          type: seg.evergreen ? "fact" : "observation",
+          temporal_state: seg.date ? "past" : "none",
+          temporal_anchor: seg.date,
+        })),
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+      nextId: () => String(nextId++),
+    };
+  };
 
+  it("extracts facts from JSONL sessions via LLM", async () => {
     // Set up JSONL sessions
     const sessDir = join(tmpDir, "sessions");
     mkdirSync(sessDir, { recursive: true });
@@ -1274,39 +1293,130 @@ describe("runMigration with sessionsDir", () => {
     writeFileSync(join(sessDir, "sess1.jsonl"), sessionContent);
 
     const stored: Array<{ content: string; type: string; source: string }> = [];
-    const state = new Map<string, string>();
-    let nextId = 0;
+    const deps = baseDeps();
 
     const result = await runMigration({
       workspaceDir: tmpDir,
       stateDir: tmpDir,
       store: async (params) => {
         stored.push(params as any);
-        return { id: String(nextId++) };
+        return { id: deps.nextId() };
       },
-      dbState: {
-        get: (k: string) => state.get(k) ?? null,
-        set: (k: string, v: string) => state.set(k, v),
-      },
-      enrich: async (segments) =>
-        segments.map((seg) => ({
-          id: seg.id,
-          type: "observation",
-          temporal_state: seg.date ? "past" : "none",
-          temporal_anchor: seg.date,
-        })),
-      logger: { info: () => {}, warn: () => {}, error: () => {} },
+      ...deps,
       sessionsDir: sessDir,
+      llmCall: fakeLlmCall([
+        { type: "work", content: "Project uses vitest for testing with v8 coverage" },
+      ]),
     });
 
     expect(result.status).toBe("completed");
-    expect(result.segmentsImported).toBeGreaterThanOrEqual(2); // at least 1 markdown + 1 JSONL
-    expect(stored.some((s) => s.content.includes("TypeScript"))).toBe(true);
-    expect(stored.some((s) => s.content.includes("vitest"))).toBe(true);
+    expect(result.segmentsImported).toBeGreaterThanOrEqual(1);
+    // The extracted fact (not raw dialogue) should be stored
+    expect(stored.some((s) => s.content === "Project uses vitest for testing with v8 coverage")).toBe(true);
+    expect(stored.some((s) => s.type === "work")).toBe(true);
     expect(stored.every((s) => s.source === "import")).toBe(true);
   });
 
-  it("applies age-based decay to session imports", async () => {
+  it("stores both markdown and extracted session facts", async () => {
+    writeFileSync(
+      join(tmpDir, "MEMORY.md"),
+      "# Facts\n\nThe project uses TypeScript and pnpm for package management across all workspaces.",
+    );
+
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+    const sessionContent = [
+      sessionHeader("sess1", "2026-03-20T10:00:00Z"),
+      messageLine("user", "What database do we use?", "2026-03-20T10:00:01Z"),
+      messageLine("assistant", "We use SQLite with WAL mode.", "2026-03-20T10:00:02Z"),
+    ].join("\n");
+    writeFileSync(join(sessDir, "sess1.jsonl"), sessionContent);
+
+    const stored: Array<{ content: string; type: string }> = [];
+    const deps = baseDeps();
+
+    const result = await runMigration({
+      workspaceDir: tmpDir,
+      stateDir: tmpDir,
+      store: async (params) => {
+        stored.push(params as any);
+        return { id: deps.nextId() };
+      },
+      ...deps,
+      sessionsDir: sessDir,
+      llmCall: fakeLlmCall([
+        { type: "work", content: "Project uses SQLite with WAL mode" },
+      ]),
+    });
+
+    expect(result.status).toBe("completed");
+    // Markdown segment stored as-is via enrichment
+    expect(stored.some((s) => s.content.includes("TypeScript"))).toBe(true);
+    // Session fact extracted and stored
+    expect(stored.some((s) => s.content === "Project uses SQLite with WAL mode")).toBe(true);
+  });
+
+  it("skips session segments when LLM extracts no facts", async () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+    const sessionContent = [
+      sessionHeader("sess1", "2026-03-20T10:00:00Z"),
+      messageLine("user", "Hello, how are you?", "2026-03-20T10:00:01Z"),
+      messageLine("assistant", "I'm doing well, thanks for asking!", "2026-03-20T10:00:02Z"),
+    ].join("\n");
+    writeFileSync(join(sessDir, "sess1.jsonl"), sessionContent);
+
+    const stored: Array<{ content: string }> = [];
+    const deps = baseDeps();
+
+    const result = await runMigration({
+      workspaceDir: tmpDir,
+      stateDir: tmpDir,
+      store: async (params) => {
+        stored.push(params as any);
+        return { id: deps.nextId() };
+      },
+      ...deps,
+      sessionsDir: sessDir,
+      llmCall: fakeLlmCall([]),  // LLM returns empty — nothing worth remembering
+    });
+
+    // No facts extracted → nothing stored from session
+    expect(stored).toHaveLength(0);
+  });
+
+  it("falls back to raw content when llmCall is not provided", async () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+    const sessionContent = [
+      sessionHeader("sess1", "2026-03-20T10:00:00Z"),
+      messageLine("user", "What database do we use?", "2026-03-20T10:00:01Z"),
+      messageLine("assistant", "We use SQLite with WAL mode for the memory database.", "2026-03-20T10:00:02Z"),
+    ].join("\n");
+    writeFileSync(join(sessDir, "sess1.jsonl"), sessionContent);
+
+    const stored: Array<{ content: string; type: string }> = [];
+    const deps = baseDeps();
+
+    await runMigration({
+      workspaceDir: tmpDir,
+      stateDir: tmpDir,
+      store: async (params) => {
+        stored.push(params as any);
+        return { id: deps.nextId() };
+      },
+      ...deps,
+      sessionsDir: sessDir,
+      // No llmCall → fallback to raw storage
+    });
+
+    // Raw dialogue stored as "observation"
+    expect(stored.length).toBeGreaterThanOrEqual(1);
+    expect(stored[0].content).toContain("User:");
+    expect(stored[0].type).toBe("observation");
+  });
+
+  it("applies age-based decay to extracted session facts", async () => {
     const sessDir = join(tmpDir, "sessions");
     mkdirSync(sessDir, { recursive: true });
 
@@ -1314,40 +1424,31 @@ describe("runMigration with sessionsDir", () => {
     const oldDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     const sessionContent = [
       sessionHeader("old-sess", oldDate),
-      messageLine("user", "Old question from a month ago about the deployment process", oldDate),
-      messageLine("assistant", "Old answer from a month ago about deployment and CI/CD pipeline.", oldDate),
+      messageLine("user", "Old question about deployment", oldDate),
+      messageLine("assistant", "Old answer about CI/CD pipeline.", oldDate),
     ].join("\n");
     writeFileSync(join(sessDir, "old.jsonl"), sessionContent);
 
     const strengthUpdates = new Map<string, number>();
-    const state = new Map<string, string>();
-    let nextId = 0;
+    const deps = baseDeps();
 
     await runMigration({
       workspaceDir: tmpDir,
       stateDir: tmpDir,
-      store: async () => ({ id: String(nextId++) }),
+      store: async () => ({ id: deps.nextId() }),
       updateStrength: (id, strength) => strengthUpdates.set(id, strength),
-      dbState: {
-        get: (k: string) => state.get(k) ?? null,
-        set: (k: string, v: string) => state.set(k, v),
-      },
-      enrich: async (segments) =>
-        segments.map((seg) => ({
-          id: seg.id,
-          type: "observation",
-          temporal_state: "past",
-          temporal_anchor: seg.date,
-        })),
-      logger: { info: () => {}, warn: () => {}, error: () => {} },
+      ...deps,
       sessionsDir: sessDir,
+      llmCall: fakeLlmCall([
+        { type: "work", content: "CI/CD uses GitHub Actions" },
+      ]),
     });
 
     // 30 days old → strength should be decayed (0.977^30 ≈ 0.498)
     expect(strengthUpdates.size).toBeGreaterThan(0);
     for (const [, strength] of strengthUpdates) {
       expect(strength).toBeLessThan(1.0);
-      expect(strength).toBeGreaterThan(0.05); // Above minimum
+      expect(strength).toBeGreaterThan(0.05);
     }
   });
 
@@ -1359,30 +1460,39 @@ describe("runMigration with sessionsDir", () => {
 
     const sessDir = join(tmpDir, "empty-sessions");
     mkdirSync(sessDir, { recursive: true });
-
-    const state = new Map<string, string>();
-    let nextId = 0;
+    const deps = baseDeps();
 
     const result = await runMigration({
       workspaceDir: tmpDir,
       stateDir: tmpDir,
-      store: async () => ({ id: String(nextId++) }),
-      dbState: {
-        get: (k: string) => state.get(k) ?? null,
-        set: (k: string, v: string) => state.set(k, v),
-      },
-      enrich: async (segments) =>
-        segments.map((seg) => ({
-          id: seg.id,
-          type: "fact",
-          temporal_state: "none",
-          temporal_anchor: null,
-        })),
-      logger: { info: () => {}, warn: () => {}, error: () => {} },
+      store: async () => ({ id: deps.nextId() }),
+      ...deps,
       sessionsDir: sessDir,
     });
 
     expect(result.status).toBe("completed");
     expect(result.segmentsImported).toBeGreaterThanOrEqual(1);
+  });
+
+  it("does not send markdown segments through extraction", async () => {
+    writeFileSync(
+      join(tmpDir, "MEMORY.md"),
+      "# Facts\n\nThe project uses TypeScript.",
+    );
+
+    let llmCallCount = 0;
+    const deps = baseDeps();
+
+    await runMigration({
+      workspaceDir: tmpDir,
+      stateDir: tmpDir,
+      store: async () => ({ id: deps.nextId() }),
+      ...deps,
+      llmCall: async () => { llmCallCount++; return "[]"; },
+      // No sessionsDir → no session segments
+    });
+
+    // LLM extraction should not be called for markdown segments
+    expect(llmCallCount).toBe(0);
   });
 });

@@ -20,6 +20,8 @@ export type ImportSegment = {
   heading_level: number | null;
   date: string | null;
   evergreen: boolean;
+  /** True for segments parsed from JSONL session transcripts. */
+  session: boolean;
   content: string;
   char_count: number;
 };
@@ -192,6 +194,7 @@ export function segmentMarkdown(content: string, filePath: string, workspaceDir:
     heading_level: seg.headingLevel,
     date: fileDate,
     evergreen: isEvergreen,
+    session: false,
     content: seg.content,
     char_count: seg.content.length,
   }));
@@ -510,6 +513,7 @@ function groupTurnsIntoSegments(
         heading_level: null,
         date: extractDateFromTimestamp(chunkTimestamp) ?? sessionDate,
         evergreen: false,
+        session: true,
         content: trimmed,
         char_count: trimmed.length,
       });
@@ -527,6 +531,7 @@ function groupTurnsIntoSegments(
         heading_level: null,
         date: extractDateFromTimestamp(chunkTimestamp) ?? sessionDate,
         evergreen: false,
+        session: true,
         content: trimmed,
         char_count: trimmed.length,
       });
@@ -553,6 +558,7 @@ function groupTurnsIntoSegments(
           heading_level: null,
           date: extractDateFromTimestamp(turn.timestamp) ?? sessionDate,
           evergreen: false,
+          session: true,
           content: part,
           char_count: part.length,
         });
