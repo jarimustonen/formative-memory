@@ -975,9 +975,7 @@ const associativeMemoryPlugin = {
             }
           : undefined;
 
-        // Also run temporal transitions as part of full consolidation
         const db = ws.manager.getDatabase();
-        const temporalCount = db.transaction(() => applyTemporalTransitions(db));
 
         log.debug("consolidation: starting trigger=cron");
         const result = await runConsolidation({
@@ -985,15 +983,6 @@ const associativeMemoryPlugin = {
           mergeContentProducer,
           logger: log,
         });
-
-        const s = result.summary;
-        const catchUpInfo = s.catchUpDecayed > 0 ? `Catch-up decayed: ${s.catchUpDecayed}, ` : "";
-        const temporalInfo = temporalCount > 0 ? `, Temporal transitions (extra): ${temporalCount}` : "";
-        log.info(
-          `Scheduled consolidation complete (${result.durationMs}ms): ${catchUpInfo}` +
-          `Reinforced: ${s.reinforced}, Decayed: ${s.decayed}, ` +
-          `Pruned: ${s.pruned}+${s.prunedAssociations}, Merged: ${s.merged}${temporalInfo}`,
-        );
 
         return {
           handled: true,

@@ -23,6 +23,13 @@ import { nullLogger } from "./logger.ts";
 import type { MergePair } from "./merge-candidates.ts";
 import type { MemorySource } from "./types.ts";
 
+// -- Helpers --
+
+/** Sanitize content for log output: collapse whitespace, truncate. */
+function preview(text: string, max = 60): string {
+  return text.replace(/\s+/g, " ").trim().slice(0, max) || "<empty>";
+}
+
 // -- Types --
 
 export type MergeContentProducer = (
@@ -72,7 +79,9 @@ export async function executeMerge(
     throw new Error(`Merge failed: memory not found (${pair.a}, ${pair.b})`);
   }
 
-  log.debug(`merge: combining:\n  A: "${memA.content.slice(0, 100)}"\n  B: "${memB.content.slice(0, 100)}"`);
+  if (log.isDebugEnabled()) {
+    log.debug(`merge: combining: A: "${preview(memA.content, 100)}" B: "${preview(memB.content, 100)}"`);
+  }
 
   // 1. Produce merged content (async, outside transaction)
   const merged = await contentProducer(
@@ -101,10 +110,12 @@ export async function executeMerge(
   // 2. All DB mutations in a single transaction
   return db.transaction(() => {
     let canonicalId: string;
+    let outcome: "absorption" | "reuse" | "new";
 
     if (isAbsorption) {
       // Absorption: one source IS the canonical result
       // The canonical source gets strength boost, the other is absorbed
+      outcome = "absorption";
       canonicalId = newId;
       db.updateStrength(canonicalId, 1.0);
     } else {
@@ -112,12 +123,14 @@ export async function executeMerge(
       const existing = db.getMemory(newId);
       if (existing) {
         // Reuse: validate content match, refresh strength
+        outcome = "reuse";
         if (existing.content !== merged.content) {
           throw new Error(`Merge failed: hash collision for ${newId} with different content`);
         }
         db.updateStrength(newId, 1.0);
       } else {
         // Novel: create new memory
+        outcome = "new";
         db.insertMemory({
           id: newId,
           type: merged.type,
@@ -161,15 +174,16 @@ export async function executeMerge(
     // Inherit associations from absorbed/weakened sources into canonical
     inheritAssociations(db, [memA.id, memB.id], canonicalId, now);
 
-    const outcome = isAbsorption ? "absorption" : "new";
     log.info(
-      `merge: ${outcome} → "${merged.content.slice(0, 80)}" (${canonicalId.slice(0, 8)}…)`,
+      `merge: ${outcome} (${pair.a.slice(0, 8)}… + ${pair.b.slice(0, 8)}…) → "${preview(merged.content, 80)}" (${canonicalId.slice(0, 8)}…)`,
     );
-    if (originalsWeakened.length > 0) {
-      log.debug(`merge: weakened originals: ${originalsWeakened.map((id) => id.slice(0, 8) + "…").join(", ")}`);
-    }
-    if (intermediatesDeleted.length > 0) {
-      log.debug(`merge: deleted intermediates: ${intermediatesDeleted.map((id) => id.slice(0, 8) + "…").join(", ")}`);
+    if (log.isDebugEnabled()) {
+      if (originalsWeakened.length > 0) {
+        log.debug(`merge: weakened originals: ${originalsWeakened.map((id) => id.slice(0, 8) + "…").join(", ")}`);
+      }
+      if (intermediatesDeleted.length > 0) {
+        log.debug(`merge: deleted intermediates: ${intermediatesDeleted.map((id) => id.slice(0, 8) + "…").join(", ")}`);
+      }
     }
 
     return {
