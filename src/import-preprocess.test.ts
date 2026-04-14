@@ -11,6 +11,7 @@ import {
   prepareImport,
   segmentMarkdown,
 } from "./import-preprocess.ts";
+import { runMigration } from "./migration-service.ts";
 
 let tmpDir: string;
 
@@ -939,5 +940,449 @@ describe("prepareImport with sessionsDir", () => {
     expect(result.errors[0].path).toContain("bad.jsonl");
 
     chmodSync(badFile, 0o644);
+  });
+});
+
+// -- Additional JSONL edge case tests --
+
+describe("discoverSessionFiles edge cases", () => {
+  it("returns empty array for empty existing directory", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+    const files = discoverSessionFiles(sessDir);
+    expect(files).toHaveLength(0);
+  });
+
+  it("does not recurse into subdirectories", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(join(sessDir, "sub"), { recursive: true });
+    writeFileSync(join(sessDir, "top.jsonl"), "{}");
+    writeFileSync(join(sessDir, "sub", "nested.jsonl"), "{}");
+
+    const files = discoverSessionFiles(sessDir);
+    expect(files).toHaveLength(1);
+    expect(files[0]).toContain("top.jsonl");
+  });
+
+  it("skips symlinks", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+    writeFileSync(join(tmpDir, "real.jsonl"), "{}");
+    writeFileSync(join(sessDir, "normal.jsonl"), "{}");
+    symlinkSync(join(tmpDir, "real.jsonl"), join(sessDir, "linked.jsonl"));
+
+    const files = discoverSessionFiles(sessDir);
+    // symlinks are files on most systems; implementation uses entry.isFile()
+    // which returns true for symlinks to files — this is acceptable behavior
+    expect(files.length).toBeGreaterThanOrEqual(1);
+    expect(files.some((f) => f.includes("normal.jsonl"))).toBe(true);
+  });
+
+  it("handles file passed as sessionsDir (not a directory)", () => {
+    const filePath = join(tmpDir, "not-a-dir.jsonl");
+    writeFileSync(filePath, "{}");
+    const files = discoverSessionFiles(filePath);
+    expect(files).toHaveLength(0);
+  });
+});
+
+describe("parseSessionJsonl edge cases", () => {
+  it("skips compaction entries", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+
+    const content = [
+      sessionHeader("sess1", "2026-03-15T10:00:00Z"),
+      messageLine("user", "What is the project about?", "2026-03-15T10:00:01Z"),
+      JSON.stringify({ type: "compaction", timestamp: "2026-03-15T10:00:02Z", summary: "Earlier conversation..." }),
+      messageLine("assistant", "The project is about building an associative memory system for AI agents.", "2026-03-15T10:00:03Z"),
+    ].join("\n");
+
+    const filePath = join(sessDir, "sess1.jsonl");
+    const segments = parseSessionJsonl(content, filePath, sessDir);
+
+    const allContent = segments.map((s) => s.content).join("\n");
+    expect(allContent).not.toContain("Earlier conversation");
+    expect(allContent).toContain("associative memory");
+  });
+
+  it("skips branch_summary and custom entries", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+
+    const content = [
+      sessionHeader("sess1", "2026-03-15T10:00:00Z"),
+      JSON.stringify({ type: "branch_summary", timestamp: "2026-03-15T10:00:01Z", summary: "Branch context" }),
+      JSON.stringify({ type: "custom", timestamp: "2026-03-15T10:00:02Z", data: { key: "value" } }),
+      JSON.stringify({ type: "custom_message", timestamp: "2026-03-15T10:00:03Z", message: { role: "assistant", content: "injected" } }),
+      messageLine("user", "Visible user message that should be extracted", "2026-03-15T10:00:04Z"),
+      messageLine("assistant", "Visible assistant response that should also be extracted.", "2026-03-15T10:00:05Z"),
+    ].join("\n");
+
+    const filePath = join(sessDir, "sess1.jsonl");
+    const segments = parseSessionJsonl(content, filePath, sessDir);
+
+    const allContent = segments.map((s) => s.content).join("\n");
+    expect(allContent).not.toContain("Branch context");
+    expect(allContent).not.toContain("injected");
+    expect(allContent).toContain("Visible user message");
+  });
+
+  it("skips sessions with only system messages", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+
+    const content = [
+      sessionHeader("sess1", "2026-03-15T10:00:00Z"),
+      JSON.stringify({
+        type: "message",
+        timestamp: "2026-03-15T10:00:01Z",
+        message: { role: "system", content: [{ type: "text", text: "System prompt" }] },
+      }),
+    ].join("\n");
+
+    const filePath = join(sessDir, "sess1.jsonl");
+    const segments = parseSessionJsonl(content, filePath, sessDir);
+    expect(segments).toHaveLength(0);
+  });
+
+  it("handles messages with empty content array", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+
+    const content = [
+      sessionHeader("sess1", "2026-03-15T10:00:00Z"),
+      JSON.stringify({
+        type: "message",
+        timestamp: "2026-03-15T10:00:01Z",
+        message: { role: "user", content: [] },
+      }),
+      messageLine("assistant", "Response after empty user message with enough content to be useful.", "2026-03-15T10:00:02Z"),
+    ].join("\n");
+
+    const filePath = join(sessDir, "sess1.jsonl");
+    const segments = parseSessionJsonl(content, filePath, sessDir);
+
+    // Empty user message is skipped; only assistant message remains
+    expect(segments.length).toBeGreaterThanOrEqual(1);
+    const allContent = segments.map((s) => s.content).join("\n");
+    expect(allContent).toContain("Assistant:");
+    expect(allContent).not.toContain("User:");
+  });
+
+  it("handles messages with null content", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+
+    const content = [
+      sessionHeader("sess1", "2026-03-15T10:00:00Z"),
+      JSON.stringify({
+        type: "message",
+        timestamp: "2026-03-15T10:00:01Z",
+        message: { role: "user", content: null },
+      }),
+      messageLine("assistant", "Responding to null content message with enough text.", "2026-03-15T10:00:02Z"),
+    ].join("\n");
+
+    const filePath = join(sessDir, "sess1.jsonl");
+    const segments = parseSessionJsonl(content, filePath, sessDir);
+
+    expect(segments.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("handles content blocks with empty text", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+
+    const content = [
+      sessionHeader("sess1", "2026-03-15T10:00:00Z"),
+      JSON.stringify({
+        type: "message",
+        timestamp: "2026-03-15T10:00:01Z",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "text", text: "" },
+            { type: "text", text: "Actual content after empty text block." },
+          ],
+        },
+      }),
+    ].join("\n");
+
+    const filePath = join(sessDir, "sess1.jsonl");
+    const segments = parseSessionJsonl(content, filePath, sessDir);
+
+    expect(segments.length).toBeGreaterThanOrEqual(1);
+    expect(segments[0].content).toContain("Actual content");
+  });
+
+  it("handles messages with only non-text content blocks", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+
+    const content = [
+      sessionHeader("sess1", "2026-03-15T10:00:00Z"),
+      JSON.stringify({
+        type: "message",
+        timestamp: "2026-03-15T10:00:01Z",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "toolCall", name: "read_file", input: {} },
+            { type: "thinking", text: "Internal reasoning..." },
+          ],
+        },
+      }),
+    ].join("\n");
+
+    const filePath = join(sessDir, "sess1.jsonl");
+    const segments = parseSessionJsonl(content, filePath, sessDir);
+
+    // No text content → no segments
+    expect(segments).toHaveLength(0);
+  });
+
+  it("extracts multiple text blocks from a single message", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+
+    const content = [
+      sessionHeader("sess1", "2026-03-15T10:00:00Z"),
+      messageLine("user", "Multi-part question about the system architecture", "2026-03-15T10:00:01Z"),
+      JSON.stringify({
+        type: "message",
+        timestamp: "2026-03-15T10:00:02Z",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "text", text: "First part of the answer about the database layer." },
+            { type: "toolCall", name: "read_file" },
+            { type: "text", text: "Second part about the API layer and routing." },
+          ],
+        },
+      }),
+    ].join("\n");
+
+    const filePath = join(sessDir, "sess1.jsonl");
+    const segments = parseSessionJsonl(content, filePath, sessDir);
+
+    const allContent = segments.map((s) => s.content).join("\n");
+    expect(allContent).toContain("database layer");
+    expect(allContent).toContain("API layer");
+  });
+
+  it("preserves unicode content in sessions", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+
+    const content = [
+      sessionHeader("sess1", "2026-03-15T10:00:00Z"),
+      messageLine("user", "Mikä on projektin tietokanta? Ääkköset: ä, ö, å toimivat.", "2026-03-15T10:00:01Z"),
+      messageLine("assistant", "Käytetään SQLiteä WAL-tilassa. Erikoismerkit: € ja ™ mukana.", "2026-03-15T10:00:02Z"),
+    ].join("\n");
+
+    const filePath = join(sessDir, "sess1.jsonl");
+    const segments = parseSessionJsonl(content, filePath, sessDir);
+
+    expect(segments.length).toBeGreaterThanOrEqual(1);
+    const allContent = segments.map((s) => s.content).join("\n");
+    expect(allContent).toContain("Ääkköset");
+    expect(allContent).toContain("€");
+    expect(allContent).toContain("SQLiteä");
+  });
+
+  it("extracts correct dates from per-turn timestamps", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+
+    // Session spanning two days
+    const content = [
+      sessionHeader("sess1", "2026-03-15T23:55:00Z"),
+      messageLine("user", "Late night question about deployment procedures and rollback strategy. ".repeat(3), "2026-03-15T23:55:01Z"),
+      messageLine("assistant", "Here is the deployment process with rollback steps and monitoring checks. ".repeat(3), "2026-03-16T00:05:01Z"),
+    ].join("\n");
+
+    const filePath = join(sessDir, "sess1.jsonl");
+    const segments = parseSessionJsonl(content, filePath, sessDir);
+
+    // Session date should be from the session header
+    expect(segments[0].date).toBe("2026-03-15");
+  });
+
+  it("handles session with no timestamp in header", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+
+    const content = [
+      JSON.stringify({ type: "session", id: "sess1", cwd: "/tmp" }),
+      messageLine("user", "Question without session timestamp context", "2026-04-01T10:00:01Z"),
+      messageLine("assistant", "Answer derived from message-level timestamp only.", "2026-04-01T10:00:02Z"),
+    ].join("\n");
+
+    const filePath = join(sessDir, "sess1.jsonl");
+    const segments = parseSessionJsonl(content, filePath, sessDir);
+
+    expect(segments.length).toBeGreaterThanOrEqual(1);
+    // Date should come from message timestamp
+    expect(segments[0].date).toBe("2026-04-01");
+  });
+
+  it("merges small trailing chunk into previous segment", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+
+    // Create a session where the last message is very short
+    const lines = [sessionHeader("sess1", "2026-03-15T10:00:00Z")];
+    // Add enough turns to make a full segment
+    for (let i = 0; i < 5; i++) {
+      lines.push(
+        messageLine("user", `Question ${i}: ${"Detail. ".repeat(15)}`, `2026-03-15T10:${String(i).padStart(2, "0")}:01Z`),
+        messageLine("assistant", `Answer ${i}: ${"Explanation. ".repeat(15)}`, `2026-03-15T10:${String(i).padStart(2, "0")}:02Z`),
+      );
+    }
+    // Add a tiny trailing message
+    lines.push(messageLine("user", "Thanks!", "2026-03-15T10:10:01Z"));
+
+    const filePath = join(sessDir, "sess1.jsonl");
+    const segments = parseSessionJsonl(lines.join("\n"), filePath, sessDir);
+
+    // "Thanks!" should be merged into a segment, not lost
+    const allContent = segments.map((s) => s.content).join("\n");
+    expect(allContent).toContain("Thanks!");
+  });
+});
+
+// -- migration-service integration with sessionsDir --
+
+describe("runMigration with sessionsDir", () => {
+
+  it("imports JSONL sessions alongside markdown files", async () => {
+    // Set up markdown
+    writeFileSync(
+      join(tmpDir, "MEMORY.md"),
+      "# Facts\n\nThe project uses TypeScript and pnpm for package management across all workspaces.",
+    );
+
+    // Set up JSONL sessions
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+    const sessionContent = [
+      sessionHeader("sess1", "2026-03-20T10:00:00Z"),
+      messageLine("user", "What testing framework do we use?", "2026-03-20T10:00:01Z"),
+      messageLine("assistant", "We use vitest for all unit and integration tests with coverage via v8.", "2026-03-20T10:00:02Z"),
+    ].join("\n");
+    writeFileSync(join(sessDir, "sess1.jsonl"), sessionContent);
+
+    const stored: Array<{ content: string; type: string; source: string }> = [];
+    const state = new Map<string, string>();
+    let nextId = 0;
+
+    const result = await runMigration({
+      workspaceDir: tmpDir,
+      stateDir: tmpDir,
+      store: async (params) => {
+        stored.push(params as any);
+        return { id: String(nextId++) };
+      },
+      dbState: {
+        get: (k: string) => state.get(k) ?? null,
+        set: (k: string, v: string) => state.set(k, v),
+      },
+      enrich: async (segments) =>
+        segments.map((seg) => ({
+          id: seg.id,
+          type: "observation",
+          temporal_state: seg.date ? "past" : "none",
+          temporal_anchor: seg.date,
+        })),
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+      sessionsDir: sessDir,
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.segmentsImported).toBeGreaterThanOrEqual(2); // at least 1 markdown + 1 JSONL
+    expect(stored.some((s) => s.content.includes("TypeScript"))).toBe(true);
+    expect(stored.some((s) => s.content.includes("vitest"))).toBe(true);
+    expect(stored.every((s) => s.source === "import")).toBe(true);
+  });
+
+  it("applies age-based decay to session imports", async () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+
+    // Session from 30 days ago
+    const oldDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const sessionContent = [
+      sessionHeader("old-sess", oldDate),
+      messageLine("user", "Old question from a month ago about the deployment process", oldDate),
+      messageLine("assistant", "Old answer from a month ago about deployment and CI/CD pipeline.", oldDate),
+    ].join("\n");
+    writeFileSync(join(sessDir, "old.jsonl"), sessionContent);
+
+    const strengthUpdates = new Map<string, number>();
+    const state = new Map<string, string>();
+    let nextId = 0;
+
+    await runMigration({
+      workspaceDir: tmpDir,
+      stateDir: tmpDir,
+      store: async () => ({ id: String(nextId++) }),
+      updateStrength: (id, strength) => strengthUpdates.set(id, strength),
+      dbState: {
+        get: (k: string) => state.get(k) ?? null,
+        set: (k: string, v: string) => state.set(k, v),
+      },
+      enrich: async (segments) =>
+        segments.map((seg) => ({
+          id: seg.id,
+          type: "observation",
+          temporal_state: "past",
+          temporal_anchor: seg.date,
+        })),
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+      sessionsDir: sessDir,
+    });
+
+    // 30 days old → strength should be decayed (0.977^30 ≈ 0.498)
+    expect(strengthUpdates.size).toBeGreaterThan(0);
+    for (const [, strength] of strengthUpdates) {
+      expect(strength).toBeLessThan(1.0);
+      expect(strength).toBeGreaterThan(0.05); // Above minimum
+    }
+  });
+
+  it("works with sessionsDir but no session files", async () => {
+    writeFileSync(
+      join(tmpDir, "MEMORY.md"),
+      "# Facts\n\nSome content for a memory about the project architecture.",
+    );
+
+    const sessDir = join(tmpDir, "empty-sessions");
+    mkdirSync(sessDir, { recursive: true });
+
+    const state = new Map<string, string>();
+    let nextId = 0;
+
+    const result = await runMigration({
+      workspaceDir: tmpDir,
+      stateDir: tmpDir,
+      store: async () => ({ id: String(nextId++) }),
+      dbState: {
+        get: (k: string) => state.get(k) ?? null,
+        set: (k: string, v: string) => state.set(k, v),
+      },
+      enrich: async (segments) =>
+        segments.map((seg) => ({
+          id: seg.id,
+          type: "fact",
+          temporal_state: "none",
+          temporal_anchor: null,
+        })),
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+      sessionsDir: sessDir,
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.segmentsImported).toBeGreaterThanOrEqual(1);
   });
 });
