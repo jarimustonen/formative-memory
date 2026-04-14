@@ -63,24 +63,31 @@ When no profile exists, the current hardcoded defaults apply.
 
 ## Fact type taxonomy
 
-The extraction LLM assigns a type to each extracted fact. The taxonomy must cover broadly human-relevant topics, not just software engineering:
+The extraction LLM assigns a type to each extracted fact. Types are used for merge candidate selection in consolidation (only same-type memories merge), so the taxonomy directly affects memory quality.
 
-### Current types
-`preference`, `fact`, `goal`, `project`, `event`, `relationship`
+### Current types (implemented)
 
-### Known gaps
-- **`constraint`** — "must use Node 18", "no Docker", "budget is €500/month", "allergic to nuts"
-- **`profile`/`background`** — "senior backend engineer", "new to Rust", "lives in Helsinki", "has two kids"
-- **`fact` is too broad** — absorbs profile, constraints, habits, health, location, background. Should be narrowed or split.
-- **`project` is ambiguous** — conflates durable project identity ("building a memory plugin") with transient implementation ("refactoring merge logic"). Needs narrow definition.
+| Type | What it covers | Examples |
+|------|---------------|----------|
+| `preference` | Tastes, values, styles, dislikes | "Prefers TypeScript", "Doesn't like ORMs", "Vegan" |
+| `about` | Background, identity, skills, life situation | "Lives in Helsinki", "Senior developer", "Two kids", "Learning Rust" |
+| `person` | People and relationships | "Lyra is their daughter", "Mikko is team lead" |
+| `event` | Events, schedules, deadlines | "Moving to Berlin in May", "Dentist on Friday" |
+| `goal` | Objectives, plans, aspirations | "Training for marathon in October", "Wants to learn Rust" |
+| `work` | Durable work/project context, constraints, architecture | "Building a memory plugin", "Project uses SQLite only", "Node 22+ required" |
+| `fact` | Other durable information (fallback) | "Coffee brewed with Chemex", "Dog is a golden retriever" |
 
-### Design principles for taxonomy
-- Must cover personal life, work, health, relationships, hobbies, preferences, constraints — not just coding
-- Types are used for merge candidate selection, so overly broad types degrade consolidation quality
-- Unknown types from LLM should fall back to `fact`, not crash
-- Taxonomy should be extensible via salience profile (user-defined types?)
+### Design principles
+- Taxonomy covers real human life — personal, work, health, relationships, hobbies — not just software engineering
+- Types are human-readable labels, not developer jargon
+- `fact` is intentionally the broad fallback — better to capture with a generic type than miss entirely
+- Unknown types from LLM fall back to `fact` silently
+- Taxonomy may be extensible via salience profile in the future (user-defined types)
 
-This taxonomy design is part of the salience profile work since the profile may want to influence which types are extracted.
+### Future considerations
+- Should salience profile be able to add custom types?
+- Should types influence consolidation behavior (e.g. `event` types decay faster after the date passes)?
+- Should `work` be split further if it becomes a catch-all for project+constraint+architecture?
 
 ## Out of scope (for now)
 
