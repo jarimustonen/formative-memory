@@ -1,7 +1,7 @@
 {
   "name": "formative-memory",
   "version": "0.1.0",
-  "description": "Memory that forgets, so it remembers better what matters. It forms with you and your needs.",
+  "description": "Memory that actively forms around what matters.",
   "license": "MIT",
   "repository": {
     "type": "git",

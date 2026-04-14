@@ -1,10 +1,10 @@
 ---
 created: 2026-04-11
-updated: 2026-04-11
+updated: 2026-04-14
 type: task
 reporter: jari
 assignee: jari
-status: open
+status: in-progress
 priority: high
 ---
 
