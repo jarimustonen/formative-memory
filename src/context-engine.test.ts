@@ -5,15 +5,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CONTEXT_ENGINE_ID,
   buildCacheKey,
+  buildExtractionPrompt,
   checkSleepDebt,
   classifyBudget,
   createAssociativeMemoryContextEngine,
   escapeMemoryContent,
   estimateMessageTokens,
   extractLastUserMessage,
+  extractRoleText,
   extractTurnContent,
   formatRecalledMemories,
   formatUpcomingMemories,
+  parseExtractionResponse,
   stableStringify,
   transcriptFingerprint,
   userTurnKey,
@@ -1643,6 +1646,45 @@ describe("assemble temporal injection", () => {
   });
 });
 
+// -- extractRoleText --
+
+describe("extractRoleText", () => {
+  it("aggregates all messages for a role", () => {
+    const messages = [
+      { role: "user", content: "Here is my code" },
+      { role: "assistant", content: "I see a bug" },
+      { role: "user", content: "Where is the bug?" },
+    ];
+    const result = extractRoleText(messages, "user");
+    expect(result).toContain("Here is my code");
+    expect(result).toContain("Where is the bug?");
+  });
+
+  it("returns null when no messages match role", () => {
+    const messages = [{ role: "assistant", content: "hello" }];
+    expect(extractRoleText(messages, "user")).toBeNull();
+  });
+
+  it("handles multimodal content arrays", () => {
+    const messages = [
+      { role: "user", content: [{ type: "text", text: "Part A" }] },
+      { role: "user", content: [{ type: "text", text: "Part B" }] },
+    ];
+    const result = extractRoleText(messages, "user");
+    expect(result).toContain("Part A");
+    expect(result).toContain("Part B");
+  });
+
+  it("skips non-text content blocks", () => {
+    const messages = [
+      { role: "assistant", content: [{ type: "tool_use", name: "search" }] },
+      { role: "assistant", content: "Final answer" },
+    ];
+    const result = extractRoleText(messages, "assistant");
+    expect(result).toBe("Final answer");
+  });
+});
+
 // -- extractTurnContent --
 
 describe("extractTurnContent", () => {
@@ -1657,9 +1699,21 @@ describe("extractTurnContent", () => {
     expect(result).toContain("Assistant: TypeScript is a typed superset of JavaScript.");
   });
 
+  it("aggregates multiple user messages in one turn", () => {
+    const messages = [
+      { role: "user", content: "Help me plan a trip to Japan" },
+      { role: "assistant", content: "What season and budget?" },
+      { role: "user", content: "October, moderate budget" },
+      { role: "assistant", content: "Here is a 10-day itinerary for Japan in October." },
+    ];
+    const result = extractTurnContent(messages, 0);
+    expect(result).toContain("Help me plan a trip to Japan");
+    expect(result).toContain("October, moderate budget");
+  });
+
   it("returns null when no assistant message in turn", () => {
     const messages = [
-      { role: "user", content: "hello" },
+      { role: "user", content: "hello there, what's up?" },
     ];
     expect(extractTurnContent(messages, 0)).toBeNull();
   });
@@ -1680,26 +1734,113 @@ describe("extractTurnContent", () => {
     expect(extractTurnContent(messages, 0)).toBeNull();
   });
 
-  it("truncates long content", () => {
-    const longText = "x".repeat(2000);
+  it("skips trivial exchanges with whitespace padding", () => {
+    const messages = [
+      { role: "user", content: "   hi   " },
+      { role: "assistant", content: "  hello there  " },
+    ];
+    expect(extractTurnContent(messages, 0)).toBeNull();
+  });
+
+  it("truncates long content with dynamic budget allocation", () => {
+    const longText = "x".repeat(5000);
     const messages = [
       { role: "user", content: longText },
       { role: "assistant", content: longText },
     ];
     const result = extractTurnContent(messages, 0);
     expect(result).not.toBeNull();
-    expect(result!.length).toBeLessThan(2100); // ~1000 per side + labels
+    expect(result!.length).toBeLessThan(4200); // ~4000 + labels
     expect(result).toContain("...");
   });
 
-  it("handles multimodal content arrays", () => {
+  it("lets short side borrow budget from long side", () => {
+    const shortUser = "Short question here";
+    const longAssistant = "x".repeat(5000);
     const messages = [
-      { role: "user", content: [{ type: "text", text: "Explain this code" }] },
-      { role: "assistant", content: "This code does X." },
+      { role: "user", content: shortUser },
+      { role: "assistant", content: longAssistant },
     ];
-    const result = extractTurnContent(messages, 0);
-    expect(result).toContain("User: Explain this code");
-    expect(result).toContain("Assistant: This code does X.");
+    const result = extractTurnContent(messages, 0)!;
+    // User text should be complete (not truncated)
+    expect(result).toContain(`User: ${shortUser}`);
+    // Assistant should get most of the budget
+    const assistantPart = result.split("Assistant: ")[1];
+    expect(assistantPart.length).toBeGreaterThan(3000);
+  });
+});
+
+// -- parseExtractionResponse --
+
+describe("parseExtractionResponse", () => {
+  it("parses valid JSON array", () => {
+    const response = '[{"type": "preference", "content": "User prefers TypeScript"}]';
+    const facts = parseExtractionResponse(response);
+    expect(facts).toHaveLength(1);
+    expect(facts[0]).toEqual({ type: "preference", content: "User prefers TypeScript" });
+  });
+
+  it("handles markdown code fences", () => {
+    const response = '```json\n[{"type": "fact", "content": "User lives in Helsinki"}]\n```';
+    const facts = parseExtractionResponse(response);
+    expect(facts).toHaveLength(1);
+    expect(facts[0].content).toBe("User lives in Helsinki");
+  });
+
+  it("returns empty array for empty JSON array", () => {
+    expect(parseExtractionResponse("[]")).toEqual([]);
+  });
+
+  it("returns empty array for non-JSON response", () => {
+    expect(parseExtractionResponse("Nothing worth remembering")).toEqual([]);
+  });
+
+  it("returns empty array for malformed JSON", () => {
+    expect(parseExtractionResponse("[{broken")).toEqual([]);
+  });
+
+  it("skips items with missing fields", () => {
+    const response = '[{"type": "fact"}, {"content": "no type"}, {"type": "fact", "content": "valid"}]';
+    const facts = parseExtractionResponse(response);
+    expect(facts).toHaveLength(1);
+    expect(facts[0].content).toBe("valid");
+  });
+
+  it("defaults unknown types to 'fact'", () => {
+    const response = '[{"type": "unknown_type", "content": "something"}]';
+    const facts = parseExtractionResponse(response);
+    expect(facts).toHaveLength(1);
+    expect(facts[0].type).toBe("fact");
+  });
+
+  it("trims content whitespace", () => {
+    const response = '[{"type": "fact", "content": "  trimmed  "}]';
+    const facts = parseExtractionResponse(response);
+    expect(facts[0].content).toBe("trimmed");
+  });
+
+  it("skips empty content after trimming", () => {
+    const response = '[{"type": "fact", "content": "   "}]';
+    expect(parseExtractionResponse(response)).toEqual([]);
+  });
+
+  it("extracts JSON array from surrounding text", () => {
+    const response = 'Here are the facts:\n[{"type": "goal", "content": "User training for marathon"}]\nEnd.';
+    const facts = parseExtractionResponse(response);
+    expect(facts).toHaveLength(1);
+    expect(facts[0].type).toBe("goal");
+  });
+});
+
+// -- buildExtractionPrompt --
+
+describe("buildExtractionPrompt", () => {
+  it("includes turn content in prompt", () => {
+    const prompt = buildExtractionPrompt("User: Hello\n\nAssistant: Hi there");
+    expect(prompt).toContain("User: Hello");
+    expect(prompt).toContain("Assistant: Hi there");
+    expect(prompt).toContain("memory extraction");
+    expect(prompt).toContain("JSON array");
   });
 });
 
@@ -1719,107 +1860,32 @@ describe("afterTurn() auto-capture", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("stores conversation turn when autoCapture is enabled", async () => {
-    const storeFn = vi.fn().mockResolvedValue({ id: "captured-id" });
-    const manager = {
-      recall: vi.fn().mockResolvedValue([]),
-      search: vi.fn().mockResolvedValue([]),
-      store: storeFn,
-    } as unknown as MemoryManager;
-
-    const ledger = new TurnMemoryLedger();
-    const engine = createAssociativeMemoryContextEngine({
-      getManager: () => manager,
-      getDb: () => db,
-      getLogPath: () => join(tmpDir, "retrieval.log"),
-      ledger,
-      autoCapture: true,
-    });
-
-    await engine.afterTurn!({
-      sessionId: "sess-1",
-      sessionKey: "key-1",
-      sessionFile: "/tmp/session.md",
-      messages: [
-        { role: "user", content: "What is TypeScript?" },
-        { role: "assistant", content: "TypeScript is a typed superset of JavaScript." },
-      ],
-      prePromptMessageCount: 0,
-    });
-
-    expect(storeFn).toHaveBeenCalledOnce();
-    expect(storeFn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: "conversation",
-        source: "auto_capture",
-      }),
-    );
-    const captured = storeFn.mock.calls[0][0].content;
-    expect(captured).toContain("User: What is TypeScript?");
-    expect(captured).toContain("Assistant: TypeScript is a typed superset of JavaScript.");
+  const afterTurnParams = (messages: unknown[], prePromptMessageCount = 0) => ({
+    sessionId: "sess-1",
+    sessionKey: "key-1",
+    sessionFile: "/tmp/session.md",
+    messages,
+    prePromptMessageCount,
   });
 
-  it("does not store when autoCapture is disabled (default)", async () => {
+  it("does not store when autoCapture is disabled", async () => {
     const storeFn = vi.fn();
     const manager = {
       recall: vi.fn().mockResolvedValue([]),
       store: storeFn,
     } as unknown as MemoryManager;
 
-    const ledger = new TurnMemoryLedger();
     const engine = createAssociativeMemoryContextEngine({
       getManager: () => manager,
-      getDb: () => db,
-      getLogPath: () => join(tmpDir, "retrieval.log"),
-      ledger,
-      // autoCapture not set (defaults to undefined/false)
+      // autoCapture not set
     });
 
-    await engine.afterTurn!({
-      sessionId: "sess-1",
-      sessionKey: "key-1",
-      sessionFile: "/tmp/session.md",
-      messages: [
-        { role: "user", content: "What is TypeScript?" },
-        { role: "assistant", content: "TypeScript is a typed superset of JavaScript." },
-      ],
-      prePromptMessageCount: 0,
-    });
+    await engine.afterTurn!(afterTurnParams([
+      { role: "user", content: "What is TypeScript?" },
+      { role: "assistant", content: "TypeScript is a typed superset of JavaScript." },
+    ]));
 
     expect(storeFn).not.toHaveBeenCalled();
-  });
-
-  it("does not throw when auto-capture store fails", async () => {
-    const warnFn = vi.fn();
-    const manager = {
-      recall: vi.fn().mockResolvedValue([]),
-      store: vi.fn().mockRejectedValue(new Error("store failed")),
-    } as unknown as MemoryManager;
-
-    const ledger = new TurnMemoryLedger();
-    const engine = createAssociativeMemoryContextEngine({
-      getManager: () => manager,
-      getDb: () => db,
-      getLogPath: () => join(tmpDir, "retrieval.log"),
-      ledger,
-      autoCapture: true,
-      logger: { warn: warnFn },
-    });
-
-    // Should not throw
-    await engine.afterTurn!({
-      sessionId: "sess-1",
-      sessionKey: "key-1",
-      sessionFile: "/tmp/session.md",
-      messages: [
-        { role: "user", content: "What is TypeScript?" },
-        { role: "assistant", content: "TypeScript is a typed superset of JavaScript." },
-      ],
-      prePromptMessageCount: 0,
-    });
-
-    expect(warnFn).toHaveBeenCalledOnce();
-    expect(warnFn.mock.calls[0][0]).toContain("auto-capture");
   });
 
   it("skips trivial turns even when autoCapture is enabled", async () => {
@@ -1829,26 +1895,85 @@ describe("afterTurn() auto-capture", () => {
       store: storeFn,
     } as unknown as MemoryManager;
 
-    const ledger = new TurnMemoryLedger();
     const engine = createAssociativeMemoryContextEngine({
       getManager: () => manager,
-      getDb: () => db,
-      getLogPath: () => join(tmpDir, "retrieval.log"),
-      ledger,
       autoCapture: true,
+      getLlmConfig: () => ({ provider: "anthropic" as const, apiKey: "test" }),
     });
 
-    await engine.afterTurn!({
-      sessionId: "sess-1",
-      sessionKey: "key-1",
-      sessionFile: "/tmp/session.md",
-      messages: [
-        { role: "user", content: "hi" },
-        { role: "assistant", content: "hello" },
-      ],
-      prePromptMessageCount: 0,
-    });
+    await engine.afterTurn!(afterTurnParams([
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello" },
+    ]));
 
     expect(storeFn).not.toHaveBeenCalled();
+  });
+
+  it("does not call LLM when getLlmConfig returns null", async () => {
+    const storeFn = vi.fn();
+    const manager = {
+      recall: vi.fn().mockResolvedValue([]),
+      store: storeFn,
+    } as unknown as MemoryManager;
+
+    const engine = createAssociativeMemoryContextEngine({
+      getManager: () => manager,
+      autoCapture: true,
+      getLlmConfig: () => null,
+    });
+
+    await engine.afterTurn!(afterTurnParams([
+      { role: "user", content: "I am moving to Berlin next month" },
+      { role: "assistant", content: "That sounds exciting! Berlin is a great city." },
+    ]));
+
+    expect(storeFn).not.toHaveBeenCalled();
+  });
+
+  it("works without provenance deps (getDb/ledger)", async () => {
+    // Auto-capture should work even without provenance wiring.
+    // This tests the decoupling fix.
+    const storeFn = vi.fn().mockResolvedValue({ id: "test" });
+    const manager = {
+      recall: vi.fn().mockResolvedValue([]),
+      store: storeFn,
+    } as unknown as MemoryManager;
+
+    // Mock fetch for LLM call (fire-and-forget, need to wait for it)
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        content: [{ type: "text", text: '[{"type": "fact", "content": "User is moving to Berlin"}]' }],
+      }),
+    }) as any;
+
+    try {
+      const engine = createAssociativeMemoryContextEngine({
+        getManager: () => manager,
+        // NO getDb, NO ledger — provenance disabled
+        autoCapture: true,
+        getLlmConfig: () => ({ provider: "anthropic" as const, apiKey: "test-key" }),
+      });
+
+      await engine.afterTurn!(afterTurnParams([
+        { role: "user", content: "I am moving to Berlin next month" },
+        { role: "assistant", content: "That sounds exciting! Berlin is a great city." },
+      ]));
+
+      // Fire-and-forget — give the async extraction a tick to complete
+      await new Promise((r) => setTimeout(r, 50));
+
+      expect(storeFn).toHaveBeenCalledOnce();
+      expect(storeFn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "fact",
+          source: "auto_capture",
+          content: "User is moving to Berlin",
+        }),
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

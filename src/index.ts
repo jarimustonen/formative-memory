@@ -693,6 +693,7 @@ const associativeMemoryPlugin = {
         getDb: () => getWorkspace(".").manager.getDatabase(),
         getLogPath: () => join(getWorkspace(".").memoryDir, "retrieval.log"),
         autoCapture: config.autoCapture,
+        getLlmConfig: () => resolveLlmConfig(runtimePaths.stateDir, runtimePaths.agentDir, log),
       }),
     );
 

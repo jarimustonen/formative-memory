@@ -16,6 +16,8 @@ import type {
 import { delegateCompactionToRuntime } from "openclaw/plugin-sdk";
 import { processAfterTurn } from "./after-turn.ts";
 import type { MemoryDatabase } from "./db.ts";
+import type { LlmCallerConfig } from "./llm-caller.ts";
+import { callLlm } from "./llm-caller.ts";
 import type { MemoryManager, SearchResult } from "./memory-manager.ts";
 import type { MemorySource } from "./types.ts";
 import type { Logger } from "./logger.ts";
@@ -286,8 +288,10 @@ export type AssociativeMemoryContextEngineOptions = {
   getDb?: () => MemoryDatabase;
   /** Retrieval log path for afterTurn(). Empty/omitted disables logging. */
   getLogPath?: () => string;
-  /** When true, automatically capture conversation turns as memories. */
+  /** When true, automatically capture conversation turns as memories via LLM extraction. */
   autoCapture?: boolean;
+  /** Lazy accessor for LLM config. Required for autoCapture fact extraction. */
+  getLlmConfig?: () => LlmCallerConfig | null;
 };
 
 export function createAssociativeMemoryContextEngine(
@@ -462,55 +466,52 @@ export function createAssociativeMemoryContextEngine(
     },
 
     async afterTurn(params) {
-      if (!options.getDb || !options.ledger) {
-        options.logger?.warn("afterTurn() disabled: missing getDb or ledger");
-        return;
-      }
+      // 1. Provenance recording (requires getDb + ledger)
+      if (options.getDb && options.ledger) {
+        // Deterministic turnId: same logical turn always produces the same key,
+        // enabling idempotent retries via PK/upsert semantics.
+        const turnFingerprint = userTurnKey(params.messages) ?? "empty";
+        const turnId = `${params.sessionId}:${params.prePromptMessageCount}:${turnFingerprint}`;
 
-      // Deterministic turnId: same logical turn always produces the same key,
-      // enabling idempotent retries via PK/upsert semantics.
-      // Derived from sessionId + last user message content + prePromptMessageCount.
-      const turnFingerprint = userTurnKey(params.messages) ?? "empty";
-      const turnId = `${params.sessionId}:${params.prePromptMessageCount}:${turnFingerprint}`;
-
-      try {
-        processAfterTurn({
-          sessionId: params.sessionId,
-          turnId,
-          messages: params.messages as unknown[],
-          prePromptMessageCount: params.prePromptMessageCount,
-          ledger: options.ledger,
-          db: options.getDb(),
-          logPath: options.getLogPath?.(),
-          isBm25Only: options.isBm25Only?.() ?? false,
-        });
-        options.logger?.debug?.(
-          `afterTurn: autoInjected=${options.ledger.autoInjected.size} searchResults=${options.ledger.searchResults.size} explicitlyOpened=${options.ledger.explicitlyOpened.size} storedThisTurn=${options.ledger.storedThisTurn.size}`,
-        );
-      } catch (error) {
-        options.logger?.warn("afterTurn() provenance write failed", error);
-      }
-
-      // Auto-capture: store conversation turn as a memory for later consolidation.
-      // Runs after provenance so a capture failure doesn't block provenance writes.
-      if (options.autoCapture) {
         try {
-          const turnContent = extractTurnContent(
-            params.messages as unknown[],
-            params.prePromptMessageCount,
+          processAfterTurn({
+            sessionId: params.sessionId,
+            turnId,
+            messages: params.messages as unknown[],
+            prePromptMessageCount: params.prePromptMessageCount,
+            ledger: options.ledger,
+            db: options.getDb(),
+            logPath: options.getLogPath?.(),
+            isBm25Only: options.isBm25Only?.() ?? false,
+          });
+          options.logger?.debug?.(
+            `afterTurn: autoInjected=${options.ledger.autoInjected.size} searchResults=${options.ledger.searchResults.size} explicitlyOpened=${options.ledger.explicitlyOpened.size} storedThisTurn=${options.ledger.storedThisTurn.size}`,
           );
-          if (turnContent) {
-            const manager = getManager();
-            await manager.store({
-              content: turnContent,
-              type: "conversation",
-              source: "auto_capture" satisfies MemorySource,
-            });
-            options.logger?.debug?.("afterTurn: auto-captured turn");
-          }
         } catch (error) {
-          // Auto-capture is best-effort — never block the turn lifecycle.
-          options.logger?.warn("afterTurn() auto-capture failed", error);
+          options.logger?.warn("afterTurn() provenance write failed", error);
+        }
+      }
+
+      // 2. Auto-capture: extract facts via LLM and store as memories.
+      //    Fire-and-forget — does not block the turn lifecycle.
+      //    Independent of provenance (does not require getDb or ledger).
+      if (options.autoCapture) {
+        const turnContent = extractTurnContent(
+          params.messages as unknown[],
+          params.prePromptMessageCount,
+        );
+        if (turnContent) {
+          const llmConfig = options.getLlmConfig?.();
+          if (llmConfig) {
+            // Fire-and-forget: launch extraction without awaiting.
+            // Errors are caught and logged inside the async function.
+            void extractAndStoreMemories(
+              turnContent,
+              llmConfig,
+              getManager(),
+              options.logger,
+            );
+          }
         }
       }
     },
@@ -605,15 +606,16 @@ export function checkSleepDebt(getDb?: () => MemoryDatabase): string {
 
 // -- Auto-capture helpers --
 
-/** Maximum character length for a single auto-captured turn. */
-const AUTO_CAPTURE_MAX_CHARS = 2000;
+/** Maximum character length for the turn transcript sent to the extraction LLM. */
+const AUTO_CAPTURE_MAX_CHARS = 4000;
 
 /**
  * Extract a concise turn summary from the current turn's messages.
  * Returns null if the turn has no meaningful user+assistant exchange.
  *
  * Only considers messages after `prePromptMessageCount` (current turn).
- * Truncates long content to keep captured memories digestible for consolidation.
+ * Aggregates ALL user and assistant messages (not just the last one).
+ * Truncates long content to keep the extraction prompt manageable.
  */
 export function extractTurnContent(
   messages: unknown[],
@@ -628,37 +630,159 @@ export function extractTurnContent(
   if (!userText || !assistantText) return null;
 
   // Skip trivial turns (very short exchanges like "hi" / "hello")
-  if (userText.length < 10 && assistantText.length < 20) return null;
+  if (userText.trim().length < 10 && assistantText.trim().length < 20) return null;
 
-  const truncatedUser = truncate(userText, AUTO_CAPTURE_MAX_CHARS / 2);
-  const truncatedAssistant = truncate(assistantText, AUTO_CAPTURE_MAX_CHARS / 2);
+  // Allocate budget dynamically: let the longer side borrow unused space.
+  const { user: truncatedUser, assistant: truncatedAssistant } =
+    truncatePair(userText, assistantText, AUTO_CAPTURE_MAX_CHARS);
 
   return `User: ${truncatedUser}\n\nAssistant: ${truncatedAssistant}`;
 }
 
 /**
- * Extract text content from the last message with the given role.
+ * Aggregate all text content from messages with the given role.
+ * Iterates forward to preserve chronological order.
  */
-function extractRoleText(messages: unknown[], role: string): string | null {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i];
+export function extractRoleText(messages: unknown[], role: string): string | null {
+  const parts: string[] = [];
+  for (const msg of messages) {
     if (msg == null || typeof msg !== "object") continue;
     const m = msg as Record<string, unknown>;
     if (m.role !== role || !m.content) continue;
 
-    if (typeof m.content === "string") return m.content;
-
-    if (Array.isArray(m.content)) {
+    if (typeof m.content === "string") {
+      parts.push(m.content);
+    } else if (Array.isArray(m.content)) {
       const texts = m.content.filter(isTextBlock).map((b) => b.text);
-      if (texts.length > 0) return texts.join("\n");
+      if (texts.length > 0) parts.push(texts.join("\n"));
     }
   }
-  return null;
+  return parts.length > 0 ? parts.join("\n\n") : null;
+}
+
+function truncatePair(
+  userText: string,
+  assistantText: string,
+  maxTotal: number,
+): { user: string; assistant: string } {
+  if (userText.length + assistantText.length <= maxTotal) {
+    return { user: userText, assistant: assistantText };
+  }
+  const half = Math.floor(maxTotal / 2);
+  if (userText.length <= half) {
+    return { user: userText, assistant: truncate(assistantText, maxTotal - userText.length) };
+  }
+  if (assistantText.length <= half) {
+    return { user: truncate(userText, maxTotal - assistantText.length), assistant: assistantText };
+  }
+  return { user: truncate(userText, half), assistant: truncate(assistantText, half) };
 }
 
 function truncate(text: string, maxLen: number): string {
   if (text.length <= maxLen) return text;
   return text.slice(0, maxLen - 3) + "...";
+}
+
+// -- LLM fact extraction --
+
+/** Extraction prompt sent to the LLM to distill facts from a conversation turn. */
+export function buildExtractionPrompt(turnContent: string): string {
+  return `You are a memory extraction system. Read the following conversation exchange and extract facts worth remembering long-term.
+
+Rules:
+- Extract ONLY durable information: user preferences, personal facts, goals, plans, project context, relationships, recurring patterns, commitments, or corrections to prior knowledge.
+- Do NOT extract: ephemeral task details (code rewrites, formatting help), assistant reasoning, pleasantries, or transient operational context.
+- Each fact should be a single, self-contained statement.
+- If there is nothing worth remembering, return an empty list.
+- Return a JSON array of objects, each with "type" and "content" fields.
+- Valid types: "preference", "fact", "goal", "project", "event", "relationship"
+- Return ONLY the JSON array, nothing else.
+
+Example output:
+[{"type": "preference", "content": "User prefers TypeScript over JavaScript for backend work"}, {"type": "event", "content": "User is moving to Berlin in May 2026"}]
+
+Conversation:
+${turnContent}`;
+}
+
+/** Parsed result from the extraction LLM. */
+export type ExtractedFact = {
+  type: string;
+  content: string;
+};
+
+const VALID_FACT_TYPES = new Set(["preference", "fact", "goal", "project", "event", "relationship"]);
+
+/**
+ * Parse the LLM's extraction response into validated facts.
+ * Tolerant of minor formatting issues (markdown fences, trailing text).
+ */
+export function parseExtractionResponse(response: string): ExtractedFact[] {
+  // Strip markdown code fences if present
+  let cleaned = response.trim();
+  cleaned = cleaned.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "");
+
+  // Find the JSON array in the response
+  const start = cleaned.indexOf("[");
+  const end = cleaned.lastIndexOf("]");
+  if (start === -1 || end === -1 || end <= start) return [];
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(cleaned.slice(start, end + 1));
+  } catch {
+    return [];
+  }
+
+  if (!Array.isArray(parsed)) return [];
+
+  const facts: ExtractedFact[] = [];
+  for (const item of parsed) {
+    if (item == null || typeof item !== "object") continue;
+    const obj = item as Record<string, unknown>;
+    if (typeof obj.type !== "string" || typeof obj.content !== "string") continue;
+    if (!obj.content.trim()) continue;
+    const type = VALID_FACT_TYPES.has(obj.type) ? obj.type : "fact";
+    facts.push({ type, content: obj.content.trim() });
+  }
+  return facts;
+}
+
+/**
+ * Extract facts from a conversation turn via LLM and store each as a memory.
+ * Fire-and-forget — all errors are caught and logged.
+ */
+async function extractAndStoreMemories(
+  turnContent: string,
+  llmConfig: LlmCallerConfig,
+  manager: MemoryManager,
+  logger?: ContextEngineLogger,
+): Promise<void> {
+  try {
+    const prompt = buildExtractionPrompt(turnContent);
+    const response = await callLlm(prompt, llmConfig);
+    const facts = parseExtractionResponse(response);
+
+    if (facts.length === 0) {
+      logger?.debug?.("auto-capture: LLM extracted 0 facts");
+      return;
+    }
+
+    for (const fact of facts) {
+      try {
+        await manager.store({
+          content: fact.content,
+          type: fact.type,
+          source: "auto_capture" satisfies MemorySource,
+        });
+      } catch (error) {
+        logger?.warn(`auto-capture: failed to store fact: ${fact.content.slice(0, 50)}`, error);
+      }
+    }
+    logger?.debug?.(`auto-capture: stored ${facts.length} facts`);
+  } catch (error) {
+    logger?.warn("auto-capture: LLM extraction failed", error);
+  }
 }
 
 /** Type guard for text content blocks in multimodal messages. */
