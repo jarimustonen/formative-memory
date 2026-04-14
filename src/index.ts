@@ -154,6 +154,11 @@ function resolveMemoryDir(
   return join(workspaceDir, dbPath);
 }
 
+const EMBEDDING_REQUIRED_HINT =
+  `Embedding provider required but not available.\n` +
+  `Set one of: OPENAI_API_KEY, GEMINI_API_KEY, VOYAGE_API_KEY, or MISTRAL_API_KEY.\n` +
+  `To run without embeddings (BM25-only), set "requireEmbedding": false in plugin config.`;
+
 // -- Embedding provider resolution --
 
 /**
@@ -308,12 +313,24 @@ function createWorkspace(
         agentDir,
         config.embedding.model,
       ).catch((err) => {
+        if (config.requireEmbedding) {
+          // Permanent failure — don't clear cache, every subsequent call gets same error
+          throw new Error(
+            `${EMBEDDING_REQUIRED_HINT}\nDetails: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+        // Graceful degradation: clear cache so next call can retry
         providerPromise = null;
         throw err;
       });
     }
     return providerPromise;
   };
+
+  // When embedding is required, eagerly start resolution so errors surface early.
+  if (config.requireEmbedding) {
+    getProvider().catch(() => {});
+  }
 
   // Provider init is outside the circuit breaker — config/auth errors
   // are hard failures, not transient network issues. Only the actual
@@ -356,6 +373,14 @@ function createWorkspace(
       }
 
       // 2. Memory-core migration (import old memories)
+      if (config.requireEmbedding) {
+        try {
+          await getProvider();
+        } catch (err) {
+          logger?.error(`Migration aborted: embedding required but unavailable. ${err instanceof Error ? err.message : String(err)}`);
+          return;
+        }
+      }
       try {
         const userLanguage = detectUserLanguage(workspaceDir);
         const enrichFn: EnrichFn = initDeps.llmConfig

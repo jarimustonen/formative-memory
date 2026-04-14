@@ -34,6 +34,10 @@
       },
       "logQueries": {
         "type": "boolean"
+      },
+      "requireEmbedding": {
+        "type": "boolean",
+        "default": true
       }
     }
   },
@@ -67,6 +71,11 @@
     "logQueries": {
       "label": "Log Query Text",
       "help": "Include raw query text in debug logs. Disabled by default for privacy — queries may contain personal data.",
+      "advanced": true
+    },
+    "requireEmbedding": {
+      "label": "Require Embedding",
+      "help": "When true (default), the plugin requires a working embedding provider. Set to false to allow BM25-only fallback.",
       "advanced": true
     }
   }
