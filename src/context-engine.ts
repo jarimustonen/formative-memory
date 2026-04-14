@@ -690,17 +690,24 @@ export function buildExtractionPrompt(turnContent: string): string {
   return `You are a memory extraction system. Read the following conversation exchange and extract facts worth remembering long-term.
 
 Rules:
-- Extract durable information: user preferences, personal facts, profile/background, goals, plans, project context, constraints, relationships, recurring patterns, commitments, events, or corrections to prior knowledge.
+- Extract durable information: preferences, personal background, goals, plans, work/project context, relationships, recurring patterns, commitments, events, or corrections to prior knowledge.
 - Facts can come from any source: user statements, tool outputs, environment details, project configuration, or confirmed assistant observations.
 - Do NOT extract: the current task request itself, ephemeral implementation details, assistant reasoning, pleasantries, or transient operational context.
 - Each fact should be a single, self-contained statement.
 - Most conversation turns contain nothing worth remembering long-term — returning an empty array is expected and correct. Only extract when there is clearly durable information.
 - Return a JSON array of objects, each with "type" and "content" fields.
-- Valid types: "preference", "fact", "goal", "project", "event", "relationship", "constraint", "profile"
+- Valid types: "preference", "about", "person", "event", "goal", "work", "fact"
+  - preference: tastes, values, styles, dislikes
+  - about: background, identity, skills, life situation
+  - person: people and relationships
+  - event: events, schedules, deadlines
+  - goal: objectives, plans, aspirations
+  - work: durable work/project context, constraints, architecture
+  - fact: other durable information (fallback)
 - Return ONLY the JSON array, nothing else.
 
 Example output:
-[{"type": "preference", "content": "User prefers TypeScript over JavaScript for backend work"}, {"type": "event", "content": "User is moving to Berlin in May 2026"}, {"type": "constraint", "content": "Project must support SQLite only, no Postgres"}]
+[{"type": "preference", "content": "User prefers TypeScript over JavaScript for backend work"}, {"type": "event", "content": "User is moving to Berlin in May 2026"}, {"type": "work", "content": "Project must support SQLite only, no Postgres"}]
 
 Conversation:
 ${turnContent}`;
@@ -712,7 +719,7 @@ export type ExtractedFact = {
   content: string;
 };
 
-const VALID_FACT_TYPES = new Set(["preference", "fact", "goal", "project", "event", "relationship", "constraint", "profile"]);
+const VALID_FACT_TYPES = new Set(["preference", "about", "person", "event", "goal", "work", "fact"]);
 
 /**
  * Parse the LLM's extraction response into validated facts.

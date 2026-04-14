@@ -1806,12 +1806,19 @@ describe("parseExtractionResponse", () => {
     expect(facts[0].content).toBe("valid");
   });
 
-  it("accepts constraint and profile types", () => {
-    const response = '[{"type": "constraint", "content": "Must use SQLite only"}, {"type": "profile", "content": "Senior backend engineer"}]';
+  it("accepts all valid types", () => {
+    const response = JSON.stringify([
+      { type: "preference", content: "Prefers dark mode" },
+      { type: "about", content: "Lives in Helsinki" },
+      { type: "person", content: "Lyra is their daughter" },
+      { type: "event", content: "Moving to Berlin in May" },
+      { type: "goal", content: "Learning Rust" },
+      { type: "work", content: "Project uses SQLite only" },
+      { type: "fact", content: "Coffee brewed with Chemex" },
+    ]);
     const facts = parseExtractionResponse(response);
-    expect(facts).toHaveLength(2);
-    expect(facts[0].type).toBe("constraint");
-    expect(facts[1].type).toBe("profile");
+    expect(facts).toHaveLength(7);
+    expect(facts.map(f => f.type)).toEqual(["preference", "about", "person", "event", "goal", "work", "fact"]);
   });
 
   it("defaults unknown types to 'fact'", () => {
