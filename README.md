@@ -100,26 +100,15 @@ merged summaries, connected associations, and deeper understanding.
 Install the plugin:
 
 ```bash
-npm install formative-memory
+openclaw plugins install formative-memory
 ```
 
-Add to your OpenClaw configuration:
+This installs from npm, enables the plugin, and assigns it the memory
+slot automatically. Restart the gateway to load the plugin.
 
-```json
-{
-  "extensions": ["formative-memory"]
-}
-```
+That's it. The plugin works out of the box:
 
-Verify the plugin is loaded:
-
-```bash
-openclaw /memory stats
-```
-
-That's it. The plugin works automatically:
-
-- **Auto-capture** records conversations for consolidation (enabled by default)
+- **Auto-capture** records conversations for consolidation
 - **Auto-recall** surfaces relevant memories before every response
 - **Consolidation** runs automatically to maintain memory quality
 
@@ -141,21 +130,25 @@ Memory types: `fact`, `preference`, `decision`, `plan`, `observation`.
 
 ## Configuration
 
-All settings are optional — defaults are designed to work out of the box:
+All settings are optional — defaults are designed to work out of the box.
+Configuration goes in `openclaw.json` under the plugin entry:
 
 ```json
 {
-  "formative-memory": {
-    "autoRecall": true,
-    "autoCapture": true,
-    "requireEmbedding": true,
-    "embedding": {
-      "provider": "auto",
-      "model": null
-    },
-    "dbPath": "~/.openclaw/memory/associative",
-    "verbose": false,
-    "logQueries": false
+  "plugins": {
+    "entries": {
+      "formative-memory": {
+        "enabled": true,
+        "config": {
+          "autoRecall": true,
+          "autoCapture": true,
+          "requireEmbedding": true,
+          "embedding": {
+            "provider": "auto"
+          }
+        }
+      }
+    }
   }
 }
 ```
@@ -203,20 +196,6 @@ to keyword-only search when `requireEmbedding` is `false`.
 
 **Consolidation LLM:** Uses Anthropic (Claude) or OpenAI for memory
 merging. Runs only during consolidation, not during normal chat.
-
-## How Memory Evolves
-
-Memories aren't static records — they change over time:
-
-| What happens | How |
-|-------------|-----|
-| New memories start in working memory | High initial strength, fast decay |
-| Useful memories get consolidated | Moved to long-term storage, strength resets to 1.0 |
-| Retrieval makes memories stronger | Every search hit reinforces the result |
-| Unused memories fade | Working: 7-cycle half-life. Consolidated: 30-cycle |
-| Similar memories merge | LLM combines duplicates into coherent summaries |
-| Outdated memories update | Newer information colors older memories |
-| Weak memories disappear | Strength below 0.05 = pruned |
 
 ## Trust & Security
 
@@ -269,23 +248,6 @@ FORMATIVE_MEMORY_DEBUG=1
 All log lines are prefixed with `[formative-memory] [level]` for easy
 filtering. Query text is never included in logs by default — set
 `logQueries: true` to opt in.
-
-## Roadmap
-
-- [x] **Phase 1: OpenClaw plugin** — content-addressed memories,
-  associations, consolidation, hybrid search, auto-capture, auto-recall,
-  temporal awareness, CLI tools
-- [ ] **Phase 2: Multi-agent support** — adapter architecture for Roo,
-  Aider, OpenCode, Cline; agent-agnostic core library
-- [ ] **Phase 3: Universal memory layer** — generic memory SDK,
-  cross-project associations, memory visualization, team sharing
-
-### Near-term
-
-- [ ] Association-boosted retrieval (graph structure influences ranking)
-- [ ] Memory-type-specific search strategies
-- [ ] Visual memory graph explorer
-- [ ] Cross-project memory sharing
 
 ## Documentation
 
