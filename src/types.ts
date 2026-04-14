@@ -3,7 +3,7 @@
 export const TEMPORAL_STATES = ["future", "present", "past", "none"] as const;
 export type TemporalState = (typeof TEMPORAL_STATES)[number];
 
-export const MEMORY_SOURCES = ["agent_tool", "hook_capture", "consolidation", "import"] as const;
+export const MEMORY_SOURCES = ["agent_tool", "auto_capture", "consolidation", "import"] as const;
 export type MemorySource = (typeof MEMORY_SOURCES)[number];
 
 export const EXPOSURE_MODES = ["auto_injected", "tool_search_returned", "tool_get", "tool_store"] as const;

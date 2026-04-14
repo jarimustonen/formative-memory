@@ -8,7 +8,7 @@ describe("memoryConfigSchema.parse", () => {
     expect(config.embedding.provider).toBe("auto");
     expect(config.embedding.model).toBeUndefined();
     expect(config.autoRecall).toBe(true);
-    expect(config.autoCapture).toBe(false);
+    expect(config.autoCapture).toBe(true);
   });
 
   it("parses config with explicit provider", () => {

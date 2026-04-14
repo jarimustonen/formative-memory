@@ -50,7 +50,7 @@ export const memoryConfigSchema = {
     return {
       embedding: { provider, model },
       dbPath: typeof cfg.dbPath === "string" ? cfg.dbPath : "~/.openclaw/memory/associative",
-      autoCapture: cfg.autoCapture === true,
+      autoCapture: cfg.autoCapture !== false,
       autoRecall: cfg.autoRecall !== false,
       verbose: cfg.verbose === true,
       logQueries: cfg.logQueries === true,

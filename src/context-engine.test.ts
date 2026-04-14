@@ -11,6 +11,7 @@ import {
   escapeMemoryContent,
   estimateMessageTokens,
   extractLastUserMessage,
+  extractTurnContent,
   formatRecalledMemories,
   formatUpcomingMemories,
   stableStringify,
@@ -1639,5 +1640,215 @@ describe("assemble temporal injection", () => {
     expect(addition).toContain("Already recalled event");
     const occurrences = addition.split("Already recalled event").length - 1;
     expect(occurrences).toBe(1);
+  });
+});
+
+// -- extractTurnContent --
+
+describe("extractTurnContent", () => {
+  it("extracts user + assistant text from current turn", () => {
+    const messages = [
+      { role: "user", content: "pre-prompt" },           // index 0 (pre-prompt)
+      { role: "user", content: "What is TypeScript?" },   // index 1 (current turn)
+      { role: "assistant", content: "TypeScript is a typed superset of JavaScript." },
+    ];
+    const result = extractTurnContent(messages, 1);
+    expect(result).toContain("User: What is TypeScript?");
+    expect(result).toContain("Assistant: TypeScript is a typed superset of JavaScript.");
+  });
+
+  it("returns null when no assistant message in turn", () => {
+    const messages = [
+      { role: "user", content: "hello" },
+    ];
+    expect(extractTurnContent(messages, 0)).toBeNull();
+  });
+
+  it("returns null when no user message in turn", () => {
+    const messages = [
+      { role: "user", content: "pre-prompt" },  // pre-prompt
+      { role: "assistant", content: "hello" },
+    ];
+    expect(extractTurnContent(messages, 1)).toBeNull();
+  });
+
+  it("skips trivial exchanges", () => {
+    const messages = [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello" },
+    ];
+    expect(extractTurnContent(messages, 0)).toBeNull();
+  });
+
+  it("truncates long content", () => {
+    const longText = "x".repeat(2000);
+    const messages = [
+      { role: "user", content: longText },
+      { role: "assistant", content: longText },
+    ];
+    const result = extractTurnContent(messages, 0);
+    expect(result).not.toBeNull();
+    expect(result!.length).toBeLessThan(2100); // ~1000 per side + labels
+    expect(result).toContain("...");
+  });
+
+  it("handles multimodal content arrays", () => {
+    const messages = [
+      { role: "user", content: [{ type: "text", text: "Explain this code" }] },
+      { role: "assistant", content: "This code does X." },
+    ];
+    const result = extractTurnContent(messages, 0);
+    expect(result).toContain("User: Explain this code");
+    expect(result).toContain("Assistant: This code does X.");
+  });
+});
+
+// -- autoCapture in afterTurn() --
+
+describe("afterTurn() auto-capture", () => {
+  let tmpDir: string;
+  let db: MemoryDatabase;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "ce-autocapture-test-"));
+    db = new MemoryDatabase(join(tmpDir, "test.db"));
+  });
+
+  afterEach(() => {
+    db.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("stores conversation turn when autoCapture is enabled", async () => {
+    const storeFn = vi.fn().mockResolvedValue({ id: "captured-id" });
+    const manager = {
+      recall: vi.fn().mockResolvedValue([]),
+      search: vi.fn().mockResolvedValue([]),
+      store: storeFn,
+    } as unknown as MemoryManager;
+
+    const ledger = new TurnMemoryLedger();
+    const engine = createAssociativeMemoryContextEngine({
+      getManager: () => manager,
+      getDb: () => db,
+      getLogPath: () => join(tmpDir, "retrieval.log"),
+      ledger,
+      autoCapture: true,
+    });
+
+    await engine.afterTurn!({
+      sessionId: "sess-1",
+      sessionKey: "key-1",
+      sessionFile: "/tmp/session.md",
+      messages: [
+        { role: "user", content: "What is TypeScript?" },
+        { role: "assistant", content: "TypeScript is a typed superset of JavaScript." },
+      ],
+      prePromptMessageCount: 0,
+    });
+
+    expect(storeFn).toHaveBeenCalledOnce();
+    expect(storeFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "conversation",
+        source: "auto_capture",
+      }),
+    );
+    const captured = storeFn.mock.calls[0][0].content;
+    expect(captured).toContain("User: What is TypeScript?");
+    expect(captured).toContain("Assistant: TypeScript is a typed superset of JavaScript.");
+  });
+
+  it("does not store when autoCapture is disabled (default)", async () => {
+    const storeFn = vi.fn();
+    const manager = {
+      recall: vi.fn().mockResolvedValue([]),
+      store: storeFn,
+    } as unknown as MemoryManager;
+
+    const ledger = new TurnMemoryLedger();
+    const engine = createAssociativeMemoryContextEngine({
+      getManager: () => manager,
+      getDb: () => db,
+      getLogPath: () => join(tmpDir, "retrieval.log"),
+      ledger,
+      // autoCapture not set (defaults to undefined/false)
+    });
+
+    await engine.afterTurn!({
+      sessionId: "sess-1",
+      sessionKey: "key-1",
+      sessionFile: "/tmp/session.md",
+      messages: [
+        { role: "user", content: "What is TypeScript?" },
+        { role: "assistant", content: "TypeScript is a typed superset of JavaScript." },
+      ],
+      prePromptMessageCount: 0,
+    });
+
+    expect(storeFn).not.toHaveBeenCalled();
+  });
+
+  it("does not throw when auto-capture store fails", async () => {
+    const warnFn = vi.fn();
+    const manager = {
+      recall: vi.fn().mockResolvedValue([]),
+      store: vi.fn().mockRejectedValue(new Error("store failed")),
+    } as unknown as MemoryManager;
+
+    const ledger = new TurnMemoryLedger();
+    const engine = createAssociativeMemoryContextEngine({
+      getManager: () => manager,
+      getDb: () => db,
+      getLogPath: () => join(tmpDir, "retrieval.log"),
+      ledger,
+      autoCapture: true,
+      logger: { warn: warnFn },
+    });
+
+    // Should not throw
+    await engine.afterTurn!({
+      sessionId: "sess-1",
+      sessionKey: "key-1",
+      sessionFile: "/tmp/session.md",
+      messages: [
+        { role: "user", content: "What is TypeScript?" },
+        { role: "assistant", content: "TypeScript is a typed superset of JavaScript." },
+      ],
+      prePromptMessageCount: 0,
+    });
+
+    expect(warnFn).toHaveBeenCalledOnce();
+    expect(warnFn.mock.calls[0][0]).toContain("auto-capture");
+  });
+
+  it("skips trivial turns even when autoCapture is enabled", async () => {
+    const storeFn = vi.fn();
+    const manager = {
+      recall: vi.fn().mockResolvedValue([]),
+      store: storeFn,
+    } as unknown as MemoryManager;
+
+    const ledger = new TurnMemoryLedger();
+    const engine = createAssociativeMemoryContextEngine({
+      getManager: () => manager,
+      getDb: () => db,
+      getLogPath: () => join(tmpDir, "retrieval.log"),
+      ledger,
+      autoCapture: true,
+    });
+
+    await engine.afterTurn!({
+      sessionId: "sess-1",
+      sessionKey: "key-1",
+      sessionFile: "/tmp/session.md",
+      messages: [
+        { role: "user", content: "hi" },
+        { role: "assistant", content: "hello" },
+      ],
+      prePromptMessageCount: 0,
+    });
+
+    expect(storeFn).not.toHaveBeenCalled();
   });
 });

@@ -17,6 +17,7 @@ import { delegateCompactionToRuntime } from "openclaw/plugin-sdk";
 import { processAfterTurn } from "./after-turn.ts";
 import type { MemoryDatabase } from "./db.ts";
 import type { MemoryManager, SearchResult } from "./memory-manager.ts";
+import type { MemorySource } from "./types.ts";
 import type { Logger } from "./logger.ts";
 import type { TurnMemoryLedger } from "./turn-memory-ledger.ts";
 
@@ -285,6 +286,8 @@ export type AssociativeMemoryContextEngineOptions = {
   getDb?: () => MemoryDatabase;
   /** Retrieval log path for afterTurn(). Empty/omitted disables logging. */
   getLogPath?: () => string;
+  /** When true, automatically capture conversation turns as memories. */
+  autoCapture?: boolean;
 };
 
 export function createAssociativeMemoryContextEngine(
@@ -487,6 +490,29 @@ export function createAssociativeMemoryContextEngine(
       } catch (error) {
         options.logger?.warn("afterTurn() provenance write failed", error);
       }
+
+      // Auto-capture: store conversation turn as a memory for later consolidation.
+      // Runs after provenance so a capture failure doesn't block provenance writes.
+      if (options.autoCapture) {
+        try {
+          const turnContent = extractTurnContent(
+            params.messages as unknown[],
+            params.prePromptMessageCount,
+          );
+          if (turnContent) {
+            const manager = getManager();
+            await manager.store({
+              content: turnContent,
+              type: "conversation",
+              source: "auto_capture" satisfies MemorySource,
+            });
+            options.logger?.debug?.("afterTurn: auto-captured turn");
+          }
+        } catch (error) {
+          // Auto-capture is best-effort — never block the turn lifecycle.
+          options.logger?.warn("afterTurn() auto-capture failed", error);
+        }
+      }
     },
 
     async ingest(_params): Promise<IngestResult> {
@@ -575,6 +601,64 @@ export function checkSleepDebt(getDb?: () => MemoryDatabase): string {
   } catch {
     return ""; // Don't break assemble if state check fails
   }
+}
+
+// -- Auto-capture helpers --
+
+/** Maximum character length for a single auto-captured turn. */
+const AUTO_CAPTURE_MAX_CHARS = 2000;
+
+/**
+ * Extract a concise turn summary from the current turn's messages.
+ * Returns null if the turn has no meaningful user+assistant exchange.
+ *
+ * Only considers messages after `prePromptMessageCount` (current turn).
+ * Truncates long content to keep captured memories digestible for consolidation.
+ */
+export function extractTurnContent(
+  messages: unknown[],
+  prePromptMessageCount: number,
+): string | null {
+  const turnMessages = messages.slice(prePromptMessageCount);
+
+  const userText = extractRoleText(turnMessages, "user");
+  const assistantText = extractRoleText(turnMessages, "assistant");
+
+  // Only capture when both sides of the exchange exist
+  if (!userText || !assistantText) return null;
+
+  // Skip trivial turns (very short exchanges like "hi" / "hello")
+  if (userText.length < 10 && assistantText.length < 20) return null;
+
+  const truncatedUser = truncate(userText, AUTO_CAPTURE_MAX_CHARS / 2);
+  const truncatedAssistant = truncate(assistantText, AUTO_CAPTURE_MAX_CHARS / 2);
+
+  return `User: ${truncatedUser}\n\nAssistant: ${truncatedAssistant}`;
+}
+
+/**
+ * Extract text content from the last message with the given role.
+ */
+function extractRoleText(messages: unknown[], role: string): string | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg == null || typeof msg !== "object") continue;
+    const m = msg as Record<string, unknown>;
+    if (m.role !== role || !m.content) continue;
+
+    if (typeof m.content === "string") return m.content;
+
+    if (Array.isArray(m.content)) {
+      const texts = m.content.filter(isTextBlock).map((b) => b.text);
+      if (texts.length > 0) return texts.join("\n");
+    }
+  }
+  return null;
+}
+
+function truncate(text: string, maxLen: number): string {
+  if (text.length <= maxLen) return text;
+  return text.slice(0, maxLen - 3) + "...";
 }
 
 /** Type guard for text content blocks in multimodal messages. */

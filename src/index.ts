@@ -692,6 +692,7 @@ const associativeMemoryPlugin = {
         ledger,
         getDb: () => getWorkspace(".").manager.getDatabase(),
         getLogPath: () => join(getWorkspace(".").memoryDir, "retrieval.log"),
+        autoCapture: config.autoCapture,
       }),
     );
 
