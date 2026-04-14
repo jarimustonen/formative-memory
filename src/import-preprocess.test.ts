@@ -4,8 +4,10 @@ import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   discoverMemoryFiles,
+  discoverSessionFiles,
   extractDateFromFilename,
   isEvergreenFile,
+  parseSessionJsonl,
   prepareImport,
   segmentMarkdown,
 } from "./import-preprocess.ts";
@@ -566,5 +568,376 @@ Today we discussed the migration plan and decided to use a two-phase approach fo
     for (const f of result.files) {
       expect(f.path).not.toContain("\\");
     }
+  });
+});
+
+// -- JSONL session helpers --
+
+/** Build a JSONL session header line. */
+function sessionHeader(id: string, timestamp: string): string {
+  return JSON.stringify({ type: "session", id, timestamp, cwd: "/tmp" });
+}
+
+/** Build a JSONL message line. */
+function messageLine(role: string, text: string, timestamp: string): string {
+  return JSON.stringify({
+    type: "message",
+    timestamp,
+    message: {
+      role,
+      content: [{ type: "text", text }],
+    },
+  });
+}
+
+// -- discoverSessionFiles --
+
+describe("discoverSessionFiles", () => {
+  it("finds .jsonl files in sessions directory", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+    writeFileSync(join(sessDir, "abc123.jsonl"), "{}");
+    writeFileSync(join(sessDir, "def456.jsonl"), "{}");
+
+    const files = discoverSessionFiles(sessDir);
+    expect(files).toHaveLength(2);
+  });
+
+  it("includes .jsonl.reset.* and .jsonl.deleted.* files", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+    writeFileSync(join(sessDir, "abc.jsonl"), "{}");
+    writeFileSync(join(sessDir, "abc.jsonl.reset.1700000000"), "{}");
+    writeFileSync(join(sessDir, "abc.jsonl.deleted.1700000001"), "{}");
+
+    const files = discoverSessionFiles(sessDir);
+    expect(files).toHaveLength(3);
+  });
+
+  it("excludes .jsonl.bak.* and .jsonl.lock files", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+    writeFileSync(join(sessDir, "abc.jsonl"), "{}");
+    writeFileSync(join(sessDir, "abc.jsonl.bak.1700000000"), "{}");
+    writeFileSync(join(sessDir, "abc.jsonl.lock"), "{}");
+
+    const files = discoverSessionFiles(sessDir);
+    expect(files).toHaveLength(1);
+    expect(files[0]).toContain("abc.jsonl");
+  });
+
+  it("excludes sessions.json", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+    writeFileSync(join(sessDir, "sessions.json"), "{}");
+    writeFileSync(join(sessDir, "abc.jsonl"), "{}");
+
+    const files = discoverSessionFiles(sessDir);
+    expect(files).toHaveLength(1);
+  });
+
+  it("returns empty array for non-existent directory", () => {
+    const files = discoverSessionFiles(join(tmpDir, "nonexistent"));
+    expect(files).toHaveLength(0);
+  });
+
+  it("returns files in sorted order", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+    writeFileSync(join(sessDir, "zzz.jsonl"), "{}");
+    writeFileSync(join(sessDir, "aaa.jsonl"), "{}");
+    writeFileSync(join(sessDir, "mmm.jsonl"), "{}");
+
+    const files = discoverSessionFiles(sessDir);
+    expect(files[0]).toContain("aaa.jsonl");
+    expect(files[1]).toContain("mmm.jsonl");
+    expect(files[2]).toContain("zzz.jsonl");
+  });
+});
+
+// -- parseSessionJsonl --
+
+describe("parseSessionJsonl", () => {
+  it("extracts user and assistant text messages", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+
+    const content = [
+      sessionHeader("sess1", "2026-03-15T10:00:00Z"),
+      messageLine("user", "What database do we use?", "2026-03-15T10:00:01Z"),
+      messageLine("assistant", "We use PostgreSQL with WAL mode for optimal concurrent reads. The database is configured with connection pooling via PgBouncer.", "2026-03-15T10:00:02Z"),
+    ].join("\n");
+
+    const filePath = join(sessDir, "sess1.jsonl");
+    const segments = parseSessionJsonl(content, filePath, sessDir);
+
+    expect(segments.length).toBeGreaterThanOrEqual(1);
+    expect(segments[0].content).toContain("User:");
+    expect(segments[0].content).toContain("Assistant:");
+    expect(segments[0].content).toContain("PostgreSQL");
+    expect(segments[0].date).toBe("2026-03-15");
+    expect(segments[0].evergreen).toBe(false);
+  });
+
+  it("skips tool result messages", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+
+    const content = [
+      sessionHeader("sess1", "2026-03-15T10:00:00Z"),
+      messageLine("user", "Read the file", "2026-03-15T10:00:01Z"),
+      JSON.stringify({
+        type: "message",
+        timestamp: "2026-03-15T10:00:02Z",
+        message: {
+          role: "toolResult",
+          content: [{ type: "text", text: "file contents here" }],
+        },
+      }),
+      messageLine("assistant", "The file contains configuration settings for the database connection pool and retry logic.", "2026-03-15T10:00:03Z"),
+    ].join("\n");
+
+    const filePath = join(sessDir, "sess1.jsonl");
+    const segments = parseSessionJsonl(content, filePath, sessDir);
+
+    const allContent = segments.map((s) => s.content).join("\n");
+    expect(allContent).not.toContain("file contents here");
+    expect(allContent).toContain("configuration settings");
+  });
+
+  it("skips non-text content blocks (tool calls, thinking)", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+
+    const content = [
+      sessionHeader("sess1", "2026-03-15T10:00:00Z"),
+      messageLine("user", "Fix the bug in the authentication module", "2026-03-15T10:00:01Z"),
+      JSON.stringify({
+        type: "message",
+        timestamp: "2026-03-15T10:00:02Z",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "thinking", text: "Let me think about this..." },
+            { type: "text", text: "I found and fixed the authentication bug. The issue was in the token validation logic." },
+            { type: "toolCall", name: "edit_file", input: {} },
+          ],
+        },
+      }),
+    ].join("\n");
+
+    const filePath = join(sessDir, "sess1.jsonl");
+    const segments = parseSessionJsonl(content, filePath, sessDir);
+
+    const allContent = segments.map((s) => s.content).join("\n");
+    expect(allContent).not.toContain("Let me think");
+    expect(allContent).toContain("authentication bug");
+  });
+
+  it("handles string content (non-array)", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+
+    const content = [
+      sessionHeader("sess1", "2026-03-15T10:00:00Z"),
+      JSON.stringify({
+        type: "message",
+        timestamp: "2026-03-15T10:00:01Z",
+        message: { role: "user", content: "Plain string content that should be extracted correctly" },
+      }),
+      messageLine("assistant", "Response to the plain string message with enough detail to be useful.", "2026-03-15T10:00:02Z"),
+    ].join("\n");
+
+    const filePath = join(sessDir, "sess1.jsonl");
+    const segments = parseSessionJsonl(content, filePath, sessDir);
+
+    expect(segments.length).toBeGreaterThanOrEqual(1);
+    expect(segments[0].content).toContain("Plain string content");
+  });
+
+  it("splits large sessions into multiple segments", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+
+    const lines = [sessionHeader("sess1", "2026-03-15T10:00:00Z")];
+    for (let i = 0; i < 20; i++) {
+      lines.push(
+        messageLine("user", `Question ${i}: ${"Context detail. ".repeat(10)}`, `2026-03-15T10:${String(i).padStart(2, "0")}:01Z`),
+        messageLine("assistant", `Answer ${i}: ${"Explanation detail. ".repeat(10)}`, `2026-03-15T10:${String(i).padStart(2, "0")}:02Z`),
+      );
+    }
+
+    const filePath = join(sessDir, "sess1.jsonl");
+    const segments = parseSessionJsonl(lines.join("\n"), filePath, sessDir);
+
+    expect(segments.length).toBeGreaterThan(1);
+    for (const seg of segments) {
+      expect(seg.char_count).toBeLessThanOrEqual(2500); // Allow some tolerance
+    }
+  });
+
+  it("handles empty session (only header)", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+
+    const content = sessionHeader("sess1", "2026-03-15T10:00:00Z");
+    const filePath = join(sessDir, "sess1.jsonl");
+    const segments = parseSessionJsonl(content, filePath, sessDir);
+
+    expect(segments).toHaveLength(0);
+  });
+
+  it("handles empty content string", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+
+    const filePath = join(sessDir, "sess1.jsonl");
+    const segments = parseSessionJsonl("", filePath, sessDir);
+
+    expect(segments).toHaveLength(0);
+  });
+
+  it("skips malformed JSON lines gracefully", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+
+    const content = [
+      sessionHeader("sess1", "2026-03-15T10:00:00Z"),
+      "this is not valid JSON",
+      messageLine("user", "Valid message that should be parsed after the malformed line", "2026-03-15T10:00:01Z"),
+      "{incomplete json",
+      messageLine("assistant", "Another valid response with enough content to be meaningful for the import.", "2026-03-15T10:00:02Z"),
+    ].join("\n");
+
+    const filePath = join(sessDir, "sess1.jsonl");
+    const segments = parseSessionJsonl(content, filePath, sessDir);
+
+    expect(segments.length).toBeGreaterThanOrEqual(1);
+    expect(segments[0].content).toContain("Valid message");
+  });
+
+  it("uses POSIX-style source_file path", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+
+    const content = [
+      sessionHeader("sess1", "2026-03-15T10:00:00Z"),
+      messageLine("user", "Test message for path formatting", "2026-03-15T10:00:01Z"),
+      messageLine("assistant", "Response message for path formatting test", "2026-03-15T10:00:02Z"),
+    ].join("\n");
+
+    const filePath = join(sessDir, "sess1.jsonl");
+    const segments = parseSessionJsonl(content, filePath, sessDir);
+
+    expect(segments.length).toBeGreaterThanOrEqual(1);
+    expect(segments[0].source_file).toContain("sessions/sess1.jsonl");
+    expect(segments[0].source_file).not.toContain("\\");
+  });
+
+  it("handles oversized single messages", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+
+    const longText = "word ".repeat(500); // ~2500 chars
+    const content = [
+      sessionHeader("sess1", "2026-03-15T10:00:00Z"),
+      messageLine("user", "Short question about the project", "2026-03-15T10:00:01Z"),
+      messageLine("assistant", longText, "2026-03-15T10:00:02Z"),
+    ].join("\n");
+
+    const filePath = join(sessDir, "sess1.jsonl");
+    const segments = parseSessionJsonl(content, filePath, sessDir);
+
+    expect(segments.length).toBeGreaterThan(1);
+    for (const seg of segments) {
+      expect(seg.char_count).toBeLessThanOrEqual(2100);
+    }
+  });
+});
+
+// -- prepareImport with JSONL sessions --
+
+describe("prepareImport with sessionsDir", () => {
+  it("includes JSONL segments alongside markdown segments", () => {
+    // Set up markdown
+    writeFileSync(
+      join(tmpDir, "MEMORY.md"),
+      "# Facts\n\nThe project uses SQLite with WAL mode for optimal concurrent reads and minimal write contention.",
+    );
+
+    // Set up JSONL sessions
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+
+    const sessionContent = [
+      sessionHeader("sess1", "2026-03-20T10:00:00Z"),
+      messageLine("user", "How is the database configured?", "2026-03-20T10:00:01Z"),
+      messageLine("assistant", "The database uses SQLite with WAL mode and connection pooling configured via the memory manager.", "2026-03-20T10:00:02Z"),
+    ].join("\n");
+    writeFileSync(join(sessDir, "sess1.jsonl"), sessionContent);
+
+    const result = prepareImport(tmpDir, undefined, sessDir);
+
+    // Should have segments from both sources
+    expect(result.files.length).toBeGreaterThanOrEqual(2);
+    expect(result.totalSegments).toBeGreaterThanOrEqual(2);
+
+    // Check markdown file is present
+    const mdFile = result.files.find((f) => f.path === "MEMORY.md");
+    expect(mdFile).toBeDefined();
+    expect(mdFile!.evergreen).toBe(true);
+
+    // Check JSONL file is present
+    const jsonlFile = result.files.find((f) => f.path.includes("sess1.jsonl"));
+    expect(jsonlFile).toBeDefined();
+    expect(jsonlFile!.evergreen).toBe(false);
+  });
+
+  it("assigns globally unique IDs across markdown and JSONL segments", () => {
+    writeFileSync(join(tmpDir, "MEMORY.md"), "# A\n\nContent A that is long enough.");
+
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+    const sessionContent = [
+      sessionHeader("sess1", "2026-03-20T10:00:00Z"),
+      messageLine("user", "Question that is long enough to be a segment", "2026-03-20T10:00:01Z"),
+      messageLine("assistant", "Answer that provides enough detail to be meaningful", "2026-03-20T10:00:02Z"),
+    ].join("\n");
+    writeFileSync(join(sessDir, "sess1.jsonl"), sessionContent);
+
+    const result = prepareImport(tmpDir, undefined, sessDir);
+
+    const ids = result.segments.map((s) => s.id);
+    const uniqueIds = new Set(ids);
+    expect(uniqueIds.size).toBe(ids.length);
+  });
+
+  it("works without sessionsDir (backward compatible)", () => {
+    writeFileSync(join(tmpDir, "MEMORY.md"), "# Facts\n\nSome content.");
+    const result = prepareImport(tmpDir);
+    expect(result.totalSegments).toBeGreaterThanOrEqual(1);
+  });
+
+  it("handles errors in JSONL files gracefully", () => {
+    const sessDir = join(tmpDir, "sessions");
+    mkdirSync(sessDir, { recursive: true });
+    const badFile = join(sessDir, "bad.jsonl");
+    writeFileSync(badFile, "{}");
+    chmodSync(badFile, 0o000);
+
+    writeFileSync(
+      join(tmpDir, "MEMORY.md"),
+      "# Facts\n\nSome content that is long enough.",
+    );
+
+    const result = prepareImport(tmpDir, undefined, sessDir);
+
+    // Markdown should still be processed
+    expect(result.totalSegments).toBeGreaterThanOrEqual(1);
+    // JSONL error should be recorded
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].path).toContain("bad.jsonl");
+
+    chmodSync(badFile, 0o644);
   });
 });

@@ -39,6 +39,7 @@ export type PrepareResult = {
 // -- Constants --
 
 const DATE_FILENAME_RE = /^(\d{4}-\d{2}-\d{2})\.md$/;
+const DATE_ISO_RE = /^\d{4}-\d{2}-\d{2}/;
 const FRONTMATTER_RE = /^\uFEFF?---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*\r?\n/;
 const MAX_SEGMENT_CHARS = 2000;
 const MIN_SEGMENT_CHARS = 200;
@@ -355,6 +356,270 @@ function mergeSmallSegments(
   return result;
 }
 
+// -- JSONL session discovery & parsing --
+
+/**
+ * Discover JSONL session files in the agent's sessions directory.
+ * Looks for *.jsonl files, skipping backups (.jsonl.bak.*), lock files (.jsonl.lock),
+ * and compaction backups. Includes .jsonl.reset.* and .jsonl.deleted.* per OpenClaw convention.
+ */
+export function discoverSessionFiles(sessionsDir: string): string[] {
+  if (!existsSync(sessionsDir) || !statSync(sessionsDir).isDirectory()) {
+    return [];
+  }
+
+  const found: string[] = [];
+
+  let entries;
+  try {
+    entries = readdirSync(sessionsDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const name = entry.name;
+
+    // Include: *.jsonl, *.jsonl.reset.*, *.jsonl.deleted.*
+    // Exclude: *.jsonl.bak.*, *.jsonl.lock, sessions.json
+    if (name.endsWith(".jsonl") || /\.jsonl\.(reset|deleted)\.\d+$/.test(name)) {
+      if (name.endsWith(".lock") || name.includes(".bak.")) continue;
+      found.push(join(sessionsDir, name));
+    }
+  }
+
+  found.sort((a, b) => a.localeCompare(b));
+  return found;
+}
+
+/**
+ * Content block in an OpenClaw JSONL message.
+ * We only extract text blocks; tool calls, thinking, etc. are skipped.
+ */
+type JsonlContentBlock = {
+  type: string;
+  text?: string;
+  name?: string;
+};
+
+type JsonlMessage = {
+  role: string;
+  content?: JsonlContentBlock[] | string;
+};
+
+type JsonlEntry = {
+  type?: string;
+  timestamp?: string;
+  message?: JsonlMessage;
+  id?: string;
+  cwd?: string;
+  parentSession?: string;
+};
+
+/**
+ * Parse a JSONL session file and extract conversation turns as ImportSegments.
+ *
+ * Strategy:
+ * - Extract user and assistant text messages (skip tool calls, thinking, system)
+ * - Group consecutive messages into conversation chunks
+ * - Apply the same size limits as markdown segmentation
+ * - Use the session timestamp for dating
+ */
+export function parseSessionJsonl(
+  content: string,
+  filePath: string,
+  sessionsDir: string,
+): ImportSegment[] {
+  const lines = content.split("\n").filter((l) => l.trim());
+  if (lines.length === 0) return [];
+
+  const relPath = toPosixRelative(dirname(sessionsDir), filePath);
+  let sessionDate: string | null = null;
+
+  // Collect text turns
+  const turns: Array<{ role: string; text: string; timestamp: string | null }> = [];
+
+  for (const line of lines) {
+    let entry: JsonlEntry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue; // Skip malformed lines
+    }
+
+    // Extract session date from session header or first entry timestamp
+    if (!sessionDate && entry.timestamp) {
+      const match = DATE_ISO_RE.exec(entry.timestamp);
+      if (match) sessionDate = match[0];
+    }
+
+    // Skip non-message entries (session headers, compaction, custom, etc.)
+    if (entry.type !== "message" || !entry.message) continue;
+
+    const { role, content: msgContent } = entry.message;
+
+    // Only extract user and assistant text
+    if (role !== "user" && role !== "assistant") continue;
+
+    const text = extractTextFromContent(msgContent);
+    if (!text.trim()) continue;
+
+    turns.push({ role, text: text.trim(), timestamp: entry.timestamp ?? null });
+  }
+
+  if (turns.length === 0) return [];
+
+  // Group turns into conversation chunks respecting MAX_SEGMENT_CHARS
+  const segments = groupTurnsIntoSegments(turns, relPath, sessionDate);
+  return segments;
+}
+
+function extractTextFromContent(content: JsonlContentBlock[] | string | undefined): string {
+  if (!content) return "";
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+
+  return content
+    .filter((block) => block.type === "text" && block.text)
+    .map((block) => block.text!)
+    .join("\n\n");
+}
+
+/**
+ * Group conversation turns into segments that respect size limits.
+ * Each segment is formatted as a conversation transcript with role prefixes.
+ */
+function groupTurnsIntoSegments(
+  turns: Array<{ role: string; text: string; timestamp: string | null }>,
+  relPath: string,
+  sessionDate: string | null,
+): ImportSegment[] {
+  const segments: ImportSegment[] = [];
+  let currentChunk = "";
+  let segmentId = 0;
+  let chunkTimestamp: string | null = null;
+
+  const flushChunk = () => {
+    const trimmed = currentChunk.trim();
+    if (trimmed.length >= MIN_SEGMENT_CHARS) {
+      segments.push({
+        id: segmentId++,
+        source_file: relPath,
+        heading: null,
+        heading_level: null,
+        date: extractDateFromTimestamp(chunkTimestamp) ?? sessionDate,
+        evergreen: false,
+        content: trimmed,
+        char_count: trimmed.length,
+      });
+    } else if (trimmed.length > 0 && segments.length > 0) {
+      // Merge small trailing chunk into previous segment
+      const prev = segments[segments.length - 1];
+      prev.content += "\n\n" + trimmed;
+      prev.char_count = prev.content.length;
+    } else if (trimmed.length > 0) {
+      // First chunk is small — still emit it, it may get merged later
+      segments.push({
+        id: segmentId++,
+        source_file: relPath,
+        heading: null,
+        heading_level: null,
+        date: extractDateFromTimestamp(chunkTimestamp) ?? sessionDate,
+        evergreen: false,
+        content: trimmed,
+        char_count: trimmed.length,
+      });
+    }
+    currentChunk = "";
+    chunkTimestamp = null;
+  };
+
+  for (const turn of turns) {
+    const prefix = turn.role === "user" ? "User" : "Assistant";
+    const formatted = `${prefix}: ${turn.text}`;
+
+    // If single turn exceeds max, flush current chunk and split the turn
+    if (formatted.length > MAX_SEGMENT_CHARS) {
+      if (currentChunk) flushChunk();
+
+      // Split oversized turn by paragraphs or word boundaries
+      const parts = splitLongText(formatted, MAX_SEGMENT_CHARS);
+      for (const part of parts) {
+        segments.push({
+          id: segmentId++,
+          source_file: relPath,
+          heading: null,
+          heading_level: null,
+          date: extractDateFromTimestamp(turn.timestamp) ?? sessionDate,
+          evergreen: false,
+          content: part,
+          char_count: part.length,
+        });
+      }
+      continue;
+    }
+
+    const candidate = currentChunk ? `${currentChunk}\n\n${formatted}` : formatted;
+
+    if (candidate.length > MAX_SEGMENT_CHARS) {
+      flushChunk();
+      currentChunk = formatted;
+      chunkTimestamp = turn.timestamp;
+    } else {
+      if (!chunkTimestamp) chunkTimestamp = turn.timestamp;
+      currentChunk = candidate;
+    }
+  }
+
+  if (currentChunk) flushChunk();
+
+  return segments;
+}
+
+/** Split long text into chunks at paragraph or word boundaries. */
+function splitLongText(text: string, maxSize: number): string[] {
+  const result: string[] = [];
+  const paragraphs = text.split(/\n\s*\n/).filter((p) => p.trim());
+
+  let current = "";
+  for (const para of paragraphs) {
+    if (para.length > maxSize) {
+      if (current) {
+        result.push(current.trim());
+        current = "";
+      }
+      // Word-boundary split
+      let rest = para;
+      while (rest.length > maxSize) {
+        let splitAt = rest.lastIndexOf(" ", maxSize);
+        if (splitAt <= 0) splitAt = maxSize;
+        result.push(rest.slice(0, splitAt).trim());
+        rest = rest.slice(splitAt).trim();
+      }
+      if (rest) result.push(rest);
+      continue;
+    }
+
+    const candidate = current ? `${current}\n\n${para}` : para;
+    if (candidate.length > maxSize && current) {
+      result.push(current.trim());
+      current = para;
+    } else {
+      current = candidate;
+    }
+  }
+
+  if (current) result.push(current.trim());
+  return result.length > 0 ? result : [text.trim()];
+}
+
+function extractDateFromTimestamp(timestamp: string | null): string | null {
+  if (!timestamp) return null;
+  const match = DATE_ISO_RE.exec(timestamp);
+  return match ? match[0] : null;
+}
+
 // -- Metadata helpers --
 
 export function isEvergreenFile(filePath: string, workspaceDir: string): boolean {
@@ -375,10 +640,14 @@ export function extractDateFromFilename(filename: string): string | null {
  * Preprocess memory-core files: discover, segment, extract metadata.
  * Returns segments ready for LLM enrichment and storage.
  * Continues processing on per-file errors; collects errors in result.
+ *
+ * @param sessionsDir - Optional path to OpenClaw sessions directory
+ *   (e.g. ~/.openclaw/agents/<agentId>/sessions/) for JSONL import.
  */
 export function prepareImport(
   workspaceDir: string,
   extraPaths?: string[],
+  sessionsDir?: string,
 ): PrepareResult {
   const files = discoverMemoryFiles(workspaceDir, extraPaths);
 
@@ -409,6 +678,36 @@ export function prepareImport(
         path: toPosixRelative(workspaceDir, filePath),
         error: err instanceof Error ? err.message : String(err),
       });
+    }
+  }
+
+  // Discover and process JSONL session files
+  if (sessionsDir) {
+    const sessionFiles = discoverSessionFiles(sessionsDir);
+
+    for (const filePath of sessionFiles) {
+      try {
+        const content = readFileSync(filePath, "utf8");
+        const segments = parseSessionJsonl(content, filePath, sessionsDir);
+
+        const renumbered = segments.map((seg) => ({
+          ...seg,
+          id: globalId++,
+        }));
+
+        allSegments.push(...renumbered);
+        fileInfos.push({
+          path: toPosixRelative(dirname(sessionsDir), filePath),
+          segmentCount: renumbered.length,
+          evergreen: false,
+          date: renumbered[0]?.date ?? null,
+        });
+      } catch (err) {
+        errors.push({
+          path: toPosixRelative(dirname(sessionsDir), filePath),
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
   }
 

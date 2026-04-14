@@ -393,6 +393,7 @@ function createWorkspace(
                 temporal_anchor: seg.date,
               }));
 
+        const sessionsDir = agentDir ? join(agentDir, "sessions") : undefined;
         const migrationResult = await runMigration({
           workspaceDir,
           stateDir: initDeps.stateDir ?? workspaceDir,
@@ -401,6 +402,7 @@ function createWorkspace(
           dbState,
           enrich: enrichFn,
           logger: logger ?? { info: () => {}, warn: () => {}, error: () => {} },
+          sessionsDir,
         });
 
         if (migrationResult.status === "completed") {

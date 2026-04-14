@@ -65,6 +65,8 @@ export type MigrationDeps = {
     error: (msg: string) => void;
   };
   extraPaths?: string[];
+  /** Path to OpenClaw sessions directory for JSONL session import. */
+  sessionsDir?: string;
 };
 
 export type MigrationResult = {
@@ -106,7 +108,7 @@ function calculateImportStrength(segmentDate: string | null): number {
  * Run the memory-core migration. Idempotent — checks db state before proceeding.
  */
 export async function runMigration(deps: MigrationDeps): Promise<MigrationResult> {
-  const { workspaceDir, store, dbState, enrich, logger, extraPaths } = deps;
+  const { workspaceDir, store, dbState, enrich, logger, extraPaths, sessionsDir } = deps;
 
   // 1. Check if already migrated
   const completedAt = dbState.get(STATE_KEY_COMPLETED);
@@ -117,7 +119,7 @@ export async function runMigration(deps: MigrationDeps): Promise<MigrationResult
 
   // 2. Discover and segment
   logger.info("Scanning for memory-core files...");
-  const result = prepareImport(workspaceDir, extraPaths);
+  const result = prepareImport(workspaceDir, extraPaths, sessionsDir);
 
   if (result.errors.length > 0) {
     for (const err of result.errors) {
