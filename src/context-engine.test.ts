@@ -1806,6 +1806,14 @@ describe("parseExtractionResponse", () => {
     expect(facts[0].content).toBe("valid");
   });
 
+  it("accepts constraint and profile types", () => {
+    const response = '[{"type": "constraint", "content": "Must use SQLite only"}, {"type": "profile", "content": "Senior backend engineer"}]';
+    const facts = parseExtractionResponse(response);
+    expect(facts).toHaveLength(2);
+    expect(facts[0].type).toBe("constraint");
+    expect(facts[1].type).toBe("profile");
+  });
+
   it("defaults unknown types to 'fact'", () => {
     const response = '[{"type": "unknown_type", "content": "something"}]';
     const facts = parseExtractionResponse(response);
