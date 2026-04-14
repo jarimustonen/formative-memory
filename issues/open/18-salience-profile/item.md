@@ -61,6 +61,27 @@ When no profile exists, the current hardcoded defaults apply.
 - Fallback to defaults when no profile exists
 - Document the feature and file format
 
+## Fact type taxonomy
+
+The extraction LLM assigns a type to each extracted fact. The taxonomy must cover broadly human-relevant topics, not just software engineering:
+
+### Current types
+`preference`, `fact`, `goal`, `project`, `event`, `relationship`
+
+### Known gaps
+- **`constraint`** — "must use Node 18", "no Docker", "budget is €500/month", "allergic to nuts"
+- **`profile`/`background`** — "senior backend engineer", "new to Rust", "lives in Helsinki", "has two kids"
+- **`fact` is too broad** — absorbs profile, constraints, habits, health, location, background. Should be narrowed or split.
+- **`project` is ambiguous** — conflates durable project identity ("building a memory plugin") with transient implementation ("refactoring merge logic"). Needs narrow definition.
+
+### Design principles for taxonomy
+- Must cover personal life, work, health, relationships, hobbies, preferences, constraints — not just coding
+- Types are used for merge candidate selection, so overly broad types degrade consolidation quality
+- Unknown types from LLM should fall back to `fact`, not crash
+- Taxonomy should be extensible via salience profile (user-defined types?)
+
+This taxonomy design is part of the salience profile work since the profile may want to influence which types are extracted.
+
 ## Out of scope (for now)
 
 - Automatic profile learning/updating from conversation patterns
