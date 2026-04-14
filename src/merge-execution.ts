@@ -19,16 +19,9 @@
 import type { MemoryDatabase, MemoryRow } from "./db.ts";
 import { contentHash } from "./hash.ts";
 import type { Logger } from "./logger.ts";
-import { nullLogger } from "./logger.ts";
+import { nullLogger, preview } from "./logger.ts";
 import type { MergePair } from "./merge-candidates.ts";
 import type { MemorySource } from "./types.ts";
-
-// -- Helpers --
-
-/** Sanitize content for log output: collapse whitespace, truncate. */
-function preview(text: string, max = 60): string {
-  return text.replace(/\s+/g, " ").trim().slice(0, max) || "<empty>";
-}
 
 // -- Types --
 

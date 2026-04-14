@@ -97,6 +97,13 @@ export function createLogger(opts: {
   };
 }
 
+/** Sanitize content for log output: collapse whitespace/control chars, truncate. */
+export function preview(text: string, max = 60): string {
+  const sanitized = text.replace(/[\x00-\x1F\x7F\s]+/g, " ").trim();
+  if (!sanitized) return "<empty>";
+  return sanitized.length > max ? sanitized.slice(0, max - 1) + "…" : sanitized;
+}
+
 /** A silent logger that discards all output. Useful for tests. */
 export const nullLogger: Logger = {
   debug: () => {},

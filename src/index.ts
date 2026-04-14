@@ -943,7 +943,7 @@ const associativeMemoryPlugin = {
         try {
           const ws = getWorkspace(ctx?.workspaceDir ?? ".");
           const db = ws.manager.getDatabase();
-          const count = db.transaction(() => applyTemporalTransitions(db));
+          const count = db.transaction(() => applyTemporalTransitions(db, log));
           if (count > 0) {
             log.info(`Scheduled temporal transitions: ${count} transitioned`);
           }

@@ -9,15 +9,8 @@
 
 import type { MemoryDatabase } from "./db.ts";
 import type { Logger } from "./logger.ts";
-import { nullLogger } from "./logger.ts";
+import { nullLogger, preview } from "./logger.ts";
 import type { TemporalState } from "./types.ts";
-
-// -- Helpers --
-
-/** Sanitize content for log output: collapse whitespace, truncate. */
-function preview(text: string, max = 60): string {
-  return text.replace(/\s+/g, " ").trim().slice(0, max) || "<empty>";
-}
 
 // -- Constants --
 
@@ -66,6 +59,7 @@ export function applyCatchUpDecay(
   if (lastConsolidationMs == null || !Number.isFinite(lastConsolidationMs)) return 0;
 
   const allMemories = db.getAllMemories();
+  const debug = log.isDebugEnabled();
   let count = 0;
   const dayMs = 1000 * 60 * 60 * 24;
 
@@ -83,7 +77,7 @@ export function applyCatchUpDecay(
     const effectiveCycles = Math.min(cycles, MAX_CATCHUP_CYCLES);
     const factor = mem.consolidated ? DECAY_CONSOLIDATED : DECAY_WORKING;
     const newStrength = mem.strength * Math.pow(factor, effectiveCycles);
-    if (log.isDebugEnabled()) {
+    if (debug) {
       log.debug(
         `catch-up decay: "${preview(mem.content)}" ${mem.strength.toFixed(3)} → ${newStrength.toFixed(3)} (${effectiveCycles} cycles, ${mem.consolidated ? "consolidated" : "working"})`,
       );
@@ -97,10 +91,11 @@ export function applyCatchUpDecay(
   const globalCycles = Math.max(0, Math.floor(globalDaysSince) - 1);
   if (globalCycles > 0) {
     const effectiveGlobal = Math.min(globalCycles, MAX_CATCHUP_CYCLES);
-    if (log.isDebugEnabled()) {
-      log.debug(`catch-up decay: associations ×${Math.pow(DECAY_ASSOCIATION, effectiveGlobal).toFixed(4)} (${effectiveGlobal} cycles)`);
+    const associationFactor = Math.pow(DECAY_ASSOCIATION, effectiveGlobal);
+    if (debug) {
+      log.debug(`catch-up decay: associations ×${associationFactor.toFixed(4)} (${effectiveGlobal} cycles)`);
     }
-    db.decayAllAssociationWeights(Math.pow(DECAY_ASSOCIATION, effectiveGlobal));
+    db.decayAllAssociationWeights(associationFactor);
   }
 
   if (count > 0) {
@@ -145,6 +140,7 @@ export function applyReinforcement(db: MemoryDatabase, log: Logger = nullLogger)
 
   // Apply reinforcements and mark as processed — all in one transaction
   return db.transaction(() => {
+    const debug = log.isDebugEnabled();
     let count = 0;
 
     for (const [memoryId, totalReinforcement] of reinforcements) {
@@ -155,7 +151,7 @@ export function applyReinforcement(db: MemoryDatabase, log: Logger = nullLogger)
       const newStrength = Math.max(0, Math.min(mem.strength + totalReinforcement, 1.0));
       if (newStrength !== mem.strength) {
         db.updateStrength(memoryId, newStrength);
-        if (log.isDebugEnabled()) {
+        if (debug) {
           log.debug(
             `reinforce: "${preview(mem.content)}" ${mem.strength.toFixed(3)} → ${newStrength.toFixed(3)} (+${totalReinforcement.toFixed(3)})`,
           );
@@ -189,12 +185,13 @@ export function applyReinforcement(db: MemoryDatabase, log: Logger = nullLogger)
  */
 export function applyDecay(db: MemoryDatabase, log: Logger = nullLogger): number {
   const allMemories = db.getAllMemories();
+  const debug = log.isDebugEnabled();
   let count = 0;
 
   for (const mem of allMemories) {
     const factor = mem.consolidated ? DECAY_CONSOLIDATED : DECAY_WORKING;
     const newStrength = mem.strength * factor;
-    if (log.isDebugEnabled()) {
+    if (debug) {
       log.debug(
         `decay: "${preview(mem.content)}" ${mem.strength.toFixed(3)} → ${newStrength.toFixed(3)} (×${factor})`,
       );
@@ -204,7 +201,7 @@ export function applyDecay(db: MemoryDatabase, log: Logger = nullLogger): number
   }
 
   // Decay association weights
-  if (log.isDebugEnabled()) {
+  if (debug) {
     log.debug(`decay: associations ×${DECAY_ASSOCIATION}`);
   }
   applyAssociationDecay(db);
@@ -248,6 +245,7 @@ export function updateCoRetrievalAssociations(db: MemoryDatabase, log: Logger = 
   const groups = db.getCoRetrievalGroups();
   const now = new Date().toISOString();
   const validIds = new Set(db.getAllMemories().map((m) => m.id));
+  const debug = log.isDebugEnabled();
   let count = 0;
 
   for (const group of groups) {
@@ -257,7 +255,7 @@ export function updateCoRetrievalAssociations(db: MemoryDatabase, log: Logger = 
     for (let i = 0; i < ids.length; i++) {
       for (let j = i + 1; j < ids.length; j++) {
         db.upsertAssociationProbOr(ids[i], ids[j], CO_RETRIEVAL_BASE_WEIGHT, now);
-        if (log.isDebugEnabled()) {
+        if (debug) {
           log.debug(`associate: co-retrieval ${ids[i].slice(0, 8)}…↔${ids[j].slice(0, 8)}… (+${CO_RETRIEVAL_BASE_WEIGHT})`);
         }
         count++;
@@ -291,6 +289,7 @@ export function updateTransitiveAssociations(
 ): number {
   const allMemories = db.getAllMemories();
   const now = new Date().toISOString();
+  const debug = log.isDebugEnabled();
   let count = 0;
 
   for (const mem of allMemories) {
@@ -319,7 +318,7 @@ export function updateTransitiveAssociations(
         if (newWeight - existing < 1e-9) continue;
 
         db.upsertAssociation(otherId1, otherId2, newWeight, now);
-        if (log.isDebugEnabled()) {
+        if (debug) {
           log.debug(
             `associate: transitive ${otherId1.slice(0, 8)}…↔${otherId2.slice(0, 8)}… via ${mem.id.slice(0, 8)}… weight=${newWeight.toFixed(3)}`,
           );
@@ -354,13 +353,13 @@ export const PRUNE_ASSOCIATION_THRESHOLD = 0.01;
  */
 export function applyPruning(db: MemoryDatabase, log: Logger = nullLogger): { memoriesPruned: number; associationsPruned: number } {
   const allMemories = db.getAllMemories();
+  const debug = log.isDebugEnabled();
   let memoriesPruned = 0;
-  const INFO_ITEM_LIMIT = 20;
 
   for (const mem of allMemories) {
     if (mem.strength <= PRUNE_STRENGTH_THRESHOLD) {
-      if (memoriesPruned < INFO_ITEM_LIMIT) {
-        log.info(
+      if (debug) {
+        log.debug(
           `prune: removing "${preview(mem.content, 80)}" (strength=${mem.strength.toFixed(3)}, type=${mem.type})`,
         );
       }
@@ -372,9 +371,7 @@ export function applyPruning(db: MemoryDatabase, log: Logger = nullLogger): { me
   const associationsPruned = db.pruneWeakAssociations(PRUNE_ASSOCIATION_THRESHOLD);
 
   if (memoriesPruned > 0 || associationsPruned > 0) {
-    const overflow = memoriesPruned > INFO_ITEM_LIMIT
-      ? ` (${memoriesPruned - INFO_ITEM_LIMIT} more omitted)` : "";
-    log.info(`prune: ${memoriesPruned} memories, ${associationsPruned} associations removed${overflow}`);
+    log.info(`prune: ${memoriesPruned} memories, ${associationsPruned} associations removed`);
   }
 
   return { memoriesPruned, associationsPruned };
@@ -392,8 +389,8 @@ export function applyPruning(db: MemoryDatabase, log: Logger = nullLogger): { me
 export function applyTemporalTransitions(db: MemoryDatabase, log: Logger = nullLogger): number {
   const now = new Date();
   const allMemories = db.getAllMemories();
+  const debug = log.isDebugEnabled();
   let count = 0;
-  const INFO_ITEM_LIMIT = 20;
 
   for (const mem of allMemories) {
     if (!mem.temporal_anchor) continue;
@@ -412,8 +409,8 @@ export function applyTemporalTransitions(db: MemoryDatabase, log: Logger = nullL
     }
 
     if (newState) {
-      if (count < INFO_ITEM_LIMIT) {
-        log.info(
+      if (debug) {
+        log.debug(
           `temporal: "${preview(mem.content)}" ${mem.temporal_state} → ${newState}`,
         );
       }
@@ -423,9 +420,7 @@ export function applyTemporalTransitions(db: MemoryDatabase, log: Logger = nullL
   }
 
   if (count > 0) {
-    const overflow = count > INFO_ITEM_LIMIT
-      ? ` (${count - INFO_ITEM_LIMIT} more omitted)` : "";
-    log.info(`temporal: ${count} memories transitioned${overflow}`);
+    log.info(`temporal: ${count} memories transitioned`);
   }
 
   return count;
