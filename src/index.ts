@@ -24,6 +24,7 @@ import type { OpenClawConfig } from "openclaw/plugin-sdk";
 import type { AssociativeMemoryConfig } from "./config.ts";
 import { memoryConfigSchema } from "./config.ts";
 import { applyTemporalTransitions } from "./consolidation-steps.ts";
+import { includesSystemEventToken, reconcileCronJob } from "./cron-utils.ts";
 import { runConsolidation } from "./consolidation.ts";
 import { CONTEXT_ENGINE_ID, createAssociativeMemoryContextEngine } from "./context-engine.ts";
 import { EmbeddingCircuitBreaker } from "./embedding-circuit-breaker.ts";
@@ -902,71 +903,6 @@ const associativeMemoryPlugin = {
     /** All known managed system event tokens (used for warn-logging unmatched heartbeat events). */
     const MANAGED_TOKENS = [CONSOLIDATION_CRON_TRIGGER, TEMPORAL_CRON_TRIGGER];
 
-    /**
-     * Reconcile a single managed cron job: create if missing, update if drifted, prune duplicates.
-     * Identifies managed jobs by description tag OR matching name + payload text.
-     * Sorts by createdAtMs for deterministic primary selection.
-     */
-    async function reconcileCronJob(
-      cron: any,
-      allJobs: any[],
-      desired: {
-        name: string;
-        description: string;
-        enabled: boolean;
-        schedule: { kind: "cron"; expr: string };
-        sessionTarget: string;
-        wakeMode: string;
-        payload: { kind: "systemEvent"; text: string };
-      },
-      tag: string,
-    ): Promise<void> {
-      // Identify managed jobs: tag in description OR matching name + payload
-      const managed = allJobs
-        .filter(
-          (j: any) =>
-            j.description?.includes(tag) ||
-            (j.name === desired.name && j.payload?.text === desired.payload.text),
-        )
-        .sort((a: any, b: any) => (a.createdAtMs ?? 0) - (b.createdAtMs ?? 0));
-
-      if (managed.length === 0) {
-        await cron.add(desired);
-        log.info(`Registered cron job: ${desired.name}`);
-        return;
-      }
-
-      // Update primary job if any behavioral field drifted
-      const primary = managed[0];
-      const needsUpdate =
-        primary.schedule?.expr !== desired.schedule.expr ||
-        primary.wakeMode !== desired.wakeMode ||
-        primary.enabled !== desired.enabled ||
-        primary.payload?.text !== desired.payload.text ||
-        primary.payload?.kind !== desired.payload.kind ||
-        primary.sessionTarget !== desired.sessionTarget;
-
-      if (needsUpdate) {
-        await cron.update(primary.id, {
-          schedule: desired.schedule,
-          wakeMode: desired.wakeMode,
-          enabled: desired.enabled,
-          payload: desired.payload,
-          sessionTarget: desired.sessionTarget,
-        });
-        log.info(`Updated cron job: ${desired.name}`);
-      }
-
-      // Prune duplicates (best-effort, one failure doesn't block the rest)
-      for (let i = 1; i < managed.length; i++) {
-        try {
-          await cron.remove(managed[i].id);
-        } catch (err) {
-          log.warn(`Failed to remove duplicate cron job ${managed[i].id}: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-    }
-
     // Register cron jobs on gateway startup (same pattern as memory-core dreaming).
     api.registerHook("gateway:startup", async (event: any) => {
       // Extract cron service (dual-path: context.cron or context.deps.cron)
@@ -980,7 +916,13 @@ const associativeMemoryPlugin = {
       // Capture stateDir from startup context if available
       if (context?.stateDir) runtimePaths.stateDir = context.stateDir;
 
-      const allJobs = await cron.list({ includeDisabled: true });
+      let allJobs: any[];
+      try {
+        allJobs = await cron.list({ includeDisabled: true });
+      } catch (err) {
+        log.warn(`Failed to list cron jobs — scheduled consolidation disabled: ${err instanceof Error ? err.message : String(err)}`);
+        return;
+      }
 
       // Reconcile consolidation cron (isolated error handling)
       try {
@@ -992,7 +934,7 @@ const associativeMemoryPlugin = {
           sessionTarget: "main",
           wakeMode: "now",
           payload: { kind: "systemEvent" as const, text: CONSOLIDATION_CRON_TRIGGER },
-        }, CONSOLIDATION_CRON_TAG);
+        }, CONSOLIDATION_CRON_TAG, log);
       } catch (err) {
         log.warn(`Failed to reconcile consolidation cron: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -1007,51 +949,35 @@ const associativeMemoryPlugin = {
           sessionTarget: "main",
           wakeMode: "now",
           payload: { kind: "systemEvent" as const, text: TEMPORAL_CRON_TRIGGER },
-        }, TEMPORAL_CRON_TAG);
+        }, TEMPORAL_CRON_TAG, log);
       } catch (err) {
         log.warn(`Failed to reconcile temporal cron: ${err instanceof Error ? err.message : String(err)}`);
       }
     }, { name: "formative-memory-consolidation-cron" } as any);
-
-    // -- Token matching (mirrors memory-core's includesSystemEventToken) --
-
-    function normalizeTrimmedString(value: unknown): string | undefined {
-      if (typeof value !== "string") return undefined;
-      const trimmed = value.trim();
-      return trimmed.length > 0 ? trimmed : undefined;
-    }
-
-    function includesSystemEventToken(cleanedBody: string, eventText: string): boolean {
-      const normalizedBody = normalizeTrimmedString(cleanedBody);
-      const normalizedEventText = normalizeTrimmedString(eventText);
-      if (!normalizedBody || !normalizedEventText) return false;
-      if (normalizedBody === normalizedEventText) return true;
-      return normalizedBody.split(/\r?\n/).some((line) => line.trim() === normalizedEventText);
-    }
 
     // Handle cron-triggered consolidation and temporal transitions via before_agent_reply hook.
     // When cron fires, OpenClaw sends a systemEvent with our trigger text.
     // We intercept it, run the appropriate operation, and return handled=true to skip the LLM.
     api.on("before_agent_reply", async (event: any, ctx: any) => {
       const body = event?.cleanedBody;
-      const bodyPreview = typeof body === "string" && body.length > 200
-        ? `${body.slice(0, 100)}…${body.slice(-100)}`
-        : body;
-      log.debug(
-        `cron-check trigger=${String(ctx?.trigger)} session=${String(ctx?.sessionKey)} body=${JSON.stringify(bodyPreview ?? null)}`,
-      );
-
       if (!body) return;
 
       // Only process during heartbeat context (matches memory-core pattern)
       if (ctx?.trigger !== "heartbeat") return;
 
+      const bodyPreview = typeof body === "string" && body.length > 200
+        ? `${body.slice(0, 100)}…${body.slice(-100)}`
+        : body;
+      log.debug(
+        `cron-check session=${String(ctx?.sessionKey)} body=${JSON.stringify(bodyPreview ?? null)}`,
+      );
+
       const hasConsolidation = includesSystemEventToken(body, CONSOLIDATION_CRON_TRIGGER);
       const hasTemporal = includesSystemEventToken(body, TEMPORAL_CRON_TRIGGER);
 
       if (!hasConsolidation && !hasTemporal) {
-        // Warn if body looks like a system event token but doesn't match any known token
-        if (typeof body === "string" && MANAGED_TOKENS.some(() => /^__\w+__$/m.test(body.trim()))) {
+        // Warn if body looks like an unrecognized system event token
+        if (typeof body === "string" && /^__\w+__$/m.test(body.trim())) {
           log.warn(`cron-check: heartbeat body looks like a system event but matches no managed token`);
         }
         return;
@@ -1059,57 +985,61 @@ const associativeMemoryPlugin = {
 
       const ws = getWorkspace(ctx?.workspaceDir ?? ".");
       const db = ws.manager.getDatabase();
-      const replies: string[] = [];
 
-      // Run temporal transitions if token present
-      if (hasTemporal) {
+      // Temporal transitions only (consolidation already includes them internally)
+      if (hasTemporal && !hasConsolidation) {
         try {
           const count = db.transaction(() => applyTemporalTransitions(db, log));
           if (count > 0) {
             log.info(`Scheduled temporal transitions: ${count} transitioned`);
           }
-          replies.push(count > 0 ? `Temporal transitions: ${count} updated.` : "No temporal transitions needed.");
+          return {
+            handled: true,
+            reply: { text: count > 0 ? `Temporal transitions: ${count} updated.` : "No temporal transitions needed." },
+            reason: "associative-memory-temporal",
+          };
         } catch (err) {
           log.warn(`Scheduled temporal transitions failed: ${err instanceof Error ? err.message : String(err)}`);
-          replies.push("Temporal transitions failed.");
+          return { handled: true, reply: { text: "Temporal transitions failed." }, reason: "associative-memory-temporal-error" };
         }
       }
 
-      // Run full consolidation if token present
-      if (hasConsolidation) {
-        try {
-          const llmConfig = resolveLlmConfig(runtimePaths.stateDir, runtimePaths.agentDir, log);
-          const mergeContentProducer = llmConfig
-            ? async (
-                a: { id: string; content: string; type: string },
-                b: { id: string; content: string; type: string },
-              ) => {
-                const prompt = `Merge these two memory notes into a single, concise note that preserves all information. Return ONLY the merged content text, nothing else.\n\nMemory A (${a.type}):\n${a.content}\n\nMemory B (${b.type}):\n${b.content}`;
-                const content = await callLlm(prompt, llmConfig);
-                return { content: content.trim(), type: a.type };
-              }
-            : undefined;
+      // Full consolidation (includes temporal transitions)
+      try {
+        const llmConfig = resolveLlmConfig(runtimePaths.stateDir, runtimePaths.agentDir, log);
+        const mergeContentProducer = llmConfig
+          ? async (
+              a: { id: string; content: string; type: string },
+              b: { id: string; content: string; type: string },
+            ) => {
+              const prompt = `Merge these two memory notes into a single, concise note that preserves all information. Return ONLY the merged content text, nothing else.\n\nMemory A (${a.type}):\n${a.content}\n\nMemory B (${b.type}):\n${b.content}`;
+              const content = await callLlm(prompt, llmConfig);
+              return { content: content.trim(), type: a.type };
+            }
+          : undefined;
 
-          log.debug("consolidation: starting trigger=cron");
-          const result = await runConsolidation({
-            db,
-            mergeContentProducer,
-            logger: log,
-          });
-          replies.push(`Memory consolidation complete (${result.durationMs}ms).`);
-        } catch (err) {
-          log.warn(
-            `Scheduled consolidation failed: ${err instanceof Error ? err.message : String(err)}`,
-          );
-          replies.push("Memory consolidation failed.");
-        }
+        log.debug("consolidation: starting trigger=cron");
+        const result = await runConsolidation({
+          db,
+          mergeContentProducer,
+          logger: log,
+        });
+
+        return {
+          handled: true,
+          reply: { text: `Memory consolidation complete (${result.durationMs}ms).` },
+          reason: "associative-memory-consolidation",
+        };
+      } catch (err) {
+        log.warn(
+          `Scheduled consolidation failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return {
+          handled: true,
+          reply: { text: "Memory consolidation failed." },
+          reason: "associative-memory-consolidation-error",
+        };
       }
-
-      return {
-        handled: true,
-        reply: { text: replies.join(" ") },
-        reason: hasConsolidation ? "associative-memory-consolidation" : "associative-memory-temporal",
-      };
     });
 
     // -- Startup service --
