@@ -24,6 +24,10 @@ Tämä kansio seuraa OpenClaw-pääohjelman julkaisuja ja arvioi niiden vaikutuk
 | v2026.4.7 | 🟡 Kohtalainen | [v2026.4.7.md](v2026.4.7.md) |
 | v2026.4.8 | 🟢 Ei vaikutusta | [v2026.4.8.md](v2026.4.8.md) |
 | v2026.4.9 | 🟢 Ei vaikutusta | [v2026.4.9.md](v2026.4.9.md) |
+| v2026.4.10 | 🟡 Kohtalainen | [v2026.4.10.md](v2026.4.10.md) |
+| v2026.4.11 | 🟡 Kohtalainen | [v2026.4.11.md](v2026.4.11.md) |
+| v2026.4.12 | 🟡 Kohtalainen | [v2026.4.12.md](v2026.4.12.md) |
+| v2026.4.14 | 🟡 Kohtalainen | [v2026.4.14.md](v2026.4.14.md) |
 
 ## Avoimet toimenpiteet
 
@@ -35,3 +39,11 @@ Tämä kansio seuraa OpenClaw-pääohjelman julkaisuja ja arvioi niiden vaikutuk
 - [ ] `resolveApiKeyForProvider()` auth-yksinkertaistus (v2026.4.7)
 - [ ] Memory-host-aliaksien tutkiminen (v2026.4.5)
 - [ ] Memory-wiki rinnakkaiselon seuranta (v2026.4.7)
+- [ ] Testaa Active Memory + associative-memory -yhdistelmää (v2026.4.10)
+- [ ] Tutki context enginen ja Active Memoryn recall-päällekkäisyys (v2026.4.10)
+- [ ] Plugin manifest activation/setup descriptors (v2026.4.11)
+- [ ] `openclaw.plugin.json` -manifestin kattavuuden varmistus (v2026.4.12)
+- [ ] LM Studio -embedding-providerin testaus (v2026.4.12)
+- [ ] Ollama-embedding-adapterin testaus (v2026.4.14)
+- [ ] Cron-scheduler-korjausten vaikutus issue #21:n workaroundeihin (v2026.4.14)
+- [ ] Session routing -korjauksen vaikutus cron-triggereihin (v2026.4.14)
