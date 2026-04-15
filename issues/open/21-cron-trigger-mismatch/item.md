@@ -129,6 +129,16 @@ Apply to both consolidation and temporal cron jobs.
 - Reference: `../openclaw/extensions/memory-core/src/dreaming-shared.ts` — `includesSystemEventToken()`
 - Attached logs in this directory
 
+## Upstream fixes (v2026.4.14)
+
+OpenClaw v2026.4.14 includes several cron/session fixes that may reduce or eliminate our workarounds:
+
+- **Cron scheduler: stopped inventing short retries, preserved error-backoff floor** (#66019, #66083, #66113) — Evaluate whether this resolves retry storm issues we've seen.
+- **Gateway/sessions: heartbeat/cron/exec turns no longer overwrite shared-session routing metadata** (#66073, #63733, #35300) — Critical fix. Previously our cron triggers could corrupt session routing state.
+- **Dreaming/memory-core: live queued cron event required before heartbeat hook sweep** (#66139) — Aligns with our step 4 (pending event queue check).
+
+**Action:** After upgrading to v2026.4.14+, evaluate which of our workarounds (steps 1–6) are still needed and which can be simplified.
+
 ## Success Criteria
 
 - Consolidation cron fires and is intercepted by the hook (log shows `consolidation: starting trigger=cron`)
