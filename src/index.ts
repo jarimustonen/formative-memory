@@ -259,27 +259,38 @@ type ManagedWorkspace = {
   manager: MemoryManager;
   circuitBreaker: EmbeddingCircuitBreaker;
   memoryDir: string;
+  /** Pre-check that embedding provider can be initialized. */
+  initProvider: () => Promise<void>;
 };
 
 /**
- * Create the single workspace instance for this plugin registration.
- * Provider resolution is lazy — deferred to first embed call via a cached promise.
+ * WORKAROUND: ContextEngineFactory receives no runtime context (agentDir,
+ * workspaceDir) from OpenClaw. We work around this with:
  *
- * When `initDeps` is provided, one-time startup tasks (migration, workspace
- * cleanup) are run asynchronously after workspace creation. This happens on
- * the first tool call which provides the real workspace context.
+ * 1. Lazy getters — agentDir is resolved dynamically via getAgentDir() at
+ *    each embed call, not captured once at construction time. This allows
+ *    the workspace to be created before agentDir is known (e.g. heartbeat)
+ *    and self-heal when a tool call later provides it.
+ *
+ * 2. Decoupled init — startup tasks (migration, cleanup) are tracked with a
+ *    separate flag, not tied to workspace creation. This prevents them from
+ *    being permanently skipped when the workspace is first created by a
+ *    non-tool caller (context engine, cron).
+ *
+ * 3. Non-permanent provider caching — when embedding resolution fails due
+ *    to missing agentDir, the error is NOT permanently cached. Subsequent
+ *    calls can retry once agentDir becomes available.
+ *
+ * This will be removed when OpenClaw passes context to ContextEngineFactory.
+ * See: issues/open/08-upstream-prs/proposal-factory-context.md
  */
 function createWorkspace(
   config: AssociativeMemoryConfig,
   workspaceDir: string,
   openclawConfig: OpenClawConfig,
-  agentDir?: string,
+  getAgentDir: () => string | undefined,
   logger?: Logger,
   pathResolver?: (input: string) => string,
-  initDeps?: {
-    stateDir?: string;
-    llmConfig: LlmCallerConfig | null;
-  },
 ): ManagedWorkspace {
   const memoryDir = resolveMemoryDir(config, workspaceDir, pathResolver);
   const circuitBreaker = new EmbeddingCircuitBreaker({
@@ -300,35 +311,45 @@ function createWorkspace(
     },
   });
 
-  // Lazy provider: resolved on first embed call, cached as promise for
-  // concurrency safety — concurrent callers await the same resolution.
-  // On rejection the cache is cleared so subsequent calls can retry.
+  // Lazy provider: resolved on first embed call, cached as promise.
+  // agentDir is read dynamically via getAgentDir() so the provider can
+  // self-heal when agentDir becomes available after workspace creation.
   let providerPromise: Promise<MemoryEmbeddingProvider> | null = null;
 
   const getProvider = (): Promise<MemoryEmbeddingProvider> => {
     if (!providerPromise) {
+      const currentAgentDir = getAgentDir();
+      if (config.requireEmbedding && !currentAgentDir) {
+        // Don't cache this rejection — agentDir may arrive later via tool call.
+        // This is the key self-healing behavior for heartbeat/cron contexts.
+        return Promise.reject(new Error(
+          "Embedding provider auth requires agentDir which is not yet available. " +
+          "Will retry when a tool call provides runtime context.",
+        ));
+      }
       providerPromise = resolveEmbeddingProvider(
         config.embedding.provider,
         openclawConfig,
-        agentDir,
+        currentAgentDir,
         config.embedding.model,
       ).catch((err) => {
+        // Always clear cache so transient failures (network, delayed auth)
+        // can recover on retry. Never permanently cache rejections.
+        providerPromise = null;
         if (config.requireEmbedding) {
-          // Permanent failure — don't clear cache, every subsequent call gets same error
           throw new Error(
             `${EMBEDDING_REQUIRED_HINT}\nDetails: ${err instanceof Error ? err.message : String(err)}`,
           );
         }
-        // Graceful degradation: clear cache so next call can retry
-        providerPromise = null;
         throw err;
       });
     }
     return providerPromise;
   };
 
-  // When embedding is required, eagerly start resolution so errors surface early.
-  if (config.requireEmbedding) {
+  // When embedding is required AND agentDir is already known, eagerly start
+  // resolution. Skip if agentDir is missing — will resolve on first use.
+  if (config.requireEmbedding && getAgentDir()) {
     getProvider().catch(() => {});
   }
 
@@ -342,84 +363,98 @@ function createWorkspace(
     },
   };
 
-  const ws: ManagedWorkspace = { manager: new MemoryManager(memoryDir, embedder, logger, config.logQueries), circuitBreaker, memoryDir };
+  const ws: ManagedWorkspace = {
+    manager: new MemoryManager(memoryDir, embedder, logger, config.logQueries),
+    circuitBreaker,
+    memoryDir,
+    initProvider: async () => { await getProvider(); },
+  };
+  return ws;
+}
 
-  // One-time startup tasks (migration + workspace cleanup).
-  // Runs asynchronously on first workspace creation — does not block tool calls.
-  // Guarded by DB state keys so each task runs at most once.
-  if (initDeps) {
-    void (async () => {
-      const db = ws.manager.getDatabase();
-      const dbState = {
-        get: (key: string) => db.getState(key),
-        set: (key: string, value: string) => db.setState(key, value),
-      };
+/**
+ * Run one-time startup tasks (migration + workspace cleanup).
+ * Decoupled from createWorkspace so they can be triggered independently
+ * of workspace creation — see workaround comment above.
+ */
+function runStartupTasks(
+  ws: ManagedWorkspace,
+  config: AssociativeMemoryConfig,
+  workspaceDir: string,
+  getAgentDir: () => string | undefined,
+  logger: Logger | undefined,
+  initDeps: { stateDir?: string; llmConfig: LlmCallerConfig | null },
+): void {
+  void (async () => {
+    const db = ws.manager.getDatabase();
+    const dbState = {
+      get: (key: string) => db.getState(key),
+      set: (key: string, value: string) => db.setState(key, value),
+    };
 
-      // 1. Workspace file cleanup (remove file-based memory instructions)
-      if (initDeps.llmConfig) {
-        try {
-          const result = await cleanupWorkspaceFiles({
-            workspaceDir,
-            dbState,
-            llm: (prompt) => callLlm(prompt, initDeps.llmConfig!),
-            logger: logger ?? { info: () => {}, warn: () => {} },
-          });
-          if (result.status === "cleaned") {
-            logger?.info(`Workspace cleanup: modified ${result.filesModified?.join(", ")}`);
-          }
-        } catch (err) {
-          logger?.warn(`Workspace cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-
-      // 2. Memory-core migration (import old memories)
-      if (config.requireEmbedding) {
-        try {
-          await getProvider();
-        } catch (err) {
-          logger?.error(`Migration aborted: embedding required but unavailable. ${err instanceof Error ? err.message : String(err)}`);
-          return;
-        }
-      }
+    // 1. Workspace file cleanup (remove file-based memory instructions)
+    if (initDeps.llmConfig) {
       try {
-        const userLanguage = detectUserLanguage(workspaceDir);
-        const enrichFn: EnrichFn = initDeps.llmConfig
-          ? createDirectLlmEnrichFn(initDeps.llmConfig, userLanguage)
-          : async (segments) =>
-              segments.map((seg) => ({
-                id: seg.id,
-                type: seg.evergreen ? "fact" : "observation",
-                temporal_state: seg.date ? "past" : "none",
-                temporal_anchor: seg.date,
-              }));
-
-        const sessionsDir = agentDir ? join(agentDir, "sessions") : undefined;
-        const migrationResult = await runMigration({
+        const result = await cleanupWorkspaceFiles({
           workspaceDir,
-          stateDir: initDeps.stateDir ?? workspaceDir,
-          store: (params) => ws.manager.store(params),
-          updateStrength: (id, strength) => ws.manager.getDatabase().updateStrength(id, strength),
           dbState,
-          enrich: enrichFn,
-          logger: logger ?? { info: () => {}, warn: () => {}, error: () => {} },
-          sessionsDir,
-          llmCall: initDeps.llmConfig
-            ? (prompt) => callLlm(prompt, initDeps.llmConfig!)
-            : undefined,
+          llm: (prompt) => callLlm(prompt, initDeps.llmConfig!),
+          logger: logger ?? { info: () => {}, warn: () => {} },
         });
-
-        if (migrationResult.status === "completed") {
-          logger?.info(
-            `Migration: imported ${migrationResult.segmentsImported} memories from ${migrationResult.filesFound} files`,
-          );
+        if (result.status === "cleaned") {
+          logger?.info(`Workspace cleanup: modified ${result.filesModified?.join(", ")}`);
         }
       } catch (err) {
-        logger?.warn(`Migration failed: ${err instanceof Error ? err.message : String(err)}`);
+        logger?.warn(`Workspace cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
       }
-    })();
-  }
+    }
 
-  return ws;
+    // 2. Memory-core migration (import old memories)
+    if (config.requireEmbedding) {
+      try {
+        await ws.initProvider();
+      } catch (err) {
+        logger?.error(`Migration aborted: embedding required but unavailable. ${err instanceof Error ? err.message : String(err)}`);
+        return;
+      }
+    }
+    try {
+      const userLanguage = detectUserLanguage(workspaceDir);
+      const enrichFn: EnrichFn = initDeps.llmConfig
+        ? createDirectLlmEnrichFn(initDeps.llmConfig, userLanguage)
+        : async (segments) =>
+            segments.map((seg) => ({
+              id: seg.id,
+              type: seg.evergreen ? "fact" : "observation",
+              temporal_state: seg.date ? "past" : "none",
+              temporal_anchor: seg.date,
+            }));
+
+      const agentDir = getAgentDir();
+      const sessionsDir = agentDir ? join(agentDir, "sessions") : undefined;
+      const migrationResult = await runMigration({
+        workspaceDir,
+        stateDir: initDeps.stateDir ?? workspaceDir,
+        store: (params) => ws.manager.store(params),
+        updateStrength: (id, strength) => ws.manager.getDatabase().updateStrength(id, strength),
+        dbState,
+        enrich: enrichFn,
+        logger: logger ?? { info: () => {}, warn: () => {}, error: () => {} },
+        sessionsDir,
+        llmCall: initDeps.llmConfig
+          ? (prompt) => callLlm(prompt, initDeps.llmConfig!)
+          : undefined,
+      });
+
+      if (migrationResult.status === "completed") {
+        logger?.info(
+          `Migration: imported ${migrationResult.segmentsImported} memories from ${migrationResult.filesFound} files`,
+        );
+      }
+    } catch (err) {
+      logger?.warn(`Migration failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  })();
 }
 
 // -- Tools --
@@ -610,31 +645,44 @@ const associativeMemoryPlugin = {
     // Runtime state captured from tool contexts for use by commands.
     const runtimePaths: { stateDir?: string; agentDir?: string } = {};
 
-    // Single lazy workspace — created on first tool call, shared by all consumers.
-    // The first tool call provides the real workspaceDir from OpenClaw runtime context.
-    // Context engine and commands use "." which reuses the already-initialized singleton.
-    // See history/proposal-context-engine-factory-context.md for the upstream limitation.
+    // Single lazy workspace — created on first access, shared by all consumers.
+    // WORKAROUND: Context engine factory receives no runtime context from OpenClaw,
+    // so the workspace may be created by heartbeat/cron before any tool call.
+    // We use lazy getters for agentDir and decouple init from workspace creation
+    // to handle this safely. See: issues/open/08-upstream-prs/proposal-factory-context.md
     let workspace: ManagedWorkspace | null = null;
+    let startupTasksTriggered = false;
 
-    const getWorkspace = (workspaceDir: string, agentDir?: string, triggerInit = false): ManagedWorkspace => {
+    const getAgentDir = (): string | undefined => runtimePaths.agentDir;
+
+    const getWorkspace = (workspaceDir: string): ManagedWorkspace => {
       if (!workspace) {
-        const llmConfig = resolveLlmConfig(runtimePaths.stateDir, agentDir, log);
         workspace = createWorkspace(
-          config, workspaceDir, openclawConfig, agentDir, log, api.resolvePath,
-          triggerInit ? { stateDir: runtimePaths.stateDir, llmConfig } : undefined,
+          config, workspaceDir, openclawConfig, getAgentDir, log, api.resolvePath,
         );
       }
       return workspace;
     };
 
+    // Startup tasks (migration, cleanup) are decoupled from workspace creation.
+    // Only triggered by the first tool call which has full runtime context.
+    // Flag is set after successful scheduling to allow retry on sync failure.
+    const triggerStartupTasks = (workspaceDir: string): void => {
+      if (startupTasksTriggered) return;
+      const ws = getWorkspace(workspaceDir);
+      const llmConfig = resolveLlmConfig(runtimePaths.stateDir, getAgentDir(), log);
+      runStartupTasks(ws, config, workspaceDir, getAgentDir, log, { stateDir: runtimePaths.stateDir, llmConfig });
+      startupTasksTriggered = true;
+    };
+
     api.registerTool(
       (ctx) => {
         const workspaceDir = ctx.workspaceDir ?? ctx.agentDir ?? ".";
-        // stateDir is not available in tool context — captured from service start if it runs
         runtimePaths.agentDir ??= ctx.agentDir;
-        // First tool call creates workspace with real paths and triggers lazy init
-        // (migration + workspace cleanup). Subsequent calls reuse the singleton.
-        const ws = getWorkspace(workspaceDir, ctx.agentDir, true);
+        // First tool call triggers startup tasks (migration + cleanup).
+        // Workspace may already exist from context engine, but init runs here.
+        const ws = getWorkspace(workspaceDir);
+        triggerStartupTasks(workspaceDir);
         return createMemoryTools(
           () => ws.manager,
           () => join(ws.memoryDir, "retrieval.log"),
@@ -1004,11 +1052,19 @@ const associativeMemoryPlugin = {
     });
 
     // -- Startup service --
-    // Captures stateDir for auth-profile resolution in commands.
+    // Captures stateDir and agentDir for auth-profile resolution.
+    // agentDir is critical: the lazy getter in createWorkspace reads it
+    // dynamically, so it must be set as early as possible.
+    // Note: agentDir is not part of the documented service context type,
+    // but OpenClaw passes it at runtime. Validated with typeof check.
     api.registerService({
       id: "formative-memory-startup",
       async start(ctx) {
         runtimePaths.stateDir = ctx.stateDir;
+        const maybeAgentDir = (ctx as Record<string, unknown>).agentDir;
+        if (!runtimePaths.agentDir && typeof maybeAgentDir === "string") {
+          runtimePaths.agentDir = maybeAgentDir;
+        }
       },
     });
   },

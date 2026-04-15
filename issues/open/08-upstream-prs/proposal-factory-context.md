@@ -105,13 +105,41 @@ interface ContextEngine {
 - `src/plugins/api-builder.ts` — Where `registerContextEngine` is implemented
 - `extensions/memory-core/index.ts` — Reference: memory-core avoids this by not registering a context engine
 
-## What the associative-memory plugin will do after this lands
+## Current workaround (v0.2.x)
+
+Without this upstream change, the formative-memory plugin uses three workarounds
+documented in `src/index.ts` (see the `WORKAROUND` block comment above `createWorkspace`):
+
+1. **Lazy agentDir getter** — `createWorkspace` receives `() => runtimePaths.agentDir`
+   instead of a static string. The embedding provider resolves agentDir dynamically
+   at each `embed()` call, allowing self-healing when a tool call provides context
+   after the workspace was already created by a heartbeat/cron trigger.
+
+2. **Decoupled init** — Startup tasks (migration, workspace cleanup) are tracked with
+   a separate `startupTasksTriggered` flag, not tied to workspace creation. This
+   prevents them from being permanently skipped when the workspace is first created
+   by a non-tool caller (context engine, cron).
+
+3. **Non-permanent provider caching** — When embedding resolution fails because
+   agentDir is not yet available, the error is NOT permanently cached. Subsequent
+   calls can retry once agentDir becomes available via a tool call or startup service.
+
+### Known limitations of the workaround
+
+- `workspaceDir` is still captured at first access — if the context engine creates
+  the workspace from `"."` before a tool call, the memory DB may land in the wrong
+  directory. This cannot be fixed without the upstream change.
+- The startup service extracts `agentDir` from an undocumented field on the service
+  context (`ctx.agentDir`). This is runtime-validated but not type-safe.
+- Multi-agent / multi-workspace is not supported — requires the upstream change.
+
+## What the plugin will do after this lands
 
 Once the factory receives context, the plugin will:
 
 1. Replace the single-workspace singleton with a `Map<string, ManagedWorkspace>` keyed by resolved memory directory
 2. Use `ctx.config` and `ctx.agentDir` from the factory to resolve the correct workspace
-3. Remove the `getWorkspace(".")` fallback hack
+3. Remove the `getWorkspace(".")` fallback hack and all three workarounds above
 4. Support multiple concurrent workspaces/agents correctly
 
-The relevant code is in `src/index.ts` of the `openclaw-associative-memory` repository, specifically the `register()` function and `createWorkspace()`.
+The relevant code is in `src/index.ts` of the `formative-memory` repository, specifically the `register()` function and `createWorkspace()`.
