@@ -1,0 +1,33 @@
+│  - plugins.entries.memory-associative: plugin disabled (memory slot set  │
+│    to "memory-core") but config is present                               │
+2026-04-14T13:01:14.939+00:00 Config warnings:\n- plugins.entries.memory-associative: plugin disabled (memory slot set to "memory-core") but config is present
+- plugins.entries.memory-associative: plugin disabled (memory slot set to "memory-core") but config is present
+2026-04-14T13:01:16.117+00:00 Config warnings:\n- plugins.entries.memory-associative: plugin disabled (memory slot set to "memory-core") but config is present
+- plugins.entries.memory-associative: plugin disabled (memory slot set to "memory-core") but config is present
+2026-04-14T13:01:16.709+00:00 Config warnings:\n- plugins.entries.memory-associative: plugin disabled (memory slot set to "memory-core") but config is present
+- plugins.entries.memory-associative: plugin disabled (memory slot set to "memory-core") but config is present
+2026-04-14T13:01:17.383+00:00 [plugins] plugins.allow is empty; discovered non-bundled plugins may auto-load: memory-associative (/home/node/.openclaw/extensions/formative-memory/dist/index.js). Set plugins.allow to explicit trusted ids.
+2026-04-14T13:02:02.910+00:00 Config warnings:\n- plugins.entries.memory-associative: plugin disabled (memory slot set to "memory-core") but config is present
+│  - plugins.entries.memory-associative: plugin disabled (memory slot set  │
+│    to "memory-core") but config is present                               │
+2026-04-14T13:02:05.889+00:00 Config warnings:\n- plugins.entries.memory-associative: plugin disabled (memory slot set to "memory-core") but config is present
+2026-04-14T13:02:08.138+00:00 [plugins] plugins.allow is empty; discovered non-bundled plugins may auto-load: memory-associative (/home/node/.openclaw/extensions/formative-memory/dist/index.js). Set plugins.allow to explicit trusted ids.
+2026-04-14T14:44:06.992+00:00 [plugins] plugins.allow is empty; discovered non-bundled plugins may auto-load: memory-associative (/home/node/.openclaw/extensions/formative-memory/dist/index.js). Set plugins.allow to explicit trusted ids.
+2026-04-14T18:26:34.672+00:00 [reload] config change detected; evaluating reload (meta.lastTouchedAt, agents.defaults.models.anthropic/claude-sonnet-4-6.params, agents.defaults.models.anthropic/claude-opus-4-6.params, agents.defaults.contextPruning, agents.defaults.compaction, agents.defaults.heartbeat, plugins.entries.memory-core.config, plugins.entries.memory-core.enabled, plugins.entries.formative-memory, plugins.entries.memory-lancedb, plugins.slots, plugins.installs)
+2026-04-14T18:26:34.680+00:00 [reload] config change requires gateway restart (plugins.entries.memory-core.config, plugins.entries.memory-core.enabled, plugins.entries.formative-memory, plugins.entries.memory-lancedb, plugins.slots, plugins.installs)
+2026-04-14T18:26:34.700+00:00 Config warnings:\n- plugins.entries.memory-associative: plugin not found: memory-associative (stale config entry ignored; remove it from plugins config)
+│  - plugins.entries.memory-associative: plugin not found:           │
+│    memory-associative (stale config entry ignored; remove it from  │
+2026-04-14T18:26:37.895+00:00 Config warnings:\n- plugins.entries.memory-associative: plugin not found: memory-associative (stale config entry ignored; remove it from plugins config)
+2026-04-14T18:26:39.590+00:00 [plugins] plugins.allow is empty; discovered non-bundled plugins may auto-load: formative-memory (/home/node/.openclaw/extensions/formative-memory/dist/index.js). Set plugins.allow to explicit trusted ids.
+2026-04-14T18:26:40.551+00:00 [gateway] [plugins] plugin kind mismatch (manifest uses "memory,context-engine", export uses "memory") (plugin=formative-memory, source=/home/node/.openclaw/extensions/formative-memory/dist/index.js)
+2026-04-14T18:26:40.700+00:00 [gateway] ready (7 plugins: acpx, browser, device-pair, formative-memory, mattermost, phone-control, talk-voice; 2.8s)
+2026-04-14T18:26:40.999+00:00 [plugins] plugins.allow is empty; discovered non-bundled plugins may auto-load: formative-memory (/home/node/.openclaw/extensions/formative-memory/dist/index.js). Set plugins.allow to explicit trusted ids.
+2026-04-14T18:26:41.259+00:00 [plugins] [formative-memory] [info] Registered consolidation cron job
+2026-04-14T18:26:41.268+00:00 [plugins] [formative-memory] [info] Registered temporal transitions cron job
+2026-04-14T18:26:47.410+00:00 [reload] config change detected; evaluating reload (meta, agents.defaults.models.anthropic/claude-sonnet-4-6.params, agents.defaults.models.anthropic/claude-opus-4-6.params, agents.defaults.contextPruning, agents.defaults.compaction, agents.defaults.heartbeat, gateway.controlUi, gateway.auth, plugins.slots, plugins.entries.memory-associative, plugins.entries.anthropic, plugins.entries.memory-core.enabled, plugins.entries.memory-core.config, plugins.entries.formative-memory.config.verbose, plugins.entries.formative-memory.config.logQueries, plugins.entries.memory-lancedb, plugins.installs)
+2026-04-14T18:26:47.415+00:00 [reload] config change requires gateway restart (gateway.controlUi, gateway.auth, plugins.slots, plugins.entries.memory-associative, plugins.entries.anthropic, plugins.entries.memory-core.enabled, plugins.entries.memory-core.config, plugins.entries.formative-memory.config.verbose, plugins.entries.formative-memory.config.logQueries, plugins.entries.memory-lancedb, plugins.installs)
+2026-04-14T18:26:52.998+00:00 [plugins] plugins.allow is empty; discovered non-bundled plugins may auto-load: formative-memory (/home/node/.openclaw/extensions/formative-memory/dist/index.js). Set plugins.allow to explicit trusted ids.
+2026-04-14T18:27:38.619+00:00 [plugins] plugins.allow is empty; discovered non-bundled plugins may auto-load: formative-memory (/home/node/.openclaw/extensions/formative-memory/dist/index.js). Set plugins.allow to explicit trusted ids.
+2026-04-15T03:00:00.961+00:00 [plugins] plugins.allow is empty; discovered non-bundled plugins may auto-load: formative-memory (/home/node/.openclaw/extensions/formative-memory/dist/index.js). Set plugins.allow to explicit trusted ids.
+2026-04-15T03:00:13.223+00:00 [tools] read failed: ENOENT: no such file or directory, access '/home/node/.openclaw/workspace/MEMORY.md' raw_params={"path":"/home/node/.openclaw/workspace/MEMORY.md"}
