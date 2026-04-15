@@ -129,7 +129,7 @@ afterEach(() => {
 
 function getTools(api: ReturnType<typeof fakeApi>, ctx?: Record<string, unknown>) {
   const factory = api.registerTool.mock.calls[0][0] as Function;
-  return factory({ workspaceDir: tmpDir, config: {}, ...ctx }) as any[];
+  return factory({ workspaceDir: tmpDir, agentDir: tmpDir, config: {}, ...ctx }) as any[];
 }
 
 // ===========================================================================
@@ -191,7 +191,7 @@ describe("plugin registration", () => {
     plugin.register(api as any);
 
     const factory = api.registerContextEngine.mock.calls[0][1] as Function;
-    const engine = factory();
+    const engine = factory({ config: {}, agentDir: "/tmp/test-agent", workspaceDir: "/tmp/test-ws" });
     expect(engine.info.id).toBe("associative-memory");
     expect(engine.info.ownsCompaction).toBe(false);
     expect(engine.assemble).toBeTypeOf("function");
@@ -600,7 +600,7 @@ describe("turn cycle integration: assemble → tool calls → afterTurn", () => 
     const searchTool = tools.find((t: any) => t.name === "memory_search")!;
 
     const engineFactory = api.registerContextEngine.mock.calls[0][1] as Function;
-    const engine = engineFactory();
+    const engine = engineFactory({ config: {}, agentDir: tmpDir, workspaceDir: tmpDir });
 
     const storeResult = await storeTool.execute("call-1", {
       content: "PostgreSQL is our primary database",

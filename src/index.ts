@@ -12,7 +12,7 @@
 import { isAbsolute, join } from "node:path";
 import { readFileSync } from "node:fs";
 import { Type } from "@sinclair/typebox";
-import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { AnyAgentTool, ContextEngineFactoryContext, OpenClawPluginApi } from "openclaw/plugin-sdk";
 import {
   createGeminiEmbeddingProvider,
   createOpenAiEmbeddingProvider,
@@ -647,10 +647,10 @@ const associativeMemoryPlugin = {
     const runtimePaths: { stateDir?: string; agentDir?: string } = {};
 
     // Single lazy workspace — created on first access, shared by all consumers.
-    // WORKAROUND: Context engine factory receives no runtime context from OpenClaw,
-    // so the workspace may be created by heartbeat/cron before any tool call.
-    // We use lazy getters for agentDir and decouple init from workspace creation
-    // to handle this safely. See: issues/open/08-upstream-prs/proposal-factory-context.md
+    // With the factory context change, the context engine factory now receives
+    // agentDir and workspaceDir directly, so it can create the workspace with
+    // correct paths. The lazy agentDir getter is still used as a fallback for
+    // consumers that run before the factory (e.g. cron triggers).
     let workspace: ManagedWorkspace | null = null;
     let startupTasksTriggered = false;
 
@@ -736,20 +736,26 @@ const associativeMemoryPlugin = {
       ];
     });
 
-    // Context engine and commands use the same workspace as tools.
-    // Workspace is created lazily on first access (tool call or engine use).
-    api.registerContextEngine(CONTEXT_ENGINE_ID, () =>
-      createAssociativeMemoryContextEngine({
-        getManager: () => getWorkspace(".").manager,
-        isBm25Only: () => getWorkspace(".").circuitBreaker.isBm25Only(),
+    // Context engine factory now receives runtime context (config, agentDir,
+    // workspaceDir) from OpenClaw. This replaces the lazy getter workaround
+    // for agentDir — the factory can initialize the workspace with the correct
+    // paths immediately. See: issues/open/08-upstream-prs/proposal-factory-context.md
+    api.registerContextEngine(CONTEXT_ENGINE_ID, (ctx: ContextEngineFactoryContext) => {
+      const workspaceDir = ctx.workspaceDir ?? ".";
+      if (ctx.agentDir) runtimePaths.agentDir ??= ctx.agentDir;
+      const ws = getWorkspace(workspaceDir);
+      triggerStartupTasks(workspaceDir);
+      return createAssociativeMemoryContextEngine({
+        getManager: () => ws.manager,
+        isBm25Only: () => ws.circuitBreaker.isBm25Only(),
         logger: log,
         ledger,
-        getDb: () => getWorkspace(".").manager.getDatabase(),
-        getLogPath: () => join(getWorkspace(".").memoryDir, "retrieval.log"),
+        getDb: () => ws.manager.getDatabase(),
+        getLogPath: () => join(ws.memoryDir, "retrieval.log"),
         autoCapture: config.autoCapture,
         getLlmConfig: () => resolveLlmConfig(runtimePaths.stateDir, runtimePaths.agentDir, log),
-      }),
-    );
+      });
+    });
 
     api.registerCommand({
       name: "memory-sleep",
