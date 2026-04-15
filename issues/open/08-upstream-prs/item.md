@@ -14,13 +14,14 @@ _Source: openclaw core_
 
 ## Description
 
-Three proposals need to be submitted as PRs to the OpenClaw repository. These remove workarounds in the associative memory plugin and enable proper multi-workspace support.
+Four proposals need to be submitted as PRs to the OpenClaw repository. These remove workarounds in the associative memory plugin and enable proper multi-workspace support.
 
 ## Reference
 
 - [proposal-factory-context.md](proposal-factory-context.md)
 - [proposal-service-start.md](proposal-service-start.md)
 - [proposal-decouple-templates.md](proposal-decouple-templates.md)
+- [proposal-sdk-embedding-exports.md](proposal-sdk-embedding-exports.md)
 
 ## Tasks
 
