@@ -925,7 +925,7 @@ const associativeMemoryPlugin = {
           enabled: true,
           schedule: { kind: "cron" as const, expr: DEFAULT_CONSOLIDATION_CRON },
           sessionTarget: "main" as const,
-          wakeMode: "next-heartbeat" as const,
+          wakeMode: "now" as const,
           payload: { kind: "systemEvent" as const, text: CONSOLIDATION_CRON_TRIGGER },
         };
 
@@ -933,11 +933,11 @@ const associativeMemoryPlugin = {
           await cron.add(desired);
           log.info("Registered consolidation cron job");
         } else {
-          // Update existing job if schedule changed
+          // Update existing job if schedule or wakeMode changed
           const existing = managed[0];
-          if (existing.schedule?.expr !== desired.schedule.expr) {
-            await cron.update(existing.id, { schedule: desired.schedule });
-            log.info("Updated consolidation cron schedule");
+          if (existing.schedule?.expr !== desired.schedule.expr || existing.wakeMode !== desired.wakeMode) {
+            await cron.update(existing.id, { schedule: desired.schedule, wakeMode: desired.wakeMode });
+            log.info("Updated consolidation cron job");
           }
           // Remove duplicates
           for (let i = 1; i < managed.length; i++) {
@@ -955,7 +955,7 @@ const associativeMemoryPlugin = {
           enabled: true,
           schedule: { kind: "cron" as const, expr: DEFAULT_TEMPORAL_CRON },
           sessionTarget: "main" as const,
-          wakeMode: "next-heartbeat" as const,
+          wakeMode: "now" as const,
           payload: { kind: "systemEvent" as const, text: TEMPORAL_CRON_TRIGGER },
         };
 
@@ -964,9 +964,9 @@ const associativeMemoryPlugin = {
           log.info("Registered temporal transitions cron job");
         } else {
           const existing = temporalManaged[0];
-          if (existing.schedule?.expr !== desiredTemporal.schedule.expr) {
-            await cron.update(existing.id, { schedule: desiredTemporal.schedule });
-            log.info("Updated temporal transitions cron schedule");
+          if (existing.schedule?.expr !== desiredTemporal.schedule.expr || existing.wakeMode !== desiredTemporal.wakeMode) {
+            await cron.update(existing.id, { schedule: desiredTemporal.schedule, wakeMode: desiredTemporal.wakeMode });
+            log.info("Updated temporal transitions cron job");
           }
           for (let i = 1; i < temporalManaged.length; i++) {
             await cron.remove(temporalManaged[i].id);
@@ -979,15 +979,45 @@ const associativeMemoryPlugin = {
       }
     }, { name: "formative-memory-consolidation-cron" } as any);
 
+    // -- Token matching (mirrors memory-core's includesSystemEventToken) --
+
+    function normalizeTrimmedString(value: unknown): string | undefined {
+      if (typeof value !== "string") return undefined;
+      const trimmed = value.trim();
+      return trimmed.length > 0 ? trimmed : undefined;
+    }
+
+    function includesSystemEventToken(cleanedBody: string, eventText: string): boolean {
+      const normalizedBody = normalizeTrimmedString(cleanedBody);
+      const normalizedEventText = normalizeTrimmedString(eventText);
+      if (!normalizedBody || !normalizedEventText) return false;
+      if (normalizedBody === normalizedEventText) return true;
+      return normalizedBody.split(/\r?\n/).some((line) => line.trim() === normalizedEventText);
+    }
+
     // Handle cron-triggered consolidation and temporal transitions via before_agent_reply hook.
     // When cron fires, OpenClaw sends a systemEvent with our trigger text.
     // We intercept it, run the appropriate operation, and return handled=true to skip the LLM.
     api.on("before_agent_reply", async (event: any, ctx: any) => {
+      log.debug(
+        `cron-check trigger=${String(ctx?.trigger)} session=${String(ctx?.sessionKey)} ` +
+        `body=${JSON.stringify(event?.cleanedBody ?? null)}`,
+      );
+
       const body = event?.cleanedBody;
-      if (!body) return;
+      if (!body) {
+        log.debug("cron-check: no body, skipping");
+        return;
+      }
+
+      // Only process during heartbeat context (matches memory-core pattern)
+      if (ctx?.trigger !== "heartbeat") {
+        log.debug(`cron-check: trigger is "${String(ctx?.trigger)}", not heartbeat — skipping`);
+        return;
+      }
 
       // Temporal transitions only (idempotent — harmless if consolidation also runs at 03:00)
-      if (body.includes(TEMPORAL_CRON_TRIGGER) && !body.includes(CONSOLIDATION_CRON_TRIGGER)) {
+      if (includesSystemEventToken(body, TEMPORAL_CRON_TRIGGER) && !includesSystemEventToken(body, CONSOLIDATION_CRON_TRIGGER)) {
         try {
           const ws = getWorkspace(ctx?.workspaceDir ?? ".");
           const db = ws.manager.getDatabase();
@@ -1007,7 +1037,10 @@ const associativeMemoryPlugin = {
       }
 
       // Full consolidation
-      if (!body.includes(CONSOLIDATION_CRON_TRIGGER)) return;
+      if (!includesSystemEventToken(body, CONSOLIDATION_CRON_TRIGGER)) {
+        log.debug("cron-check: no consolidation token match, skipping");
+        return;
+      }
 
       try {
         const ws = getWorkspace(ctx?.workspaceDir ?? ".");
