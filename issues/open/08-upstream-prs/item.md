@@ -1,6 +1,6 @@
 ---
 created: 2026-04-09
-updated: 2026-04-15
+updated: 2026-04-16
 type: chore
 reporter: jari
 assignee: jari
@@ -31,7 +31,7 @@ Live-tested factory-context + updated plugin on jari's bot (haapa). Key finding:
 
 ## Tasks
 
-- [ ] **Context engine factory context** — pass `ctx: ContextEngineFactoryContext` (config, agentDir, workspaceDir) to factory functions. Enables multi-workspace support without global state hacks. Tested on branch `test/context-engine-factory-context`. **Unblocked** after #29.
+- [x] **Context engine factory context** — pass `ctx: ContextEngineFactoryContext` (config, agentDir, workspaceDir) to factory functions. Enables multi-workspace support without global state hacks. **Submitted as [openclaw/openclaw#67243](https://github.com/openclaw/openclaw/pull/67243)** — awaiting maintainer review. See `status-factory-context.md`.
 - [ ] **Plugin service start for memory plugins** — include memory-kind plugins in `shouldStartServices()`. Enables automatic migration/cleanup at gateway boot.
 - [ ] **Decouple memory from workspace templates** — remove hardcoded file-based memory instructions from AGENTS.md/SOUL.md templates. Let active memory plugin provide instructions via `registerMemoryPromptSection()`.
 - [ ] **SDK embedding provider exports** — export `createGeminiEmbeddingProvider`, `createOpenAiEmbeddingProvider` from SDK public surface. No longer a blocker (plugin uses standalone client via #29), but still valuable as architectural cleanup for the ecosystem.
