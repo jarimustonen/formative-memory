@@ -239,15 +239,25 @@ export function tryCreateStandaloneProvider(
 /**
  * Auto-select a standalone embedding provider by trying each in priority order.
  * Returns the first provider for which an API key is available.
+ *
+ * Intentionally does NOT accept a `model` parameter: the user's configured
+ * model string may be valid for one provider and invalid for another
+ * (e.g. "text-embedding-3-small" for OpenAI vs. "text-embedding-004" for
+ * Gemini). Each provider uses its own default model. Callers wanting a
+ * specific model must use explicit provider selection.
+ *
+ * Priority order: OpenAI first, then Gemini. OpenAI is the common
+ * default from the memory-core era (1536-dim vectors); defaulting to
+ * Gemini (768-dim) would silently break existing vector stores.
+ * Provider identity is persisted to DB state on first successful
+ * resolution to prevent future drift (see createWorkspace).
  */
 export function autoSelectStandaloneProvider(
   profiles: AuthProfiles,
-  model?: string,
   logger?: Logger,
 ): MemoryEmbeddingProvider | null {
-  // Prefer Gemini (free tier available), then OpenAI
-  for (const id of ["gemini", "openai"] as const) {
-    const provider = tryCreateStandaloneProvider(id, profiles, model, logger);
+  for (const id of ["openai", "gemini"] as const) {
+    const provider = tryCreateStandaloneProvider(id, profiles, undefined, logger);
     if (provider) return provider;
   }
   return null;

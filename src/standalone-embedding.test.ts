@@ -134,19 +134,27 @@ describe("autoSelectStandaloneProvider", () => {
     process.env = { ...savedEnv };
   });
 
-  it("prefers gemini when both keys available", () => {
+  it("prefers openai when both keys available (backward compatibility)", () => {
     const profiles = {
       "openai:default": { key: "sk-test" },
       "google:default": { key: "AIza-test" },
     };
     const provider = autoSelectStandaloneProvider(profiles);
+    expect(provider!.id).toBe("openai");
+  });
+
+  it("falls back to gemini when openai key not available", () => {
+    const profiles = { "google:default": { key: "AIza-test" } };
+    const provider = autoSelectStandaloneProvider(profiles);
     expect(provider!.id).toBe("gemini");
   });
 
-  it("falls back to openai when gemini key not available", () => {
+  it("uses provider-specific default models (ignores cross-provider model)", () => {
+    // Verify no model parameter is accepted — auto-select must always use
+    // each provider's default to avoid cross-provider model pollution.
     const profiles = { "openai:default": { key: "sk-test" } };
     const provider = autoSelectStandaloneProvider(profiles);
-    expect(provider!.id).toBe("openai");
+    expect(provider!.model).toBe("text-embedding-3-small");
   });
 
   it("returns null when no keys available", () => {

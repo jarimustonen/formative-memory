@@ -31,6 +31,7 @@ import { runConsolidation } from "./consolidation.ts";
 import { CONTEXT_ENGINE_ID, createAssociativeMemoryContextEngine } from "./context-engine.ts";
 import { EmbeddingCircuitBreaker } from "./embedding-circuit-breaker.ts";
 import { callLlm, resolveApiKey, type LlmCallerConfig } from "./llm-caller.ts";
+import type { MemoryDatabase } from "./db.ts";
 import { MemoryManager } from "./memory-manager.ts";
 import {
   cleanupWorkspaceFiles,
@@ -196,10 +197,14 @@ async function resolveEmbeddingProvider(
 
     for (const adapter of adapters) {
       try {
+        // In auto mode, use each adapter's default model — the user's
+        // configured model string may be valid for one provider and invalid
+        // for another (model pollution). Explicit provider selection is
+        // required to apply a custom model.
         const result = await adapter.create({
           config: openclawConfig,
           agentDir,
-          model: model ?? adapter.defaultModel ?? "",
+          model: adapter.defaultModel ?? "",
         });
         if (result.provider) return result.provider;
       } catch (err) {
@@ -210,9 +215,9 @@ async function resolveEmbeddingProvider(
     // Always fall through to standalone — whether registry was empty or all
     // adapters failed. This is the key fix: memory-core may be installed but
     // unable to bootstrap auth in cron/migration contexts.
-    const provider = autoSelectStandaloneProvider(profiles, model, logger);
+    const provider = autoSelectStandaloneProvider(profiles, logger);
     if (provider) return provider;
-    errors.push("standalone: no API key found for gemini or openai");
+    errors.push("standalone: no API key found for openai or gemini");
 
     throw new Error(
       `No embedding provider available (tried auto-selection).\n${errors.join("\n") || "No adapters registered."}`,
@@ -310,6 +315,11 @@ function createWorkspace(
   // self-heal when agentDir becomes available after workspace creation.
   let providerPromise: Promise<MemoryEmbeddingProvider> | null = null;
 
+  // DB reference used for persisting embedding identity (provider + model).
+  // Assigned after MemoryManager is constructed. Reads/writes happen only
+  // in the async body of getProvider, which runs after ws is fully built.
+  let dbRef: MemoryDatabase | null = null;
+
   const getProvider = (): Promise<MemoryEmbeddingProvider> => {
     if (!providerPromise) {
       const currentAgentDir = getAgentDir();
@@ -321,14 +331,65 @@ function createWorkspace(
           "Will retry when a tool call provides runtime context.",
         ));
       }
-      providerPromise = resolveEmbeddingProvider(
-        config.embedding.provider,
-        openclawConfig,
-        currentAgentDir,
-        config.embedding.model,
-        getStateDir?.(),
-        logger,
-      ).catch((err) => {
+      providerPromise = (async () => {
+        // Read persisted embedding identity (if any). Pinning the provider
+        // and model to the DB prevents silent drift: different providers
+        // (OpenAI/Gemini) and models produce different-dimension vectors,
+        // so switching mid-life would corrupt the vector store.
+        const db = dbRef;
+        const persistedId = db?.getState("embedding_provider_id") ?? null;
+        const persistedModel = db?.getState("embedding_model") ?? null;
+
+        let effectiveProvider = config.embedding.provider;
+        let effectiveModel = config.embedding.model;
+
+        if (persistedId) {
+          if (config.embedding.provider === "auto") {
+            // Auto mode: always use persisted identity to prevent drift.
+            effectiveProvider = persistedId;
+            effectiveModel = persistedModel ?? undefined;
+          } else if (config.embedding.provider !== persistedId) {
+            throw new Error(
+              `Embedding provider mismatch: DB was indexed with "${persistedId}" but config requests "${config.embedding.provider}". ` +
+              `Vector dimensions differ between providers. Either set embedding.provider back to "${persistedId}", ` +
+              `or re-embed the DB via migration.`,
+            );
+          } else if (
+            config.embedding.model &&
+            persistedModel &&
+            config.embedding.model !== persistedModel
+          ) {
+            throw new Error(
+              `Embedding model mismatch: DB was indexed with "${persistedId}/${persistedModel}" but config requests ` +
+              `"${config.embedding.provider}/${config.embedding.model}". Different models produce different vector dimensions. ` +
+              `Either set embedding.model back to "${persistedModel}", or re-embed the DB via migration.`,
+            );
+          } else {
+            effectiveModel = effectiveModel ?? persistedModel ?? undefined;
+          }
+        }
+
+        const provider = await resolveEmbeddingProvider(
+          effectiveProvider,
+          openclawConfig,
+          currentAgentDir,
+          effectiveModel,
+          getStateDir?.(),
+          logger,
+        );
+
+        // Persist identity on first successful resolution — locks in the
+        // chosen provider/model for future runs.
+        if (db && !persistedId) {
+          db.setState("embedding_provider_id", provider.id);
+          db.setState("embedding_model", provider.model);
+          logger?.info(
+            `Persisted embedding identity to DB: ${provider.id}/${provider.model}`,
+          );
+        }
+
+        return provider;
+      })().catch((err) => {
         // Always clear cache so transient failures (network, delayed auth)
         // can recover on retry. Never permanently cache rejections.
         providerPromise = null;
@@ -342,12 +403,6 @@ function createWorkspace(
     }
     return providerPromise;
   };
-
-  // When embedding is required AND agentDir is already known, eagerly start
-  // resolution. Skip if agentDir is missing — will resolve on first use.
-  if (config.requireEmbedding && getAgentDir()) {
-    getProvider().catch(() => {});
-  }
 
   // Provider init is outside the circuit breaker — config/auth errors
   // are hard failures, not transient network issues. Only the actual
@@ -365,6 +420,17 @@ function createWorkspace(
     memoryDir,
     initProvider: async () => { await getProvider(); },
   };
+  // Assign dbRef before any getProvider call can actually execute its async
+  // body. The eager init below may schedule the promise, but its async
+  // execution happens in microtasks after this line.
+  dbRef = ws.manager.getDatabase();
+
+  // When embedding is required AND agentDir is already known, eagerly start
+  // resolution. Skip if agentDir is missing — will resolve on first use.
+  if (config.requireEmbedding && getAgentDir()) {
+    getProvider().catch(() => {});
+  }
+
   return ws;
 }
 

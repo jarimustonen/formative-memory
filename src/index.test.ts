@@ -595,6 +595,90 @@ describe("standalone fallback", () => {
 });
 
 // ===========================================================================
+// Embedding identity persistence (drift prevention)
+// ===========================================================================
+
+describe("embedding identity persistence", () => {
+  it("persists provider and model to DB on first successful resolution", async () => {
+    const api = fakeApi({ embedding: { provider: "openai" } });
+    plugin.register(api as any);
+    const tools = getTools(api);
+    const storeTool = tools.find((t: any) => t.name === "memory_store")!;
+
+    await storeTool.execute("call-1", { content: "test", type: "fact" });
+
+    // Check DB state was written
+    const db = new MemoryDatabase(join(tmpDir, "memory", "associations.db"));
+    try {
+      expect(db.getState("embedding_provider_id")).toBe("openai");
+      expect(db.getState("embedding_model")).toBe("text-embedding-3-small");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("refuses to switch providers when DB already has persisted identity", async () => {
+    // Pre-seed DB with Gemini identity
+    mkdirSync(join(tmpDir, "memory"), { recursive: true });
+    const preDb = new MemoryDatabase(join(tmpDir, "memory", "associations.db"));
+    preDb.setState("embedding_provider_id", "gemini");
+    preDb.setState("embedding_model", "text-embedding-004");
+    preDb.close();
+
+    // Config requests openai — should throw
+    const api = fakeApi({ embedding: { provider: "openai" } });
+    plugin.register(api as any);
+    const tools = getTools(api);
+    const storeTool = tools.find((t: any) => t.name === "memory_store")!;
+
+    await expect(
+      storeTool.execute("call-1", { content: "test", type: "fact" }),
+    ).rejects.toThrow(/provider mismatch.*gemini.*openai/i);
+  });
+
+  it("refuses to switch models within same provider when persisted differs", async () => {
+    // Pre-seed DB with openai/small
+    mkdirSync(join(tmpDir, "memory"), { recursive: true });
+    const preDb = new MemoryDatabase(join(tmpDir, "memory", "associations.db"));
+    preDb.setState("embedding_provider_id", "openai");
+    preDb.setState("embedding_model", "text-embedding-3-small");
+    preDb.close();
+
+    // Config requests openai/large — different dimensions → should throw
+    const api = fakeApi({
+      embedding: { provider: "openai", model: "text-embedding-3-large" },
+    });
+    plugin.register(api as any);
+    const tools = getTools(api);
+    const storeTool = tools.find((t: any) => t.name === "memory_store")!;
+
+    await expect(
+      storeTool.execute("call-1", { content: "test", type: "fact" }),
+    ).rejects.toThrow(/model mismatch/i);
+  });
+
+  it("auto mode uses persisted identity instead of re-selecting", async () => {
+    // Pre-seed DB with openai identity. Auto mode should use persisted
+    // values even if registry would prefer something else.
+    mkdirSync(join(tmpDir, "memory"), { recursive: true });
+    const preDb = new MemoryDatabase(join(tmpDir, "memory", "associations.db"));
+    preDb.setState("embedding_provider_id", "openai");
+    preDb.setState("embedding_model", "text-embedding-3-small");
+    preDb.close();
+
+    const api = fakeApi(); // auto mode
+    plugin.register(api as any);
+    const tools = getTools(api);
+    const storeTool = tools.find((t: any) => t.name === "memory_store")!;
+
+    await storeTool.execute("call-1", { content: "test", type: "fact" });
+
+    // Should have gone through explicit openai path (mockGetProvider called)
+    expect(mockGetProvider).toHaveBeenCalledWith("openai");
+  });
+});
+
+// ===========================================================================
 // Lazy initialization
 // ===========================================================================
 
