@@ -201,6 +201,22 @@ describe("autoSelectStandaloneProvider", () => {
       expect.stringContaining("no API key found for openai or gemini"),
     );
   });
+
+  it("surfaces multi-profile ambiguity warnings during auto-select (#31)", () => {
+    // Regression: auto-select used to pass undefined logger to suppress
+    // per-provider "no key" noise, which also swallowed the genuinely
+    // useful multi-profile ambiguity warning. The warning must surface.
+    const logger = { warn: vi.fn() };
+    const profiles = {
+      "openai:work": { key: "sk-work" },
+      "openai:personal": { key: "sk-personal" },
+    };
+    const provider = autoSelectStandaloneProvider(profiles, logger);
+    expect(provider!.id).toBe("openai");
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("Multiple auth profiles match openai"),
+    );
+  });
 });
 
 // -- Fetch-based API calls (mocked) --

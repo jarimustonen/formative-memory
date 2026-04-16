@@ -372,9 +372,13 @@ export function autoSelectStandaloneProvider(
   logger?: Logger,
 ): MemoryEmbeddingProvider | null {
   for (const id of ["openai", "gemini"] as const) {
-    // Pass undefined logger to suppress per-provider "no key" warnings.
-    const provider = tryCreateStandaloneProvider(id, profiles, undefined, undefined);
-    if (provider) return provider;
+    // Resolve the key directly with the logger so multi-profile ambiguity
+    // warnings surface. Going through tryCreateStandaloneProvider would also
+    // emit per-provider "no key" warnings, which are expected noise during
+    // auto-probing.
+    const apiKey = resolveEmbeddingApiKey(profiles, id, logger);
+    if (!apiKey) continue;
+    return id === "openai" ? createOpenAiProvider(apiKey) : createGeminiProvider(apiKey);
   }
   logger?.warn(
     `Standalone embedding auto-select: no API key found for openai or gemini`,
