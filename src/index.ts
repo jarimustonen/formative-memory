@@ -250,8 +250,7 @@ function resolveMemoryDir(
 
 const EMBEDDING_REQUIRED_HINT =
   `Embedding provider required but not available.\n` +
-  `Standalone providers: set OPENAI_API_KEY or GEMINI_API_KEY/GOOGLE_API_KEY, ` +
-  `or configure the key in auth-profiles.json under an openai:* or google:* profile.\n` +
+  `Configure an API key in auth-profiles.json under an openai:default or google:default profile.\n` +
   `If memory-core embedding adapters are installed, their providers are also tried.\n` +
   `To run without embeddings (BM25-only), set "requireEmbedding": false in plugin config.`;
 

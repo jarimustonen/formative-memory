@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   resolveEmbeddingApiKey,
   tryCreateStandaloneProvider,
@@ -8,12 +8,6 @@ import {
 // -- API key resolution --
 
 describe("resolveEmbeddingApiKey", () => {
-  const savedEnv = { ...process.env };
-
-  afterEach(() => {
-    process.env = { ...savedEnv };
-  });
-
   it("resolves openai key by profile key prefix", () => {
     const profiles = {
       "openai:default": { key: "sk-test-123" },
@@ -44,40 +38,30 @@ describe("resolveEmbeddingApiKey", () => {
     expect(resolveEmbeddingApiKey(profiles, "gemini")).toBe("AIza-custom");
   });
 
-  it("falls back to OPENAI_API_KEY env var", () => {
-    process.env.OPENAI_API_KEY = "sk-env-test";
-    expect(resolveEmbeddingApiKey(null, "openai")).toBe("sk-env-test");
-  });
-
-  it("falls back to GEMINI_API_KEY env var", () => {
-    process.env.GEMINI_API_KEY = "AIza-env-test";
-    expect(resolveEmbeddingApiKey(null, "gemini")).toBe("AIza-env-test");
-  });
-
-  it("falls back to GOOGLE_API_KEY env var for gemini", () => {
-    delete process.env.GEMINI_API_KEY;
-    process.env.GOOGLE_API_KEY = "AIza-google-env";
-    expect(resolveEmbeddingApiKey(null, "gemini")).toBe("AIza-google-env");
-  });
-
-  it("prefers profile key over env var", () => {
-    process.env.OPENAI_API_KEY = "sk-env";
-    const profiles = { "openai:default": { key: "sk-profile" } };
-    expect(resolveEmbeddingApiKey(profiles, "openai")).toBe("sk-profile");
-  });
-
-  it("returns null when no key found anywhere", () => {
-    delete process.env.OPENAI_API_KEY;
+  it("returns null when profiles is null (no env var fallback)", () => {
     expect(resolveEmbeddingApiKey(null, "openai")).toBeNull();
+    expect(resolveEmbeddingApiKey(null, "gemini")).toBeNull();
   });
 
-  it("returns null for empty profiles and no env var", () => {
-    delete process.env.OPENAI_API_KEY;
+  it("ignores process.env.OPENAI_API_KEY even when set", () => {
+    // Env vars are intentionally not consulted — auth-profiles.json is the
+    // only supported source. This guards against re-introducing env fallback.
+    const original = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = "sk-env-should-be-ignored";
+    try {
+      expect(resolveEmbeddingApiKey(null, "openai")).toBeNull();
+      expect(resolveEmbeddingApiKey({}, "openai")).toBeNull();
+    } finally {
+      if (original === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = original;
+    }
+  });
+
+  it("returns null for empty profiles", () => {
     expect(resolveEmbeddingApiKey({}, "openai")).toBeNull();
   });
 
   it("skips profiles without key field", () => {
-    delete process.env.OPENAI_API_KEY;
     const profiles = { "openai:default": { provider: "openai" } };
     expect(resolveEmbeddingApiKey(profiles, "openai")).toBeNull();
   });
@@ -172,12 +156,6 @@ describe("tryCreateStandaloneProvider", () => {
 // -- Auto-select --
 
 describe("autoSelectStandaloneProvider", () => {
-  const savedEnv = { ...process.env };
-
-  afterEach(() => {
-    process.env = { ...savedEnv };
-  });
-
   it("prefers openai when both keys available (backward compatibility)", () => {
     const profiles = {
       "openai:default": { key: "sk-test" },
@@ -201,11 +179,9 @@ describe("autoSelectStandaloneProvider", () => {
     expect(provider!.model).toBe("text-embedding-3-small");
   });
 
-  it("returns null when no keys available", () => {
-    delete process.env.OPENAI_API_KEY;
-    delete process.env.GEMINI_API_KEY;
-    delete process.env.GOOGLE_API_KEY;
+  it("returns null when no profiles available", () => {
     expect(autoSelectStandaloneProvider(null)).toBeNull();
+    expect(autoSelectStandaloneProvider({})).toBeNull();
   });
 
   it("does not spam per-provider warnings when one provider succeeds", () => {
@@ -218,9 +194,6 @@ describe("autoSelectStandaloneProvider", () => {
   });
 
   it("warns only once (terminal failure) when no provider succeeds", () => {
-    delete process.env.OPENAI_API_KEY;
-    delete process.env.GEMINI_API_KEY;
-    delete process.env.GOOGLE_API_KEY;
     const logger = { warn: vi.fn() };
     expect(autoSelectStandaloneProvider(null, logger)).toBeNull();
     expect(logger.warn).toHaveBeenCalledTimes(1);

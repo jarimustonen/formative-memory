@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -83,13 +83,18 @@ const fakeApi = (pluginConfig?: Record<string, unknown>) => ({
   on: vi.fn(),
 });
 
+/** Write an auth-profiles.json file to the given dir. Used by standalone
+ * fallback tests — env var fallback was removed, so the standalone client
+ * only reads from auth-profiles.json. */
+function writeAuthProfiles(dir: string, profiles: Record<string, { key?: string; provider?: string }>): void {
+  writeFileSync(
+    join(dir, "auth-profiles.json"),
+    JSON.stringify({ version: 1, profiles }, null, 2),
+  );
+}
+
 beforeEach(() => {
   registeredTools = [];
-  // Ensure standalone fallback can't succeed via leaked env vars in CI/dev.
-  // Individual tests that want the fallback to succeed must set these via vi.stubEnv.
-  vi.stubEnv("OPENAI_API_KEY", "");
-  vi.stubEnv("GEMINI_API_KEY", "");
-  vi.stubEnv("GOOGLE_API_KEY", "");
   mockEmbedQuery.mockClear();
   mockCreate.mockClear();
   mockGetProvider.mockClear();
@@ -128,7 +133,6 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(tmpDir, { recursive: true, force: true });
-  vi.unstubAllEnvs();
 });
 
 // -- Helper --
@@ -491,7 +495,7 @@ describe("standalone fallback", () => {
 
   it("auto mode falls back to standalone when registry is empty", async () => {
     mockListProviders.mockReturnValue([]);
-    vi.stubEnv("OPENAI_API_KEY", "sk-test");
+    writeAuthProfiles(tmpDir, { "openai:default": { key: "sk-test" } });
     globalThis.fetch = vi.fn(async () =>
       new Response(JSON.stringify({
         data: [{ embedding: Array.from({ length: 1536 }, () => 0.1), index: 0 }],
@@ -520,7 +524,7 @@ describe("standalone fallback", () => {
         create: vi.fn(async () => { throw new Error("memory-core: no auth"); }),
       },
     ]);
-    vi.stubEnv("OPENAI_API_KEY", "sk-test");
+    writeAuthProfiles(tmpDir, { "openai:default": { key: "sk-test" } });
     globalThis.fetch = vi.fn(async () =>
       new Response(JSON.stringify({
         data: [{ embedding: Array.from({ length: 1536 }, () => 0.1), index: 0 }],
@@ -540,7 +544,7 @@ describe("standalone fallback", () => {
 
   it("explicit provider falls back to standalone when registry adapter fails", async () => {
     mockCreate.mockRejectedValue(new Error("memory-core: no auth wiring"));
-    vi.stubEnv("OPENAI_API_KEY", "sk-test");
+    writeAuthProfiles(tmpDir, { "openai:default": { key: "sk-test" } });
     globalThis.fetch = vi.fn(async () =>
       new Response(JSON.stringify({
         data: [{ embedding: Array.from({ length: 1536 }, () => 0.1), index: 0 }],
@@ -567,7 +571,7 @@ describe("standalone fallback", () => {
         create: vi.fn(async () => { throw new Error("registry fail"); }),
       },
     ]);
-    // No env keys set (cleared in beforeEach)
+    // No auth-profiles.json written — standalone also fails.
 
     const api = fakeApi();
     plugin.register(api as any);
@@ -581,7 +585,7 @@ describe("standalone fallback", () => {
 
   it("explicit provider throws with combined error context when both fail", async () => {
     mockCreate.mockRejectedValue(new Error("registry auth error"));
-    // No env keys — standalone also fails
+    // No auth-profiles.json written — standalone also fails.
 
     const api = fakeApi({ embedding: { provider: "openai" } });
     plugin.register(api as any);

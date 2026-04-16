@@ -23,6 +23,12 @@ type Logger = { warn: (msg: string) => void };
 /**
  * Resolve an API key for an embedding provider from auth profiles.
  *
+ * Auth profiles (auth-profiles.json) are the only supported credential
+ * source — environment variables are intentionally NOT used. OpenClaw's
+ * canonical auth mechanism is auth-profiles.json; relying on env vars
+ * encouraged skipping profile setup and created uncertainty about which
+ * account was actually in use.
+ *
  * Selection order (deterministic, prevents silent wrong-account selection):
  * 1. Profile named exactly "openai:default" or "google:default" — the
  *    conventional default. Users with multiple profiles (e.g. "google:work"
@@ -32,52 +38,47 @@ type Logger = { warn: (msg: string) => void };
  * 3. If multiple non-default matches exist: log a warning naming the chosen
  *    profile so log-scrapers can notice the ambiguity, then use the first
  *    one (Object.entries preserves insertion order).
- * 4. Environment variable fallback: OPENAI_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY.
  */
 export function resolveEmbeddingApiKey(
   profiles: AuthProfiles,
   provider: EmbeddingProviderName,
   logger?: Logger,
 ): string | null {
+  if (!profiles) return null;
+
   const keyPrefix = provider === "gemini" ? "google:" : "openai:";
   const providerField = provider === "gemini" ? "google" : "openai";
   const defaultName = `${keyPrefix}default`;
 
-  if (profiles) {
-    // 1. Exact ":default" profile takes precedence — explicit user convention.
-    const defaultEntry = profiles[defaultName];
-    if (defaultEntry?.key) {
-      return defaultEntry.key;
-    }
+  // 1. Exact ":default" profile takes precedence — explicit user convention.
+  const defaultEntry = profiles[defaultName];
+  if (defaultEntry?.key) {
+    return defaultEntry.key;
+  }
 
-    // 2. Collect all candidates (prefix match OR provider-field match).
-    const candidates: Array<{ name: string; key: string }> = [];
-    for (const [name, value] of Object.entries(profiles)) {
-      if (!value?.key) continue;
-      if (name.startsWith(keyPrefix) || value.provider === providerField) {
-        candidates.push({ name, key: value.key });
-      }
-    }
-
-    if (candidates.length === 1) {
-      return candidates[0].key;
-    }
-    if (candidates.length > 1) {
-      // Multiple non-default profiles — warn so ambiguous setups are visible.
-      // Still deterministic: Object.entries preserves insertion order.
-      logger?.warn(
-        `Multiple auth profiles match ${provider} (${candidates.map((c) => c.name).join(", ")}). ` +
-        `Using "${candidates[0].name}". Add a "${defaultName}" profile to select explicitly.`,
-      );
-      return candidates[0].key;
+  // 2. Collect all candidates (prefix match OR provider-field match).
+  const candidates: Array<{ name: string; key: string }> = [];
+  for (const [name, value] of Object.entries(profiles)) {
+    if (!value?.key) continue;
+    if (name.startsWith(keyPrefix) || value.provider === providerField) {
+      candidates.push({ name, key: value.key });
     }
   }
 
-  // 3. Environment variable fallback.
-  if (provider === "openai") {
-    return process.env.OPENAI_API_KEY ?? null;
+  if (candidates.length === 1) {
+    return candidates[0].key;
   }
-  return process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY ?? null;
+  if (candidates.length > 1) {
+    // Multiple non-default profiles — warn so ambiguous setups are visible.
+    // Still deterministic: Object.entries preserves insertion order.
+    logger?.warn(
+      `Multiple auth profiles match ${provider} (${candidates.map((c) => c.name).join(", ")}). ` +
+      `Using "${candidates[0].name}". Add a "${defaultName}" profile to select explicitly.`,
+    );
+    return candidates[0].key;
+  }
+
+  return null;
 }
 
 // -- Response validation helpers --
