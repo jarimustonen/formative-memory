@@ -10,7 +10,7 @@
  */
 
 import { isAbsolute, join } from "node:path";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { Type } from "@sinclair/typebox";
 import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk";
 import {
@@ -49,6 +49,26 @@ import { TurnMemoryLedger } from "./turn-memory-ledger.ts";
 const AUTH_PROFILE_FILENAME = "auth-profiles.json";
 
 /**
+ * Per-file cache for parsed auth profiles. The cron path fires
+ * readAuthProfiles repeatedly (every heartbeat scan, every consolidation
+ * trigger), and resolveLlmConfig + resolveEmbeddingProvider both call it.
+ * Without caching this was re-parsing the JSON on every hook fire.
+ *
+ * Keyed by absolute file path. Entries are invalidated by mtime change
+ * so hot-edits to auth-profiles.json (adding a key at runtime) still
+ * take effect without requiring a process restart.
+ *
+ * `statSync` is cheap compared to `readFileSync + JSON.parse`, and the
+ * synchronous API surface is preserved (the readAuthProfiles call sites
+ * run inside cron hooks that expect sync resolution).
+ */
+type CachedProfiles = Record<string, { provider?: string; key?: string }>;
+type CacheEntry =
+  | { kind: "hit"; mtimeMs: number; profiles: CachedProfiles }
+  | { kind: "miss"; mtimeMs: number }; // file exists but parse failed
+const profileCache = new Map<string, CacheEntry>();
+
+/**
  * Read API keys from auth-profiles.json.
  *
  * Lookup order:
@@ -71,52 +91,84 @@ function readAuthProfiles(
   const candidates = [agentDirPath, mainFallbackPath].filter((p): p is string => Boolean(p));
 
   for (const filePath of candidates) {
-    try {
-      const raw = readFileSync(filePath, "utf-8");
-      const data = JSON.parse(raw);
-      // Arrays pass `typeof === "object"`, so must be rejected explicitly.
-      // Profile values must also be objects with optional string fields, not
-      // arbitrary shapes — reject early so downstream code sees a clean record.
-      if (
-        !data ||
-        typeof data !== "object" ||
-        Array.isArray(data) ||
-        !data.profiles ||
-        typeof data.profiles !== "object" ||
-        Array.isArray(data.profiles)
-      ) {
-        logger?.warn(`Invalid auth profile format: ${filePath}`);
-        continue;
-      }
-      const cleaned: Record<string, { provider?: string; key?: string }> = {};
-      for (const [name, entry] of Object.entries(data.profiles)) {
-        if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-        const record = entry as { provider?: unknown; key?: unknown };
-        if (record.provider !== undefined && typeof record.provider !== "string") continue;
-        if (record.key !== undefined && typeof record.key !== "string") continue;
-        cleaned[name] = {
-          provider: record.provider as string | undefined,
-          key: record.key as string | undefined,
-        };
-      }
-      // Warn if the "main" fallback actually returned credentials.
-      // This path is a single-agent assumption; multi-agent setups may
-      // silently resolve the wrong account here.
-      if (filePath === mainFallbackPath && Object.keys(cleaned).length > 0) {
-        logger?.warn(
-          `Resolved auth-profiles from the hardcoded "main" agent fallback (${filePath}). ` +
-          `This works for single-agent setups but may pick wrong credentials in multi-agent configurations. ` +
-          `Ensure OpenClaw passes agentDir at runtime.`,
-        );
-      }
-      return cleaned;
-    } catch (err: any) {
-      if (err?.code !== "ENOENT") {
-        logger?.warn(`Failed to read auth profiles from ${filePath}: ${err.message}`);
-      }
+    const profiles = readProfilesWithCache(filePath, logger);
+    if (!profiles) continue;
+
+    // Warn if the "main" fallback actually returned credentials. This path
+    // is a single-agent assumption; multi-agent setups may silently resolve
+    // the wrong account here. Emitted on every successful resolution (not
+    // cached-deduplicated) so log volume is low — the fallback is rare.
+    if (filePath === mainFallbackPath && Object.keys(profiles).length > 0) {
+      logger?.warn(
+        `Resolved auth-profiles from the hardcoded "main" agent fallback (${filePath}). ` +
+        `This works for single-agent setups but may pick wrong credentials in multi-agent configurations. ` +
+        `Ensure OpenClaw passes agentDir at runtime.`,
+      );
     }
+    return profiles;
   }
   return null;
+}
+
+/**
+ * Cached read of a single auth-profiles.json file. Returns the parsed
+ * (and validated) profiles object, or null if the file doesn't exist or
+ * is malformed. Cache invalidates on mtime change.
+ */
+function readProfilesWithCache(
+  filePath: string,
+  logger?: { warn: (msg: string) => void },
+): CachedProfiles | null {
+  let mtimeMs: number;
+  try {
+    mtimeMs = statSync(filePath).mtimeMs;
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") {
+      logger?.warn(`Failed to stat auth profiles ${filePath}: ${err.message}`);
+    }
+    // File missing — drop any stale cached entry.
+    profileCache.delete(filePath);
+    return null;
+  }
+
+  const cached = profileCache.get(filePath);
+  if (cached && cached.mtimeMs === mtimeMs) {
+    return cached.kind === "hit" ? cached.profiles : null;
+  }
+
+  try {
+    const raw = readFileSync(filePath, "utf-8");
+    const data = JSON.parse(raw);
+    if (
+      !data ||
+      typeof data !== "object" ||
+      Array.isArray(data) ||
+      !data.profiles ||
+      typeof data.profiles !== "object" ||
+      Array.isArray(data.profiles)
+    ) {
+      logger?.warn(`Invalid auth profile format: ${filePath}`);
+      profileCache.set(filePath, { kind: "miss", mtimeMs });
+      return null;
+    }
+    const cleaned: CachedProfiles = {};
+    for (const [name, entry] of Object.entries(data.profiles)) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+      const record = entry as { provider?: unknown; key?: unknown };
+      if (record.provider !== undefined && typeof record.provider !== "string") continue;
+      if (record.key !== undefined && typeof record.key !== "string") continue;
+      cleaned[name] = {
+        provider: record.provider as string | undefined,
+        key: record.key as string | undefined,
+      };
+    }
+    profileCache.set(filePath, { kind: "hit", mtimeMs, profiles: cleaned });
+    return cleaned;
+  } catch (err: any) {
+    logger?.warn(`Failed to read auth profiles from ${filePath}: ${err.message}`);
+    profileCache.set(filePath, { kind: "miss", mtimeMs });
+    return null;
+  }
 }
 
 /**
