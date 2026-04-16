@@ -133,9 +133,48 @@ documented in `src/index.ts` (see the `WORKAROUND` block comment above `createWo
   context (`ctx.agentDir`). This is runtime-validated but not type-safe.
 - Multi-agent / multi-workspace is not supported — requires the upstream change.
 
-## What the plugin will do after this lands
+## Live test results (2026-04-15)
 
-Once the factory receives context, the plugin will:
+Tested on jari's bot (haapa, OpenClaw v2026.4.12 with runtime patches).
+
+### What worked
+
+- Factory receives `ctx.agentDir` and `ctx.workspaceDir` correctly
+- Plugin sets `runtimePaths.agentDir` from factory context — the old "agentDir not yet available" error no longer occurs
+- Plugin registers successfully, Telegram messages flow, bot responds
+- No regressions in basic operation
+
+### What did not work
+
+**Embedding provider resolution fails** even with `agentDir` available. The error changed from:
+
+```
+Embedding provider auth requires agentDir which is not yet available.
+```
+
+to:
+
+```
+Embedding provider required but not available.
+Set one of: OPENAI_API_KEY, GEMINI_API_KEY, VOYAGE_API_KEY, or MISTRAL_API_KEY.
+```
+
+**Root cause:** When memory-core is disabled (`plugins.entries.memory-core.enabled: false`), `listMemoryEmbeddingProviders()` returns an empty list because memory-core never registers its adapters. The fallback path (`tryDirectProviderFactory`) calls `createOpenAiEmbeddingProvider()` which cannot resolve the API key from auth-profiles — the SDK factory functions rely on memory-core's internal auth resolution that is not available when memory-core is disabled.
+
+Before this change, embedding resolution worked because it was triggered by the first tool call, at which point memory-core's embedding registry was populated by the runtime. With factory-context, the context engine factory runs earlier in the lifecycle — before the embedding registry is populated.
+
+### Dependency: SDK embedding provider exports (#08 task 4)
+
+This confirms that the factory-context PR and the SDK embedding exports PR are **interdependent**. Factory-context alone moves the "when" of provider resolution earlier, but the provider registry is still empty at that point. Either:
+
+1. The embedding registry must be populated before context engine factories run, OR
+2. The SDK factory functions must be able to resolve auth independently (the SDK embedding exports proposal)
+
+Both PRs should land together or in sequence (embedding exports first).
+
+## What the plugin will do after both PRs land
+
+Once the factory receives context AND embedding factories work independently:
 
 1. Replace the single-workspace singleton with a `Map<string, ManagedWorkspace>` keyed by resolved memory directory
 2. Use `ctx.config` and `ctx.agentDir` from the factory to resolve the correct workspace
@@ -143,3 +182,8 @@ Once the factory receives context, the plugin will:
 4. Support multiple concurrent workspaces/agents correctly
 
 The relevant code is in `src/index.ts` of the `formative-memory` repository, specifically the `register()` function and `createWorkspace()`.
+
+## Test branch
+
+- formative-memory: `test/context-engine-factory-context` (pushed to origin)
+- OpenClaw fork: `fix/context-engine-factory-context` (pushed to jarimustonen/openclaw)

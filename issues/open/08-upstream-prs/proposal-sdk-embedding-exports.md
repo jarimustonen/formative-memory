@@ -143,6 +143,47 @@ After the upstream PR lands, the plugin will:
 1. Change the import from `openclaw/plugin-sdk/memory-core-host-engine-embeddings` to `openclaw/plugin-sdk/embeddings`
 2. No other code changes needed — the API surface is identical, only the import path changes
 
+## Live test results (2026-04-15) — dependency confirmed
+
+Tested factory-context PR (`fix/context-engine-factory-context`) on jari's bot. The context engine factory now receives `agentDir` correctly, but **embedding resolution still fails** because:
+
+1. `listMemoryEmbeddingProviders()` returns empty when memory-core is disabled
+2. `createOpenAiEmbeddingProvider()` cannot resolve API keys from auth-profiles independently — it relies on memory-core's internal auth resolution
+
+This confirms that the SDK embedding exports proposal is **not just a cleanup** but a **functional dependency** for the factory-context PR. Without independently-working factory functions, the plugin cannot resolve embeddings when:
+
+- memory-core is disabled (the intended configuration for this plugin)
+- The context engine factory runs before memory-core's embedding registry is populated
+
+### What the exported factories must support
+
+The re-exported factory functions must be able to resolve API keys **without** memory-core being active. Specifically:
+
+- Read `auth-profiles.json` from `agentDir` (passed via `opts.agentDir`)
+- Fall back to environment variables (`OPENAI_API_KEY`, `GEMINI_API_KEY`)
+- Work identically whether memory-core is enabled or disabled
+
+If the current factory functions delegate auth to memory-core internals, the re-export alone is not sufficient — the auth resolution must be decoupled first.
+
+### Revised priority (2026-04-15)
+
+The plugin will implement its own standalone embedding client (#29) that reads API keys directly from auth-profiles.json via the existing `readAuthProfiles()`/`resolveApiKey()` helpers. This removes the SDK factory dependency entirely and unblocks the factory-context PR without waiting for this upstream change.
+
+With #29 in place, this SDK embedding exports PR changes from **blocker** to **cleanup**:
+
+- **Before #29:** This PR is a functional dependency — factory-context cannot land without it
+- **After #29:** This PR is an architectural improvement — stabilizes the import path and benefits other plugin authors, but formative-memory no longer needs it to function
+
+The PR is still worth submitting because:
+
+1. Other plugins that need embeddings will hit the same internal-path fragility
+2. A public `openclaw/plugin-sdk/embeddings` subpath is cleaner than every plugin rolling its own embedding client
+3. If the factory functions are fixed to resolve auth independently, the plugin could drop its standalone client and use the SDK again
+
+### Ordering
+
+This PR no longer blocks the factory-context PR (formative-memory uses standalone embedding via #29). It can land independently at any time.
+
 ## Backward compatibility
 
 - The old `memory-core-host-engine-embeddings` path is not removed — existing plugins keep working
