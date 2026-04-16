@@ -87,9 +87,18 @@ For the same reason, the `gateway:startup` hook event payload (`{ cfg, deps, wor
 
 - Removed the dead-code `agentDir` escape hatch from `registerService.start()`.
 - Added an `INFO` log in `start()`: `[formative-memory] [info] startup service started (stateDir=..., workspaceDir=...)`. This is the canary used for criterion 1 and 6 — grep gateway boot logs for it.
-- Rewrote the accompanying comment to describe the actual SDK contract and the agentDir-via-tool-context fallback.
+- `start()` now calls `triggerStartupTasks(ctx.workspaceDir)` when workspaceDir is present — migration, workspace cleanup, and embedding backfill fire at gateway boot instead of deferring to the first tool call. The call is idempotent (the existing `startupTasksTriggered` flag guards against a tool call firing the same work again).
+- Rewrote the accompanying comment to describe the actual SDK contract and the single-agent "main" auth fallback that boot-time migration relies on.
 
-Startup tasks (`triggerStartupTasks`) are left on the existing lazy-on-first-tool-call path; that path has full `agentDir + workspaceDir` context, whereas service `start()` does not. Moving them earlier would mainly benefit pre-session workspace cleanup, at the cost of relying on the "main" agent auth fallback for LLM calls — not worth changing without the upstream agentDir addition.
+### Known limitation: single-agent "main" setup required for boot-time auth
+
+Because the service context has no `agentDir`, `resolveLlmConfig` at boot
+falls back to `<stateDir>/agents/main/agent/auth-profiles.json`. For the
+default single-agent setup this is the correct path. Multi-agent setups
+where the primary profile lives under a different agent name will fall
+back to the lazy-on-first-tool-call path (which does carry `agentDir`),
+so migration/cleanup still complete — they just defer until the first
+tool call. Documented in README under Quick Start.
 
 ## Verification plan (manual)
 

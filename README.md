@@ -111,8 +111,20 @@ That's it. The plugin works out of the box:
 - **Auto-capture** records conversations for consolidation
 - **Auto-recall** surfaces relevant memories before every response
 - **Consolidation** runs automatically to maintain memory quality
+- **Startup tasks** (migrating existing memory files, scrubbing legacy
+  memory instructions from `AGENTS.md`/`SOUL.md`, backfilling embeddings)
+  run automatically at gateway boot
 
 No configuration needed — sensible defaults are built in.
+
+> **Multi-agent setups:** automatic startup tasks at boot resolve API
+> keys from `<stateDir>/agents/main/agent/auth-profiles.json` because
+> OpenClaw's plugin service context does not yet expose the active
+> `agentDir`. This is correct for the default single-agent `main`
+> setup. If you run multiple agents and the primary profile lives
+> elsewhere, the first tool call in a session (which carries the
+> correct `agentDir`) will pick up the right profile, so migration
+> and cleanup still complete — they just defer until that first call.
 
 ## Memory Tools
 

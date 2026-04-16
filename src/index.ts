@@ -1204,11 +1204,19 @@ const associativeMemoryPlugin = {
     // Invoked by OpenClaw at gateway boot when this plugin is the explicit
     // memory slot (upstream openclaw#64423, landed 2026-04-11). The service
     // context exposes `config`, `workspaceDir`, `stateDir`, and `logger`.
-    // It does NOT currently expose `agentDir` — auth resolution falls back
-    // to the hardcoded "main" agent path (see readAuthProfiles). When a
-    // tool call arrives later, `agentDir` is captured from the tool context
-    // and takes over. The INFO log below is the canary used to verify that
-    // this handler actually fires at boot — grep for it in gateway logs.
+    //
+    // It does NOT currently expose `agentDir`, so auth resolution falls back
+    // to the hardcoded "main" agent path (see readAuthProfiles). This means
+    // automatic migration/cleanup at boot only resolves correct credentials
+    // for single-agent "main" setups; multi-agent setups must wait for a
+    // tool call (which carries agentDir) to pick up the right profile —
+    // README documents this limitation.
+    //
+    // When ctx.workspaceDir is present we trigger migration + workspace
+    // cleanup + embedding backfill here so importing legacy memories and
+    // scrubbing AGENTS.md/SOUL.md no longer requires the first tool call.
+    // The handler is idempotent (startupTasksTriggered flag) — if a tool
+    // call races ahead, nothing is done twice.
     api.registerService({
       id: "formative-memory-startup",
       async start(ctx) {
@@ -1216,6 +1224,9 @@ const associativeMemoryPlugin = {
         log.info(
           `startup service started (stateDir=${ctx.stateDir}, workspaceDir=${ctx.workspaceDir ?? "unset"})`,
         );
+        if (ctx.workspaceDir) {
+          triggerStartupTasks(ctx.workspaceDir);
+        }
       },
     });
   },
