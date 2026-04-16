@@ -158,8 +158,8 @@ Configuration goes in `openclaw.json` under the plugin entry:
 | `autoRecall` | `true` | Inject relevant memories into context before every response |
 | `autoCapture` | `true` | Automatically capture conversations for consolidation |
 | `requireEmbedding` | `true` | Require a working embedding provider. Set `false` to allow BM25-only fallback |
-| `embedding.provider` | `"auto"` | Embedding provider: `auto`, `openai`, `gemini`, `voyage`, `mistral`, `ollama`, `local` |
-| `embedding.model` | — | Override the provider's default embedding model |
+| `embedding.provider` | `"auto"` | Embedding provider: `auto`, `openai`, `gemini`. Additional providers (`voyage`, `mistral`, `ollama`, `local`) are also accepted when memory-core embedding adapters are installed as a fallback registry |
+| `embedding.model` | — | Override the provider's default embedding model. Only takes effect with an explicit `embedding.provider` — ignored in `"auto"` mode to avoid passing a provider-specific model name to the wrong provider |
 | `dbPath` | `~/.openclaw/memory/associative` | SQLite database location |
 | `verbose` | `false` | Enable debug logging |
 | `logQueries` | `false` | Include raw query text in debug logs (disabled by default for privacy) |
@@ -168,6 +168,40 @@ The `"auto"` provider selects the best available embedding provider from
 your configured API keys. When `requireEmbedding` is `true` (the
 default), the plugin will not start without a working embedding provider.
 Set it to `false` to allow graceful degradation to keyword-only search.
+
+### API Keys
+
+API keys are read from OpenClaw's `auth-profiles.json`. Environment
+variables are **not** used. Configure a profile under the standard
+OpenClaw setup:
+
+```json
+{
+  "version": 1,
+  "profiles": {
+    "openai:default": { "type": "api_key", "key": "sk-..." },
+    "google:default": { "type": "api_key", "key": "AIza..." }
+  }
+}
+```
+
+The `openai:default` and `google:default` profile names are picked up
+automatically. If you have multiple profiles for the same provider
+(e.g. `openai:work` and `openai:personal`), the plugin warns and picks
+the first one — add a `:default` profile to select explicitly.
+
+### Provider pinning
+
+The plugin pins the selected provider and model to the database on
+first successful resolution. On subsequent runs, the same provider and
+model are used regardless of `embedding.provider` in config — this
+prevents silent drift that would corrupt the vector store when a
+different provider (producing different-dimension vectors) takes over.
+
+If you intentionally want to switch providers or models for an
+existing database, you must re-embed all memories via migration.
+Attempting to change the configured provider mid-life produces a
+clear error at startup rather than silent corruption.
 
 ## Architecture
 
@@ -190,8 +224,10 @@ OpenClaw Runtime
 **Storage:** SQLite with FTS5 for full-text search. Single file, no
 external services.
 
-**Embedding:** Auto-detected from configured API keys. Supports OpenAI,
-Gemini, Voyage, Mistral, Ollama. Circuit breaker with graceful fallback
+**Embedding:** Standalone fetch-based clients for OpenAI and Gemini
+read keys from `auth-profiles.json`. Additional providers (Voyage,
+Mistral, Ollama, local) resolve through memory-core's embedding
+adapter registry when installed. Circuit breaker with graceful fallback
 to keyword-only search when `requireEmbedding` is `false`.
 
 **Consolidation LLM:** Uses Anthropic (Claude) or OpenAI for memory
