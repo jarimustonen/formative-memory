@@ -165,26 +165,16 @@ const EMBEDDING_REQUIRED_HINT =
 // -- Embedding provider resolution --
 
 /**
- * Try to create a standalone embedding provider using direct fetch calls.
- * Used when the memory-core plugin is disabled and the global registry is empty.
- * Reads API keys from auth-profiles.json or environment variables.
- */
-function tryStandaloneProvider(
-  providerId: string,
-  stateDir?: string,
-  agentDir?: string,
-  model?: string,
-  logger?: { warn: (msg: string) => void },
-): MemoryEmbeddingProvider | null {
-  const profiles = readAuthProfiles(stateDir, agentDir, logger);
-  return tryCreateStandaloneProvider(providerId, profiles, model, logger);
-}
-
-/**
- * Resolve an embedding provider from the OpenClaw provider registry.
+ * Resolve an embedding provider.
  *
- * For "auto": tries each registered adapter in priority order.
- * For explicit IDs: creates the specific provider or throws.
+ * Resolution order:
+ * 1. Registry adapters (memory-core) — preferred when available
+ * 2. Standalone fetch-based providers — fallback when registry is empty OR
+ *    when registered adapters fail to initialize (e.g. memory-core auth broken)
+ *
+ * The standalone fallback also runs after registry failures, not only on
+ * empty registry. This is critical: memory-core may be installed but unable
+ * to resolve API keys in non-tool contexts (cron, migration, assemble).
  *
  * Throws on failure — the plugin requires a working embedding provider.
  */
@@ -197,6 +187,7 @@ async function resolveEmbeddingProvider(
   logger?: Logger,
 ): Promise<MemoryEmbeddingProvider> {
   const errors: string[] = [];
+  const profiles = readAuthProfiles(stateDir, agentDir, logger);
 
   if (providerId === "auto") {
     const adapters = listMemoryEmbeddingProviders()
@@ -216,35 +207,43 @@ async function resolveEmbeddingProvider(
       }
     }
 
-    // Fallback: registry empty (memory-core disabled) — try standalone providers
-    if (adapters.length === 0) {
-      const profiles = readAuthProfiles(stateDir, agentDir, logger);
-      const provider = autoSelectStandaloneProvider(profiles, model, logger);
-      if (provider) return provider;
-      errors.push("standalone: no API key found for gemini or openai");
-    }
+    // Always fall through to standalone — whether registry was empty or all
+    // adapters failed. This is the key fix: memory-core may be installed but
+    // unable to bootstrap auth in cron/migration contexts.
+    const provider = autoSelectStandaloneProvider(profiles, model, logger);
+    if (provider) return provider;
+    errors.push("standalone: no API key found for gemini or openai");
 
     throw new Error(
       `No embedding provider available (tried auto-selection).\n${errors.join("\n") || "No adapters registered."}`,
     );
   }
 
-  // Explicit provider ID — try registry first, then standalone
+  // Explicit provider ID — try registry first, fall through to standalone on
+  // any failure (not just when adapter is absent).
   const adapter = getMemoryEmbeddingProvider(providerId);
   if (adapter) {
-    const result = await adapter.create({
-      config: openclawConfig,
-      agentDir,
-      model: model ?? adapter.defaultModel ?? "",
-    });
-    if (result.provider) return result.provider;
-    throw new Error(`Embedding provider "${providerId}" returned no provider instance`);
+    try {
+      const result = await adapter.create({
+        config: openclawConfig,
+        agentDir,
+        model: model ?? adapter.defaultModel ?? "",
+      });
+      if (result.provider) return result.provider;
+      errors.push(`${providerId}: registry adapter returned no provider instance`);
+    } catch (err) {
+      errors.push(`${providerId}: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
-  const standaloneProvider = tryStandaloneProvider(providerId, stateDir, agentDir, model, logger);
+  const standaloneProvider = tryCreateStandaloneProvider(providerId, profiles, model, logger);
   if (standaloneProvider) return standaloneProvider;
 
-  throw new Error(`Unknown embedding provider: "${providerId}"`);
+  throw new Error(
+    errors.length > 0
+      ? `Embedding provider "${providerId}" unavailable.\n${errors.join("\n")}`
+      : `Unknown embedding provider: "${providerId}"`,
+  );
 }
 
 // -- Workspace --

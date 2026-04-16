@@ -85,6 +85,11 @@ const fakeApi = (pluginConfig?: Record<string, unknown>) => ({
 
 beforeEach(() => {
   registeredTools = [];
+  // Ensure standalone fallback can't succeed via leaked env vars in CI/dev.
+  // Individual tests that want the fallback to succeed must set these via vi.stubEnv.
+  vi.stubEnv("OPENAI_API_KEY", "");
+  vi.stubEnv("GEMINI_API_KEY", "");
+  vi.stubEnv("GOOGLE_API_KEY", "");
   mockEmbedQuery.mockClear();
   mockCreate.mockClear();
   mockGetProvider.mockClear();
@@ -123,6 +128,7 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(tmpDir, { recursive: true, force: true });
+  vi.unstubAllEnvs();
 });
 
 // -- Helper --
@@ -469,6 +475,122 @@ describe("provider resolution", () => {
     expect(mockCreate).toHaveBeenCalledWith(
       expect.objectContaining({ model: "text-embedding-3-small" }),
     );
+  });
+});
+
+// ===========================================================================
+// Standalone fallback (memory-core unavailable or auth broken)
+// ===========================================================================
+
+describe("standalone fallback", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("auto mode falls back to standalone when registry is empty", async () => {
+    mockListProviders.mockReturnValue([]);
+    vi.stubEnv("OPENAI_API_KEY", "sk-test");
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({
+        data: [{ embedding: Array.from({ length: 1536 }, () => 0.1), index: 0 }],
+      })),
+    );
+
+    const api = fakeApi();
+    plugin.register(api as any);
+    const tools = getTools(api);
+    const storeTool = tools.find((t: any) => t.name === "memory_store")!;
+
+    await storeTool.execute("call-1", { content: "test", type: "fact" });
+
+    expect(globalThis.fetch).toHaveBeenCalled();
+    const [url] = (globalThis.fetch as any).mock.calls[0];
+    expect(url).toBe("https://api.openai.com/v1/embeddings");
+  });
+
+  it("auto mode falls back to standalone when all registry adapters fail", async () => {
+    // Key scenario: memory-core installed but auth wiring broken.
+    mockListProviders.mockReturnValue([
+      {
+        id: "openai",
+        defaultModel: "m",
+        autoSelectPriority: 20,
+        create: vi.fn(async () => { throw new Error("memory-core: no auth"); }),
+      },
+    ]);
+    vi.stubEnv("OPENAI_API_KEY", "sk-test");
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({
+        data: [{ embedding: Array.from({ length: 1536 }, () => 0.1), index: 0 }],
+      })),
+    );
+
+    const api = fakeApi();
+    plugin.register(api as any);
+    const tools = getTools(api);
+    const storeTool = tools.find((t: any) => t.name === "memory_store")!;
+
+    // Should succeed via standalone fallback, not throw
+    await storeTool.execute("call-1", { content: "test", type: "fact" });
+
+    expect(globalThis.fetch).toHaveBeenCalled();
+  });
+
+  it("explicit provider falls back to standalone when registry adapter fails", async () => {
+    mockCreate.mockRejectedValue(new Error("memory-core: no auth wiring"));
+    vi.stubEnv("OPENAI_API_KEY", "sk-test");
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({
+        data: [{ embedding: Array.from({ length: 1536 }, () => 0.1), index: 0 }],
+      })),
+    );
+
+    const api = fakeApi({ embedding: { provider: "openai" } });
+    plugin.register(api as any);
+    const tools = getTools(api);
+    const storeTool = tools.find((t: any) => t.name === "memory_store")!;
+
+    // Should succeed via standalone fallback despite adapter failure
+    await storeTool.execute("call-1", { content: "test", type: "fact" });
+
+    expect(globalThis.fetch).toHaveBeenCalled();
+  });
+
+  it("auto mode throws including both registry and standalone errors", async () => {
+    mockListProviders.mockReturnValue([
+      {
+        id: "openai",
+        defaultModel: "m",
+        autoSelectPriority: 20,
+        create: vi.fn(async () => { throw new Error("registry fail"); }),
+      },
+    ]);
+    // No env keys set (cleared in beforeEach)
+
+    const api = fakeApi();
+    plugin.register(api as any);
+    const tools = getTools(api);
+    const storeTool = tools.find((t: any) => t.name === "memory_store")!;
+
+    await expect(
+      storeTool.execute("call-1", { content: "test", type: "fact" }),
+    ).rejects.toThrow(/registry fail[\s\S]*standalone/);
+  });
+
+  it("explicit provider throws with combined error context when both fail", async () => {
+    mockCreate.mockRejectedValue(new Error("registry auth error"));
+    // No env keys — standalone also fails
+
+    const api = fakeApi({ embedding: { provider: "openai" } });
+    plugin.register(api as any);
+    const tools = getTools(api);
+    const storeTool = tools.find((t: any) => t.name === "memory_store")!;
+
+    await expect(
+      storeTool.execute("call-1", { content: "test", type: "fact" }),
+    ).rejects.toThrow(/registry auth error/);
   });
 });
 
