@@ -1,11 +1,18 @@
 ---
 created: 2026-04-13
-updated: 2026-04-13
+updated: 2026-04-16
 type: feature
 reporter: jari
 assignee: jari
-status: in-progress
+status: done
 priority: normal
+commits:
+  - hash: e974afc
+    summary: "feat: add detailed logging to consolidation pipeline"
+  - hash: d5a718b
+    summary: "fix: address review findings for consolidation logging"
+  - hash: f7bccbe
+    summary: "refactor: polish consolidation logging from review round 2"
 ---
 
 # 14. Add detailed consolidation logging
@@ -27,3 +34,15 @@ The consolidation pipeline currently returns only aggregate counts (reinforced: 
   - **Temporal shift**: which memories transitioned state
 - Output should be readable in terminal (not just JSON)
 - Use logger from #13 so verbosity is controllable
+
+## Resolution
+
+See [analysis.md](./analysis.md) for the per-step coverage table.
+
+The bulk landed in `e974afc` / `d5a718b` / `f7bccbe`. The final
+gap-closing pass restored info-level visibility for prune, temporal
+shift, and merge-before content (which review round 2 had demoted to
+debug) using the capped per-item pattern from `d5a718b`, and added the
+notable/all split for reinforce that the scope called for. Cap
+(`PER_ITEM_INFO_CAP = 20`) prevents log storms while keeping every step
+audible at default verbosity.

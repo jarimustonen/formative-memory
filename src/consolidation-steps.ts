@@ -32,6 +32,21 @@ export const MODE_WEIGHT_HYBRID = 1.0;
 /** Mode weight for BM25-only retrieval (degraded). */
 export const MODE_WEIGHT_BM25_ONLY = 0.5;
 
+/**
+ * Cap on per-item info-level log lines per consolidation step.
+ * Items beyond the cap fall through to debug; an overflow summary is
+ * emitted at info so operators see the count without log-storm volume.
+ */
+export const PER_ITEM_INFO_CAP = 20;
+
+/**
+ * Reinforcement delta at or above which a per-memory line is promoted
+ * from debug to info ("notable" reinforcement). Tuned so a single
+ * tool_get hit (η × 0.6 = 0.42) is notable, but auto_injected dribble
+ * (η × 0.15 = 0.105) is not.
+ */
+export const REINFORCE_NOTABLE_THRESHOLD = 0.3;
+
 // -- Step 0: Catch-up decay --
 
 /** Maximum catch-up cycles to prevent amnesia on very long gaps. */
@@ -142,6 +157,8 @@ export function applyReinforcement(db: MemoryDatabase, log: Logger = nullLogger)
   return db.transaction(() => {
     const debug = log.isDebugEnabled();
     let count = 0;
+    let notableLogged = 0;
+    let notableSuppressed = 0;
 
     for (const [memoryId, totalReinforcement] of reinforcements) {
       if (totalReinforcement === 0) continue;
@@ -151,10 +168,15 @@ export function applyReinforcement(db: MemoryDatabase, log: Logger = nullLogger)
       const newStrength = Math.max(0, Math.min(mem.strength + totalReinforcement, 1.0));
       if (newStrength !== mem.strength) {
         db.updateStrength(memoryId, newStrength);
-        if (debug) {
-          log.debug(
-            `reinforce: "${preview(mem.content)}" ${mem.strength.toFixed(3)} → ${newStrength.toFixed(3)} (+${totalReinforcement.toFixed(3)})`,
-          );
+        const sign = totalReinforcement >= 0 ? "+" : "";
+        const line = `reinforce: "${preview(mem.content)}" ${mem.strength.toFixed(3)} → ${newStrength.toFixed(3)} (${sign}${totalReinforcement.toFixed(3)})`;
+        const isNotable = Math.abs(totalReinforcement) >= REINFORCE_NOTABLE_THRESHOLD;
+        if (isNotable && notableLogged < PER_ITEM_INFO_CAP) {
+          log.info(line);
+          notableLogged++;
+        } else {
+          if (isNotable) notableSuppressed++;
+          if (debug) log.debug(line);
         }
         count++;
       }
@@ -167,6 +189,9 @@ export function applyReinforcement(db: MemoryDatabase, log: Logger = nullLogger)
 
     if (count > 0) {
       log.info(`reinforce: ${count} memories strengthened from ${pendingAttrs.length} attributions`);
+    }
+    if (notableSuppressed > 0) {
+      log.info(`reinforce: ${notableSuppressed} additional notable reinforcements (enable debug for details)`);
     }
 
     return count;
@@ -355,13 +380,18 @@ export function applyPruning(db: MemoryDatabase, log: Logger = nullLogger): { me
   const allMemories = db.getAllMemories();
   const debug = log.isDebugEnabled();
   let memoriesPruned = 0;
+  let infoLogged = 0;
+  let suppressed = 0;
 
   for (const mem of allMemories) {
     if (mem.strength <= PRUNE_STRENGTH_THRESHOLD) {
-      if (debug) {
-        log.debug(
-          `prune: removing "${preview(mem.content, 80)}" (strength=${mem.strength.toFixed(3)}, type=${mem.type})`,
-        );
+      const line = `prune: removing "${preview(mem.content, 80)}" (strength=${mem.strength.toFixed(3)}, type=${mem.type})`;
+      if (infoLogged < PER_ITEM_INFO_CAP) {
+        log.info(line);
+        infoLogged++;
+      } else {
+        suppressed++;
+        if (debug) log.debug(line);
       }
       db.deleteMemory(mem.id);
       memoriesPruned++;
@@ -372,6 +402,9 @@ export function applyPruning(db: MemoryDatabase, log: Logger = nullLogger): { me
 
   if (memoriesPruned > 0 || associationsPruned > 0) {
     log.info(`prune: ${memoriesPruned} memories, ${associationsPruned} associations removed`);
+  }
+  if (suppressed > 0) {
+    log.info(`prune: ${suppressed} additional memories pruned (per-item logs suppressed; enable debug for details)`);
   }
 
   return { memoriesPruned, associationsPruned };
@@ -391,6 +424,8 @@ export function applyTemporalTransitions(db: MemoryDatabase, log: Logger = nullL
   const allMemories = db.getAllMemories();
   const debug = log.isDebugEnabled();
   let count = 0;
+  let infoLogged = 0;
+  let suppressed = 0;
 
   for (const mem of allMemories) {
     if (!mem.temporal_anchor) continue;
@@ -409,10 +444,13 @@ export function applyTemporalTransitions(db: MemoryDatabase, log: Logger = nullL
     }
 
     if (newState) {
-      if (debug) {
-        log.debug(
-          `temporal: "${preview(mem.content)}" ${mem.temporal_state} → ${newState}`,
-        );
+      const line = `temporal: "${preview(mem.content)}" ${mem.temporal_state} → ${newState}`;
+      if (infoLogged < PER_ITEM_INFO_CAP) {
+        log.info(line);
+        infoLogged++;
+      } else {
+        suppressed++;
+        if (debug) log.debug(line);
       }
       db.updateTemporalState(mem.id, newState);
       count++;
@@ -421,6 +459,9 @@ export function applyTemporalTransitions(db: MemoryDatabase, log: Logger = nullL
 
   if (count > 0) {
     log.info(`temporal: ${count} memories transitioned`);
+  }
+  if (suppressed > 0) {
+    log.info(`temporal: ${suppressed} additional transitions (per-item logs suppressed; enable debug for details)`);
   }
 
   return count;

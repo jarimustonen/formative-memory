@@ -72,9 +72,9 @@ export async function executeMerge(
     throw new Error(`Merge failed: memory not found (${pair.a}, ${pair.b})`);
   }
 
-  if (log.isDebugEnabled()) {
-    log.debug(`merge: combining: A: "${preview(memA.content, 100)}" B: "${preview(memB.content, 100)}"`);
-  }
+  log.info(
+    `merge: combining A=${memA.id.slice(0, 8)}… "${preview(memA.content, 80)}" + B=${memB.id.slice(0, 8)}… "${preview(memB.content, 80)}"`,
+  );
 
   // 1. Produce merged content (async, outside transaction)
   const merged = await contentProducer(
