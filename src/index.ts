@@ -14,12 +14,14 @@ import { readFileSync } from "node:fs";
 import { Type } from "@sinclair/typebox";
 import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk";
 import {
-  createGeminiEmbeddingProvider,
-  createOpenAiEmbeddingProvider,
   getMemoryEmbeddingProvider,
   listMemoryEmbeddingProviders,
   type MemoryEmbeddingProvider,
 } from "openclaw/plugin-sdk/memory-core-host-engine-embeddings";
+import {
+  autoSelectStandaloneProvider,
+  tryCreateStandaloneProvider,
+} from "./standalone-embedding.ts";
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
 import type { AssociativeMemoryConfig } from "./config.ts";
 import { memoryConfigSchema } from "./config.ts";
@@ -163,26 +165,19 @@ const EMBEDDING_REQUIRED_HINT =
 // -- Embedding provider resolution --
 
 /**
- * Try to create an embedding provider directly via SDK factory functions.
+ * Try to create a standalone embedding provider using direct fetch calls.
  * Used when the memory-core plugin is disabled and the global registry is empty.
- * Factory returns { provider, client } — we extract the provider.
+ * Reads API keys from auth-profiles.json or environment variables.
  */
-async function tryDirectProviderFactory(
+function tryStandaloneProvider(
   providerId: string,
-  openclawConfig: OpenClawConfig,
+  stateDir?: string,
   agentDir?: string,
   model?: string,
-): Promise<MemoryEmbeddingProvider | null> {
-  const factories: Record<string, (opts: any) => Promise<any>> = {
-    openai: createOpenAiEmbeddingProvider,
-    gemini: createGeminiEmbeddingProvider,
-  };
-  const factory = factories[providerId];
-  if (!factory) return null;
-
-  const result = await factory({ config: openclawConfig, agentDir, model: model ?? "" });
-  const provider = result?.provider ?? result;
-  return provider?.embedQuery ? provider : null;
+  logger?: { warn: (msg: string) => void },
+): MemoryEmbeddingProvider | null {
+  const profiles = readAuthProfiles(stateDir, agentDir, logger);
+  return tryCreateStandaloneProvider(providerId, profiles, model, logger);
 }
 
 /**
@@ -198,6 +193,8 @@ async function resolveEmbeddingProvider(
   openclawConfig: OpenClawConfig,
   agentDir?: string,
   model?: string,
+  stateDir?: string,
+  logger?: Logger,
 ): Promise<MemoryEmbeddingProvider> {
   const errors: string[] = [];
 
@@ -219,16 +216,12 @@ async function resolveEmbeddingProvider(
       }
     }
 
-    // Fallback: registry empty (memory-core disabled) — try direct factories
+    // Fallback: registry empty (memory-core disabled) — try standalone providers
     if (adapters.length === 0) {
-      for (const id of ["gemini", "openai"] as const) {
-        try {
-          const provider = await tryDirectProviderFactory(id, openclawConfig, agentDir, model);
-          if (provider) return provider;
-        } catch (err) {
-          errors.push(`${id} (direct): ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
+      const profiles = readAuthProfiles(stateDir, agentDir, logger);
+      const provider = autoSelectStandaloneProvider(profiles, model, logger);
+      if (provider) return provider;
+      errors.push("standalone: no API key found for gemini or openai");
     }
 
     throw new Error(
@@ -236,7 +229,7 @@ async function resolveEmbeddingProvider(
     );
   }
 
-  // Explicit provider ID — try registry first, then direct factory
+  // Explicit provider ID — try registry first, then standalone
   const adapter = getMemoryEmbeddingProvider(providerId);
   if (adapter) {
     const result = await adapter.create({
@@ -248,8 +241,8 @@ async function resolveEmbeddingProvider(
     throw new Error(`Embedding provider "${providerId}" returned no provider instance`);
   }
 
-  const directProvider = await tryDirectProviderFactory(providerId, openclawConfig, agentDir, model);
-  if (directProvider) return directProvider;
+  const standaloneProvider = tryStandaloneProvider(providerId, stateDir, agentDir, model, logger);
+  if (standaloneProvider) return standaloneProvider;
 
   throw new Error(`Unknown embedding provider: "${providerId}"`);
 }
@@ -292,6 +285,7 @@ function createWorkspace(
   getAgentDir: () => string | undefined,
   logger?: Logger,
   pathResolver?: (input: string) => string,
+  getStateDir?: () => string | undefined,
 ): ManagedWorkspace {
   const memoryDir = resolveMemoryDir(config, workspaceDir, pathResolver);
   const circuitBreaker = new EmbeddingCircuitBreaker({
@@ -333,6 +327,8 @@ function createWorkspace(
         openclawConfig,
         currentAgentDir,
         config.embedding.model,
+        getStateDir?.(),
+        logger,
       ).catch((err) => {
         // Always clear cache so transient failures (network, delayed auth)
         // can recover on retry. Never permanently cache rejections.
@@ -656,10 +652,12 @@ const associativeMemoryPlugin = {
 
     const getAgentDir = (): string | undefined => runtimePaths.agentDir;
 
+    const getStateDir = (): string | undefined => runtimePaths.stateDir;
+
     const getWorkspace = (workspaceDir: string): ManagedWorkspace => {
       if (!workspace) {
         workspace = createWorkspace(
-          config, workspaceDir, openclawConfig, getAgentDir, log, api.resolvePath,
+          config, workspaceDir, openclawConfig, getAgentDir, log, api.resolvePath, getStateDir,
         );
       }
       return workspace;
