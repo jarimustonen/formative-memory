@@ -163,6 +163,27 @@ describe("autoSelectStandaloneProvider", () => {
     delete process.env.GOOGLE_API_KEY;
     expect(autoSelectStandaloneProvider(null)).toBeNull();
   });
+
+  it("does not spam per-provider warnings when one provider succeeds", () => {
+    // Only openai key present → gemini probe should not warn
+    const profiles = { "openai:default": { key: "sk-test" } };
+    const logger = { warn: vi.fn() };
+    const provider = autoSelectStandaloneProvider(profiles, logger);
+    expect(provider!.id).toBe("openai");
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("warns only once (terminal failure) when no provider succeeds", () => {
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.GOOGLE_API_KEY;
+    const logger = { warn: vi.fn() };
+    expect(autoSelectStandaloneProvider(null, logger)).toBeNull();
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("no API key found for openai or gemini"),
+    );
+  });
 });
 
 // -- Fetch-based API calls (mocked) --

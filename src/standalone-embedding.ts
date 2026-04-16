@@ -355,14 +355,22 @@ export function tryCreateStandaloneProvider(
  * Gemini (768-dim) would silently break existing vector stores.
  * Provider identity is persisted to DB state on first successful
  * resolution to prevent future drift (see createWorkspace).
+ *
+ * Probing is silent — missing API keys for individual providers are not
+ * warned about here because at least one is expected to succeed. The
+ * caller warns only if the entire auto-select returns null.
  */
 export function autoSelectStandaloneProvider(
   profiles: AuthProfiles,
   logger?: Logger,
 ): MemoryEmbeddingProvider | null {
   for (const id of ["openai", "gemini"] as const) {
-    const provider = tryCreateStandaloneProvider(id, profiles, undefined, logger);
+    // Pass undefined logger to suppress per-provider "no key" warnings.
+    const provider = tryCreateStandaloneProvider(id, profiles, undefined, undefined);
     if (provider) return provider;
   }
+  logger?.warn(
+    `Standalone embedding auto-select: no API key found for openai or gemini`,
+  );
   return null;
 }
