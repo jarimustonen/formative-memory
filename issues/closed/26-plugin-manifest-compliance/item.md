@@ -4,8 +4,11 @@ updated: 2026-04-16
 type: chore
 reporter: jari
 assignee: jari
-status: done
+status: closed
 priority: normal
+commits:
+  - hash: c86840f
+    summary: "chore(issue-26): declare full manifest capabilities and harden install scan"
 ---
 
 # 26. Plugin manifest and security compliance
