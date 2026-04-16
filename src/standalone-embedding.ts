@@ -22,34 +22,57 @@ type Logger = { warn: (msg: string) => void };
 /**
  * Resolve an API key for an embedding provider from auth profiles.
  *
- * Matching strategy (first match wins):
- * 1. Profile key prefix: "openai:*" for openai, "google:*" for gemini
- * 2. Profile value `provider` field: "openai" or "google"
- * 3. Environment variable fallback: OPENAI_API_KEY or GEMINI_API_KEY / GOOGLE_API_KEY
+ * Selection order (deterministic, prevents silent wrong-account selection):
+ * 1. Profile named exactly "openai:default" or "google:default" — the
+ *    conventional default. Users with multiple profiles (e.g. "google:work"
+ *    and "google:personal") opt in via this name.
+ * 2. If exactly one matching profile exists (by key prefix or provider
+ *    field), use it.
+ * 3. If multiple non-default matches exist: log a warning naming the chosen
+ *    profile so log-scrapers can notice the ambiguity, then use the first
+ *    one (Object.entries preserves insertion order).
+ * 4. Environment variable fallback: OPENAI_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY.
  */
 export function resolveEmbeddingApiKey(
   profiles: AuthProfiles,
   provider: EmbeddingProviderName,
+  logger?: Logger,
 ): string | null {
   const keyPrefix = provider === "gemini" ? "google:" : "openai:";
   const providerField = provider === "gemini" ? "google" : "openai";
+  const defaultName = `${keyPrefix}default`;
 
   if (profiles) {
-    // Match by key prefix first (most explicit)
-    for (const [key, value] of Object.entries(profiles)) {
-      if (key.startsWith(keyPrefix) && value?.key) {
-        return value.key;
+    // 1. Exact ":default" profile takes precedence — explicit user convention.
+    const defaultEntry = profiles[defaultName];
+    if (defaultEntry?.key) {
+      return defaultEntry.key;
+    }
+
+    // 2. Collect all candidates (prefix match OR provider-field match).
+    const candidates: Array<{ name: string; key: string }> = [];
+    for (const [name, value] of Object.entries(profiles)) {
+      if (!value?.key) continue;
+      if (name.startsWith(keyPrefix) || value.provider === providerField) {
+        candidates.push({ name, key: value.key });
       }
     }
-    // Match by provider field
-    for (const value of Object.values(profiles)) {
-      if (value?.provider === providerField && value?.key) {
-        return value.key;
-      }
+
+    if (candidates.length === 1) {
+      return candidates[0].key;
+    }
+    if (candidates.length > 1) {
+      // Multiple non-default profiles — warn so ambiguous setups are visible.
+      // Still deterministic: Object.entries preserves insertion order.
+      logger?.warn(
+        `Multiple auth profiles match ${provider} (${candidates.map((c) => c.name).join(", ")}). ` +
+        `Using "${candidates[0].name}". Add a "${defaultName}" profile to select explicitly.`,
+      );
+      return candidates[0].key;
     }
   }
 
-  // Environment variable fallback
+  // 3. Environment variable fallback.
   if (provider === "openai") {
     return process.env.OPENAI_API_KEY ?? null;
   }
@@ -328,7 +351,7 @@ export function tryCreateStandaloneProvider(
 ): MemoryEmbeddingProvider | null {
   if (providerId !== "openai" && providerId !== "gemini") return null;
 
-  const apiKey = resolveEmbeddingApiKey(profiles, providerId);
+  const apiKey = resolveEmbeddingApiKey(profiles, providerId, logger);
   if (!apiKey) {
     logger?.warn(`Standalone embedding: no API key found for ${providerId}`);
     return null;

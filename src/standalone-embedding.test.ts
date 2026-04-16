@@ -81,6 +81,50 @@ describe("resolveEmbeddingApiKey", () => {
     const profiles = { "openai:default": { provider: "openai" } };
     expect(resolveEmbeddingApiKey(profiles, "openai")).toBeNull();
   });
+
+  it("prefers 'openai:default' over other openai profiles without warning", () => {
+    const logger = { warn: vi.fn() };
+    const profiles = {
+      "openai:work": { key: "sk-work" },
+      "openai:default": { key: "sk-default" },
+      "openai:personal": { key: "sk-personal" },
+    };
+    expect(resolveEmbeddingApiKey(profiles, "openai", logger)).toBe("sk-default");
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it("prefers 'google:default' over other gemini profiles", () => {
+    const profiles = {
+      "google:work": { key: "AIza-work" },
+      "google:default": { key: "AIza-default" },
+    };
+    expect(resolveEmbeddingApiKey(profiles, "gemini")).toBe("AIza-default");
+  });
+
+  it("warns when multiple non-default profiles match and picks first", () => {
+    const logger = { warn: vi.fn() };
+    const profiles = {
+      "openai:work": { key: "sk-work" },
+      "openai:personal": { key: "sk-personal" },
+    };
+    const result = resolveEmbeddingApiKey(profiles, "openai", logger);
+    expect(result).toBe("sk-work"); // deterministic: first-inserted
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringMatching(/Multiple auth profiles.*openai:work.*openai:personal/),
+    );
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('Add a "openai:default" profile'),
+    );
+  });
+
+  it("does not warn with a single non-default matching profile", () => {
+    const logger = { warn: vi.fn() };
+    const profiles = {
+      "openai:only-one": { key: "sk-single" },
+    };
+    expect(resolveEmbeddingApiKey(profiles, "openai", logger)).toBe("sk-single");
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
 });
 
 // -- Provider creation --
