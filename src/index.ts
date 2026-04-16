@@ -67,11 +67,32 @@ function readAuthProfiles(
     try {
       const raw = readFileSync(filePath, "utf-8");
       const data = JSON.parse(raw);
-      if (!data || typeof data !== "object" || typeof data.profiles !== "object") {
+      // Arrays pass `typeof === "object"`, so must be rejected explicitly.
+      // Profile values must also be objects with optional string fields, not
+      // arbitrary shapes — reject early so downstream code sees a clean record.
+      if (
+        !data ||
+        typeof data !== "object" ||
+        Array.isArray(data) ||
+        !data.profiles ||
+        typeof data.profiles !== "object" ||
+        Array.isArray(data.profiles)
+      ) {
         logger?.warn(`Invalid auth profile format: ${filePath}`);
         continue;
       }
-      return data.profiles;
+      const cleaned: Record<string, { provider?: string; key?: string }> = {};
+      for (const [name, entry] of Object.entries(data.profiles)) {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+        const record = entry as { provider?: unknown; key?: unknown };
+        if (record.provider !== undefined && typeof record.provider !== "string") continue;
+        if (record.key !== undefined && typeof record.key !== "string") continue;
+        cleaned[name] = {
+          provider: record.provider as string | undefined,
+          key: record.key as string | undefined,
+        };
+      }
+      return cleaned;
     } catch (err: any) {
       if (err?.code !== "ENOENT") {
         logger?.warn(`Failed to read auth profiles from ${filePath}: ${err.message}`);
