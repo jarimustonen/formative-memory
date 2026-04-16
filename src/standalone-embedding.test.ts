@@ -237,7 +237,7 @@ describe("gemini provider fetch calls", () => {
     globalThis.fetch = originalFetch;
   });
 
-  it("embedQuery calls Gemini embedContent API", async () => {
+  it("embedQuery calls Gemini embedContent API with header auth (no URL key)", async () => {
     const mockValues = Array.from({ length: 768 }, (_, i) => i * 0.001);
     globalThis.fetch = vi.fn(async () =>
       new Response(JSON.stringify({
@@ -253,7 +253,10 @@ describe("gemini provider fetch calls", () => {
     expect(globalThis.fetch).toHaveBeenCalledOnce();
     const [url, init] = (globalThis.fetch as any).mock.calls[0];
     expect(url).toContain("text-embedding-004:embedContent");
-    expect(url).toContain("key=AIza-test");
+    // SECURITY: API key must be in header, not URL
+    expect(url).not.toContain("AIza-test");
+    expect(url).not.toContain("key=");
+    expect((init.headers as Record<string, string>)["x-goog-api-key"]).toBe("AIza-test");
     const body = JSON.parse(init.body);
     expect(body.content.parts[0].text).toBe("hello world");
   });
@@ -272,8 +275,42 @@ describe("gemini provider fetch calls", () => {
     const result = await provider.embedBatch(["hello", "world"]);
 
     expect(result).toEqual(embeddings.map((e) => e.values));
-    const [url] = (globalThis.fetch as any).mock.calls[0];
+    const [url, init] = (globalThis.fetch as any).mock.calls[0];
     expect(url).toContain("batchEmbedContents");
+    // SECURITY: API key must be in header, not URL
+    expect(url).not.toContain("AIza-test");
+    expect((init.headers as Record<string, string>)["x-goog-api-key"]).toBe("AIza-test");
+  });
+
+  it("chunks embedBatch into 100-item requests (Gemini API limit)", async () => {
+    // Return 100 embeddings per call to match the chunk size
+    let callCount = 0;
+    globalThis.fetch = vi.fn(async (_url: any, init: any) => {
+      callCount++;
+      const body = JSON.parse(init.body);
+      const n = body.requests.length;
+      return new Response(JSON.stringify({
+        embeddings: Array.from({ length: n }, () => ({ values: [0.1, 0.2, 0.3] })),
+      }));
+    });
+
+    const profiles = { "google:default": { key: "AIza-test" } };
+    const provider = tryCreateStandaloneProvider("gemini", profiles)!;
+
+    // 250 items → should chunk into 100 + 100 + 50 = 3 calls
+    const texts = Array.from({ length: 250 }, (_, i) => `text-${i}`);
+    const result = await provider.embedBatch(texts);
+
+    expect(result).toHaveLength(250);
+    expect(callCount).toBe(3);
+
+    // Verify chunk sizes
+    const bodies = (globalThis.fetch as any).mock.calls.map((c: any) =>
+      JSON.parse(c[1].body),
+    );
+    expect(bodies[0].requests).toHaveLength(100);
+    expect(bodies[1].requests).toHaveLength(100);
+    expect(bodies[2].requests).toHaveLength(50);
   });
 
   it("throws on API error", async () => {
@@ -284,5 +321,105 @@ describe("gemini provider fetch calls", () => {
     const profiles = { "google:default": { key: "AIza-bad" } };
     const provider = tryCreateStandaloneProvider("gemini", profiles)!;
     await expect(provider.embedQuery("test")).rejects.toThrow("Gemini Embeddings API error 400");
+  });
+});
+
+// -- Empty-batch and response validation --
+
+describe("empty batch handling", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("openai embedBatch([]) returns [] without calling API", async () => {
+    globalThis.fetch = vi.fn();
+    const profiles = { "openai:default": { key: "sk-test" } };
+    const provider = tryCreateStandaloneProvider("openai", profiles)!;
+
+    expect(await provider.embedBatch([])).toEqual([]);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it("gemini embedBatch([]) returns [] without calling API", async () => {
+    globalThis.fetch = vi.fn();
+    const profiles = { "google:default": { key: "AIza-test" } };
+    const provider = tryCreateStandaloneProvider("gemini", profiles)!;
+
+    expect(await provider.embedBatch([])).toEqual([]);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("response shape validation", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("openai throws actionable error on missing data field", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ foo: "bar" })),
+    );
+
+    const profiles = { "openai:default": { key: "sk-test" } };
+    const provider = tryCreateStandaloneProvider("openai", profiles)!;
+    await expect(provider.embedQuery("test")).rejects.toThrow(
+      /OpenAI.*invalid response.*data/,
+    );
+  });
+
+  it("openai throws when embedding is not a number array", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({
+        data: [{ embedding: "not an array", index: 0 }],
+      })),
+    );
+
+    const profiles = { "openai:default": { key: "sk-test" } };
+    const provider = tryCreateStandaloneProvider("openai", profiles)!;
+    await expect(provider.embedQuery("test")).rejects.toThrow(
+      /embedding.*not an array/,
+    );
+  });
+
+  it("gemini throws actionable error on missing embedding field", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ foo: "bar" })),
+    );
+
+    const profiles = { "google:default": { key: "AIza-test" } };
+    const provider = tryCreateStandaloneProvider("gemini", profiles)!;
+    await expect(provider.embedQuery("test")).rejects.toThrow(
+      /Gemini.*invalid response.*embedding/,
+    );
+  });
+
+  it("gemini throws actionable error on missing embeddings array", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ foo: "bar" })),
+    );
+
+    const profiles = { "google:default": { key: "AIza-test" } };
+    const provider = tryCreateStandaloneProvider("gemini", profiles)!;
+    await expect(provider.embedBatch(["a", "b"])).rejects.toThrow(
+      /Gemini.*invalid response.*embeddings/,
+    );
+  });
+
+  it("gemini throws when values is not a number array", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({
+        embedding: { values: null },
+      })),
+    );
+
+    const profiles = { "google:default": { key: "AIza-test" } };
+    const provider = tryCreateStandaloneProvider("gemini", profiles)!;
+    await expect(provider.embedQuery("test")).rejects.toThrow(
+      /embedding\.values.*not an array/,
+    );
   });
 });

@@ -77,6 +77,25 @@ async function fetchWithTimeout(
   }
 }
 
+// -- Response validation helpers --
+
+/**
+ * Validate that a value is an array of numbers, throwing a clear error if not.
+ * Used to catch malformed API responses early (e.g. proxy error pages returning
+ * 200, rate-limit bodies in a 200 response, schema changes by the provider).
+ */
+function assertNumberArray(value: unknown, context: string): number[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`Invalid embedding response: ${context} is not an array`);
+  }
+  for (let i = 0; i < value.length; i++) {
+    if (typeof value[i] !== "number") {
+      throw new Error(`Invalid embedding response: ${context}[${i}] is not a number`);
+    }
+  }
+  return value as number[];
+}
+
 // -- OpenAI embedding provider --
 
 const OPENAI_DEFAULT_MODEL = "text-embedding-3-small";
@@ -88,6 +107,8 @@ async function openAiEmbed(
   model: string,
   timeoutMs: number,
 ): Promise<number[][]> {
+  if (texts.length === 0) return [];
+
   const response = await fetchWithTimeout(
     OPENAI_EMBEDDINGS_URL,
     {
@@ -106,11 +127,32 @@ async function openAiEmbed(
     throw new Error(`OpenAI Embeddings API error ${response.status}: ${body.slice(0, 200)}`);
   }
 
+  // Expected shape: { data: [{ embedding: number[], index: number }, ...] }
   const data = await response.json();
-  // Response: { data: [{ embedding: number[], index: number }, ...] }
-  const sorted = (data.data as { embedding: number[]; index: number }[])
-    .sort((a, b) => a.index - b.index);
-  return sorted.map((d) => d.embedding);
+  if (!data || !Array.isArray(data.data)) {
+    throw new Error(
+      `OpenAI Embeddings API returned invalid response: missing "data" array`,
+    );
+  }
+
+  const items = data.data.map((item: unknown, i: number) => {
+    if (!item || typeof item !== "object") {
+      throw new Error(`OpenAI Embeddings API returned invalid item at index ${i}`);
+    }
+    const record = item as { embedding?: unknown; index?: unknown };
+    if (typeof record.index !== "number") {
+      throw new Error(
+        `OpenAI Embeddings API returned invalid item at index ${i}: missing numeric "index"`,
+      );
+    }
+    return {
+      index: record.index,
+      embedding: assertNumberArray(record.embedding, `data[${i}].embedding`),
+    };
+  });
+
+  items.sort((a: { index: number }, b: { index: number }) => a.index - b.index);
+  return items.map((item: { embedding: number[] }) => item.embedding);
 }
 
 function createOpenAiProvider(apiKey: string, model?: string): MemoryEmbeddingProvider {
@@ -132,45 +174,70 @@ function createOpenAiProvider(apiKey: string, model?: string): MemoryEmbeddingPr
 
 const GEMINI_DEFAULT_MODEL = "text-embedding-004";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
+/** Gemini's batchEmbedContents endpoint enforces a hard limit of 100 items per request. */
+const GEMINI_BATCH_LIMIT = 100;
 
-async function geminiEmbed(
+/**
+ * Gemini auth goes in the `x-goog-api-key` header, not the URL query string.
+ * Keys in URLs leak into proxy logs, APM traces, and error reports.
+ */
+function geminiHeaders(apiKey: string): HeadersInit {
+  return {
+    "Content-Type": "application/json",
+    "x-goog-api-key": apiKey,
+  };
+}
+
+async function geminiEmbedSingle(
+  text: string,
+  apiKey: string,
+  model: string,
+  timeoutMs: number,
+): Promise<number[]> {
+  const url = `${GEMINI_BASE_URL}/${encodeURIComponent(model)}:embedContent`;
+  const response = await fetchWithTimeout(
+    url,
+    {
+      method: "POST",
+      headers: geminiHeaders(apiKey),
+      body: JSON.stringify({
+        model: `models/${model}`,
+        content: { parts: [{ text }] },
+      }),
+    },
+    timeoutMs,
+  );
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`Gemini Embeddings API error ${response.status}: ${body.slice(0, 200)}`);
+  }
+
+  // Expected shape: { embedding: { values: number[] } }
+  const data = await response.json();
+  if (!data || !data.embedding || typeof data.embedding !== "object") {
+    throw new Error(
+      `Gemini Embeddings API returned invalid response: missing "embedding" object`,
+    );
+  }
+  return assertNumberArray(
+    (data.embedding as { values?: unknown }).values,
+    "embedding.values",
+  );
+}
+
+async function geminiEmbedBatchChunk(
   texts: string[],
   apiKey: string,
   model: string,
   timeoutMs: number,
 ): Promise<number[][]> {
-  if (texts.length === 1) {
-    // Single text — use embedContent
-    const url = `${GEMINI_BASE_URL}/${model}:embedContent?key=${apiKey}`;
-    const response = await fetchWithTimeout(
-      url,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: `models/${model}`,
-          content: { parts: [{ text: texts[0] }] },
-        }),
-      },
-      timeoutMs,
-    );
-
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      throw new Error(`Gemini Embeddings API error ${response.status}: ${body.slice(0, 200)}`);
-    }
-
-    const data = await response.json();
-    return [data.embedding.values];
-  }
-
-  // Batch — use batchEmbedContents
-  const url = `${GEMINI_BASE_URL}/${model}:batchEmbedContents?key=${apiKey}`;
+  const url = `${GEMINI_BASE_URL}/${encodeURIComponent(model)}:batchEmbedContents`;
   const response = await fetchWithTimeout(
     url,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: geminiHeaders(apiKey),
       body: JSON.stringify({
         requests: texts.map((text) => ({
           model: `models/${model}`,
@@ -186,8 +253,45 @@ async function geminiEmbed(
     throw new Error(`Gemini Embeddings API error ${response.status}: ${body.slice(0, 200)}`);
   }
 
+  // Expected shape: { embeddings: [{ values: number[] }, ...] }
   const data = await response.json();
-  return (data.embeddings as { values: number[] }[]).map((e) => e.values);
+  if (!data || !Array.isArray(data.embeddings)) {
+    throw new Error(
+      `Gemini Embeddings API returned invalid response: missing "embeddings" array`,
+    );
+  }
+  return data.embeddings.map((e: unknown, i: number) => {
+    if (!e || typeof e !== "object") {
+      throw new Error(`Gemini Embeddings API returned invalid item at index ${i}`);
+    }
+    return assertNumberArray(
+      (e as { values?: unknown }).values,
+      `embeddings[${i}].values`,
+    );
+  });
+}
+
+async function geminiEmbed(
+  texts: string[],
+  apiKey: string,
+  model: string,
+  timeoutMs: number,
+): Promise<number[][]> {
+  if (texts.length === 0) return [];
+
+  if (texts.length === 1) {
+    const result = await geminiEmbedSingle(texts[0], apiKey, model, timeoutMs);
+    return [result];
+  }
+
+  // Chunk to the API's 100-item batch limit. Exceeding it returns 400.
+  const results: number[][] = [];
+  for (let i = 0; i < texts.length; i += GEMINI_BATCH_LIMIT) {
+    const chunk = texts.slice(i, i + GEMINI_BATCH_LIMIT);
+    const chunkResults = await geminiEmbedBatchChunk(chunk, apiKey, model, timeoutMs);
+    results.push(...chunkResults);
+  }
+  return results;
 }
 
 function createGeminiProvider(apiKey: string, model?: string): MemoryEmbeddingProvider {
