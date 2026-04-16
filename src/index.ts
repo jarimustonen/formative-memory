@@ -50,18 +50,25 @@ const AUTH_PROFILE_FILENAME = "auth-profiles.json";
 
 /**
  * Read API keys from auth-profiles.json.
- * Tries agentDir first, then stateDir/agents/main/agent/ as fallback
- * (hardcoded "main" — works for single-agent setups which is the common case).
+ *
+ * Lookup order:
+ * 1. agentDir — the preferred location, passed by OpenClaw at runtime.
+ * 2. stateDir/agents/main/agent/ — hardcoded "main" fallback for
+ *    single-agent setups. Multi-agent configurations (where the active
+ *    agent isn't named "main") will resolve the wrong credentials here.
+ *    A warning is emitted when this fallback actually returns a profile,
+ *    so operators notice the brittle assumption.
  */
 function readAuthProfiles(
   stateDir?: string,
   agentDir?: string,
   logger?: { warn: (msg: string) => void },
 ): Record<string, { provider?: string; key?: string }> | null {
-  const candidates = [
-    agentDir ? join(agentDir, AUTH_PROFILE_FILENAME) : undefined,
-    stateDir ? join(stateDir, "agents", "main", "agent", AUTH_PROFILE_FILENAME) : undefined,
-  ].filter((p): p is string => Boolean(p));
+  const agentDirPath = agentDir ? join(agentDir, AUTH_PROFILE_FILENAME) : undefined;
+  const mainFallbackPath = stateDir
+    ? join(stateDir, "agents", "main", "agent", AUTH_PROFILE_FILENAME)
+    : undefined;
+  const candidates = [agentDirPath, mainFallbackPath].filter((p): p is string => Boolean(p));
 
   for (const filePath of candidates) {
     try {
@@ -91,6 +98,16 @@ function readAuthProfiles(
           provider: record.provider as string | undefined,
           key: record.key as string | undefined,
         };
+      }
+      // Warn if the "main" fallback actually returned credentials.
+      // This path is a single-agent assumption; multi-agent setups may
+      // silently resolve the wrong account here.
+      if (filePath === mainFallbackPath && Object.keys(cleaned).length > 0) {
+        logger?.warn(
+          `Resolved auth-profiles from the hardcoded "main" agent fallback (${filePath}). ` +
+          `This works for single-agent setups but may pick wrong credentials in multi-agent configurations. ` +
+          `Ensure OpenClaw passes agentDir at runtime.`,
+        );
       }
       return cleaned;
     } catch (err: any) {
