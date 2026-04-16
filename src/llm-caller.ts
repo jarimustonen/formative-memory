@@ -9,6 +9,8 @@
  * Not exposed to the agent — these are background operations.
  */
 
+import { fetchWithTimeout } from "./http.ts";
+
 // -- Types --
 
 export type LlmProvider = "anthropic" | "openai";
@@ -69,6 +71,7 @@ async function callAnthropic(
       }),
     },
     timeoutMs,
+    "Anthropic LLM call",
   );
 
   if (!response.ok) {
@@ -112,6 +115,7 @@ async function callOpenAi(
       }),
     },
     timeoutMs,
+    "OpenAI LLM call",
   );
 
   if (!response.ok) {
@@ -128,27 +132,7 @@ async function callOpenAi(
   return text;
 }
 
-// -- Helpers --
-
-async function fetchWithTimeout(
-  url: string,
-  init: RequestInit,
-  timeoutMs: number,
-): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    return await fetch(url, { ...init, signal: controller.signal });
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      throw new Error(`LLM API call timed out after ${timeoutMs}ms`);
-    }
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
-}
+// fetchWithTimeout moved to ./http.ts — shared between LLM and embedding callers.
 
 // -- Auth profile resolution --
 

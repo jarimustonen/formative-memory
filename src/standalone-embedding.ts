@@ -8,6 +8,7 @@
  */
 
 import type { MemoryEmbeddingProvider } from "openclaw/plugin-sdk/memory-core-host-engine-embeddings";
+import { fetchWithTimeout } from "./http.ts";
 
 // -- Types --
 
@@ -79,27 +80,6 @@ export function resolveEmbeddingApiKey(
   return process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY ?? null;
 }
 
-// -- Fetch helpers --
-
-async function fetchWithTimeout(
-  url: string,
-  init: RequestInit,
-  timeoutMs: number,
-): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...init, signal: controller.signal });
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      throw new Error(`Embedding API call timed out after ${timeoutMs}ms`);
-    }
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 // -- Response validation helpers --
 
 /**
@@ -143,6 +123,7 @@ async function openAiEmbed(
       body: JSON.stringify({ model, input: texts }),
     },
     timeoutMs,
+    "OpenAI Embeddings API call",
   );
 
   if (!response.ok) {
@@ -229,6 +210,7 @@ async function geminiEmbedSingle(
       }),
     },
     timeoutMs,
+    "Gemini embedContent call",
   );
 
   if (!response.ok) {
@@ -269,6 +251,7 @@ async function geminiEmbedBatchChunk(
       }),
     },
     timeoutMs,
+    "Gemini batchEmbedContents call",
   );
 
   if (!response.ok) {
