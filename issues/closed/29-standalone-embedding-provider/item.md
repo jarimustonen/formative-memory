@@ -4,22 +4,48 @@ updated: 2026-04-16
 type: task
 reporter: jari
 assignee: jari
-status: done
+status: closed
 priority: high
 commits:
-  - hash: 1425aa2
+  - hash: b1c2650
     summary: "feat: standalone fetch-based embedding providers replacing SDK factories"
-  - hash: 74a78e2
+  - hash: c9ab132
     summary: "fix: always fall through to standalone after registry failure"
-  - hash: 31a29e9
+  - hash: fb6fa9e
     summary: "fix: prevent embedding provider drift and cross-provider model pollution"
-  - hash: 91a204b
+  - hash: 878cfda
     summary: "fix(gemini): move api key to header, chunk batches, validate responses"
+  - hash: 027b9f3
+    summary: "fix: update EMBEDDING_REQUIRED_HINT to reflect actual standalone support"
+  - hash: 3d18cad
+    summary: "fix: tighten readAuthProfiles validation to reject malformed shapes"
+  - hash: 814485e
+    summary: "fix: suppress per-provider warnings during auto-select probing"
+  - hash: dd21e75
+    summary: "fix: prefer :default profile and warn on multi-profile ambiguity"
+  - hash: 60fd99a
+    summary: "fix: warn when using hardcoded \"main\" agent auth-profile fallback"
+  - hash: 4f7af8d
+    summary: "refactor: extract fetchWithTimeout to shared http.ts module"
+  - hash: 3a1d801
+    summary: "perf: cache parsed auth-profiles.json with mtime invalidation"
+  - hash: 3b84bd0
+    summary: "feat!: require auth-profiles.json (remove env var fallback)"
+  - hash: 869d713
+    summary: "docs: document auth-profiles requirement, provider pinning, and model scope"
+  - hash: fd2dcee
+    summary: "release: v0.3.0"
 ---
 
 # 29. Standalone embedding provider — remove SDK factory dependency
 
 _Source: embedding resolution in src/index.ts_
+
+## Verification Outcome (2026-04-16)
+
+Shipped in v0.3.0 (`fd2dcee`). Live-verified on jari's bot during v0.3.0 rollout. One follow-up finding surfaced and was fixed separately as #31 (multi-profile ambiguity warning swallowed by auto-select auto-probe). No other embedding regressions observed.
+
+Review findings A–H noted during implementation were addressed incrementally in the commit trail above (fetchWithTimeout extraction, auth-profile caching, hardcoded-agent fallback warning, validation tightening, etc.). The env-var fallback was removed entirely (`3b84bd0`) — auth-profiles.json is now required.
 
 ## Description
 

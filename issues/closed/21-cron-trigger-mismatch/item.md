@@ -1,14 +1,29 @@
 ---
 created: 2026-04-15
-updated: 2026-04-15
+updated: 2026-04-16
 type: bug
 reporter: jari
 assignee: jari
-status: in-progress
+status: closed
 priority: high
+commits:
+  - hash: 18c6d2b
+    summary: "fix: align cron trigger interception with memory-core's battle-tested pattern"
+  - hash: da4f4bc
+    summary: "refactor: harden cron reconciliation and hook robustness"
+  - hash: 01386bd
+    summary: "refactor: extract cron-utils module and fix review findings"
+  - hash: fd2dcee
+    summary: "release: v0.3.0"
 ---
 
 # 21. Cron-triggered consolidation not intercepted — LLM reads MEMORY.md instead
+
+## Resolution (2026-04-16)
+
+Fix shipped in v0.3.0. Applied the six-step plan from the Implementation Plan section: trigger-context gating, exact-line token matching (`includesSystemEventToken`), pending-event queue awareness, `wakeMode: "now"` for both consolidation and temporal crons, and wakeMode-aware cron reconciliation so existing jobs update on deploy. Post-fix hardening (`da4f4bc`) and cron-utils extraction (`01386bd`) followed as review cleanups.
+
+No further ENOENT-on-MEMORY.md symptoms observed after deploy. Closing as fixed; upstream v2026.4.14 cron/session improvements can still simplify the workaround surface in a later refactor if desired.
 
 ## Description
 
