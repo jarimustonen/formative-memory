@@ -1201,19 +1201,21 @@ const associativeMemoryPlugin = {
     });
 
     // -- Startup service --
-    // Captures stateDir and agentDir for auth-profile resolution.
-    // agentDir is critical: the lazy getter in createWorkspace reads it
-    // dynamically, so it must be set as early as possible.
-    // Note: agentDir is not part of the documented service context type,
-    // but OpenClaw passes it at runtime. Validated with typeof check.
+    // Invoked by OpenClaw at gateway boot when this plugin is the explicit
+    // memory slot (upstream openclaw#64423, landed 2026-04-11). The service
+    // context exposes `config`, `workspaceDir`, `stateDir`, and `logger`.
+    // It does NOT currently expose `agentDir` — auth resolution falls back
+    // to the hardcoded "main" agent path (see readAuthProfiles). When a
+    // tool call arrives later, `agentDir` is captured from the tool context
+    // and takes over. The INFO log below is the canary used to verify that
+    // this handler actually fires at boot — grep for it in gateway logs.
     api.registerService({
       id: "formative-memory-startup",
       async start(ctx) {
         runtimePaths.stateDir = ctx.stateDir;
-        const maybeAgentDir = (ctx as Record<string, unknown>).agentDir;
-        if (!runtimePaths.agentDir && typeof maybeAgentDir === "string") {
-          runtimePaths.agentDir = maybeAgentDir;
-        }
+        log.info(
+          `startup service started (stateDir=${ctx.stateDir}, workspaceDir=${ctx.workspaceDir ?? "unset"})`,
+        );
       },
     });
   },
