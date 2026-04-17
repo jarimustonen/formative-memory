@@ -188,7 +188,7 @@ export function applyReinforcement(db: MemoryDatabase, log: Logger = nullLogger)
     }
 
     if (count > 0) {
-      log.info(`reinforce: ${count} memories strengthened from ${pendingAttrs.length} attributions`);
+      log.info(`reinforce: ${count} memories updated from ${pendingAttrs.length} attributions`);
     }
     if (notableSuppressed > 0) {
       log.info(`reinforce: ${notableSuppressed} additional notable reinforcements (enable debug for details)`);
