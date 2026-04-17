@@ -4,8 +4,11 @@ updated: 2026-04-17
 type: task
 reporter: jari
 assignee: jari
-status: done
+status: closed
 priority: normal
+commits:
+  - hash: 63f110a
+    summary: "feat(issue-25): detect Active Memory and reduce recall to avoid dual injection"
 ---
 
 # 25. Active Memory and memory-wiki coexistence
