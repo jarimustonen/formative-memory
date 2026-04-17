@@ -418,12 +418,16 @@ function createWorkspace(
   const getProvider = (): Promise<MemoryEmbeddingProvider> => {
     if (!providerPromise) {
       const currentAgentDir = getAgentDir();
-      if (config.requireEmbedding && !currentAgentDir) {
-        // Don't cache this rejection — agentDir may arrive later via tool call.
+      const currentStateDir = getStateDir?.();
+      if (config.requireEmbedding && !currentAgentDir && !currentStateDir) {
+        // Don't cache this rejection — agentDir/stateDir may arrive later.
         // This is the key self-healing behavior for heartbeat/cron contexts.
+        // When stateDir IS available (e.g. from service.start()), the auth
+        // fallback to <stateDir>/agents/main/agent/ can resolve credentials,
+        // so we let it through.
         return Promise.reject(new Error(
-          "Embedding provider auth requires agentDir which is not yet available. " +
-          "Will retry when a tool call provides runtime context.",
+          "Embedding provider auth requires agentDir or stateDir which are not yet available. " +
+          "Will retry when a tool call or service start provides runtime context.",
         ));
       }
       providerPromise = (async () => {
