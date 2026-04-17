@@ -8,11 +8,11 @@ export type AssociativeMemoryConfig = {
     model?: string;
   };
   consolidation: {
-    /** Notification level after consolidation runs. Default: "summary". */
+    /** Notification level after consolidation runs. Default: "off". */
     notification: ConsolidationNotificationLevel;
   };
   temporal: {
-    /** Notification level after temporal transitions run. Default: "summary". */
+    /** Notification level after temporal transitions run. Default: "off". */
     notification: ConsolidationNotificationLevel;
   };
   dbPath: string;
@@ -57,7 +57,7 @@ export const memoryConfigSchema = {
       }
     }
 
-    let consolidationNotification: ConsolidationNotificationLevel = "summary";
+    let consolidationNotification: ConsolidationNotificationLevel = "off";
     if (cfg.consolidation != null) {
       if (typeof cfg.consolidation !== "object" || Array.isArray(cfg.consolidation)) {
         throw new Error("consolidation must be an object");
@@ -73,7 +73,7 @@ export const memoryConfigSchema = {
       }
     }
 
-    let temporalNotification: ConsolidationNotificationLevel = "summary";
+    let temporalNotification: ConsolidationNotificationLevel = "off";
     if (cfg.temporal != null) {
       if (typeof cfg.temporal !== "object" || Array.isArray(cfg.temporal)) {
         throw new Error("temporal must be an object");
