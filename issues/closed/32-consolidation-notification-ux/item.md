@@ -4,7 +4,7 @@ updated: 2026-04-17
 type: improvement
 reporter: jari
 assignee: jari
-status: open
+status: closed
 priority: normal
 ---
 
@@ -50,11 +50,12 @@ If the LLM call fails (rate limit, timeout), fall back to either `off` (silent) 
 
 ## Scope
 
-- [ ] Add `consolidation.notification` config option (`off` | `summary` | `detailed`)
-- [ ] Implement LLM summary generation with persona/language awareness
-- [ ] Preserve current detailed report as `detailed` mode (no regression)
-- [ ] Fallback when LLM call fails
-- [ ] Tests for notification routing (level → behavior)
+- [x] Add `consolidation.notification` config option (`off` | `summary` | `detailed`)
+- [x] Add `temporal.notification` config option (`off` | `summary` | `detailed`)
+- [x] Implement LLM summary generation with persona/language awareness
+- [x] Preserve current detailed report as `detailed` mode (no regression)
+- [x] Fallback when LLM call fails
+- [x] Tests for notification routing (level → behavior)
 
 ## Out of scope
 

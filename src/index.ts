@@ -29,6 +29,7 @@ import { memoryConfigSchema } from "./config.ts";
 import { applyTemporalTransitions } from "./consolidation-steps.ts";
 import { includesSystemEventToken, reconcileCronJob } from "./cron-utils.ts";
 import { runConsolidation } from "./consolidation.ts";
+import { formatConsolidationNotification, formatDetailedReport, formatTemporalNotification } from "./consolidation-notification.ts";
 import { CONTEXT_ENGINE_ID, createAssociativeMemoryContextEngine } from "./context-engine.ts";
 import { EmbeddingCircuitBreaker } from "./embedding-circuit-breaker.ts";
 import { callLlm, resolveApiKey, type LlmCallerConfig } from "./llm-caller.ts";
@@ -962,16 +963,17 @@ const associativeMemoryPlugin = {
             logger: log,
           });
 
-          const s = result.summary;
-          const catchUpInfo = s.catchUpDecayed > 0 ? `Catch-up decayed: ${s.catchUpDecayed}, ` : "";
-          return {
-            text: `Memory consolidation complete (${result.durationMs}ms).\n` +
-              catchUpInfo +
-              `Reinforced: ${s.reinforced}, Decayed: ${s.decayed}, ` +
-              `Pruned: ${s.pruned} memories + ${s.prunedAssociations} associations, ` +
-              `Merged: ${s.merged}, Transitioned: ${s.transitioned}, ` +
-              `Exposure GC: ${s.exposuresGc}`,
-          };
+          // Always log detailed report at debug level
+          log.debug(`consolidation: ${formatDetailedReport(result)}`);
+
+          const notification = await formatConsolidationNotification(result, {
+            level: config.consolidation.notification,
+            llmConfig,
+            language: detectUserLanguage("."),
+            logger: log,
+          });
+
+          return { text: notification ?? "Memory consolidation complete." };
         } catch (err) {
           log.warn(`Consolidation command failed: ${err instanceof Error ? err.message : String(err)}`, err);
           return { text: `Memory consolidation failed: ${err instanceof Error ? err.message : String(err)}` };
@@ -1172,9 +1174,20 @@ const associativeMemoryPlugin = {
           if (count > 0) {
             log.info(`Scheduled temporal transitions: ${count} transitioned`);
           }
+          log.debug(`temporal: ${count} transitioned`);
+
+          const workspaceDir = ctx?.workspaceDir ?? ".";
+          const llmConfig = resolveLlmConfig(runtimePaths.stateDir, runtimePaths.agentDir, log);
+          const notification = await formatTemporalNotification(count, {
+            level: config.temporal.notification,
+            llmConfig,
+            language: detectUserLanguage(workspaceDir),
+            logger: log,
+          });
+
           return {
             handled: true,
-            reply: { text: count > 0 ? `Temporal transitions: ${count} updated.` : "No temporal transitions needed." },
+            reply: notification ? { text: notification } : undefined,
             reason: "associative-memory-temporal",
           };
         } catch (err) {
@@ -1204,9 +1217,20 @@ const associativeMemoryPlugin = {
           logger: log,
         });
 
+        // Always log detailed report at debug level
+        log.debug(`consolidation: ${formatDetailedReport(result)}`);
+
+        const workspaceDir = ctx?.workspaceDir ?? ".";
+        const notification = await formatConsolidationNotification(result, {
+          level: config.consolidation.notification,
+          llmConfig,
+          language: detectUserLanguage(workspaceDir),
+          logger: log,
+        });
+
         return {
           handled: true,
-          reply: { text: `Memory consolidation complete (${result.durationMs}ms).` },
+          reply: notification ? { text: notification } : undefined,
           reason: "associative-memory-consolidation",
         };
       } catch (err) {

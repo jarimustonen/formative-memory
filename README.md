@@ -157,6 +157,12 @@ Configuration goes in `openclaw.json` under the plugin entry:
           "requireEmbedding": true,
           "embedding": {
             "provider": "auto"
+          },
+          "consolidation": {
+            "notification": "summary"
+          },
+          "temporal": {
+            "notification": "summary"
           }
         }
       }
@@ -174,6 +180,8 @@ Configuration goes in `openclaw.json` under the plugin entry:
 | `embedding.model` | — | Override the provider's default embedding model. Only takes effect with an explicit `embedding.provider` — ignored in `"auto"` mode to avoid passing a provider-specific model name to the wrong provider |
 | `dbPath` | `~/.openclaw/memory/associative` | SQLite database location |
 | `verbose` | `false` | Enable debug logging |
+| `consolidation.notification` | `"summary"` | Notification after nightly consolidation: `"off"`, `"summary"` (LLM-generated, persona-aware), or `"detailed"` (raw technical report) |
+| `temporal.notification` | `"summary"` | Notification after temporal transitions (15:00 daily): `"off"`, `"summary"`, or `"detailed"` |
 | `logQueries` | `false` | Include raw query text in debug logs (disabled by default for privacy) |
 
 The `"auto"` provider selects the best available embedding provider from
