@@ -383,9 +383,14 @@ export function createAssociativeMemoryContextEngine(
 
       // Cache hit check
       if (cachedEntry && cacheKeysMatch(cachedEntry.key, cacheKey)) {
-        options.logger?.debug?.(
-          `assemble: cache=hit budget=${budgetClass} messageCount=${cacheKey.messageCount} fpWindow=${fpN}`,
-        );
+        options.logger?.debug?.("assemble: cache hit", {
+          cacheHit: true,
+          budget: budgetClass,
+          messageCount: cacheKey.messageCount,
+          fingerprintWindow: fpN,
+          availableTools: params.availableTools?.size ?? 0,
+          citationsMode: params.citationsMode ?? "unset",
+        });
         return {
           messages: params.messages,
           estimatedTokens: 0,
@@ -394,9 +399,15 @@ export function createAssociativeMemoryContextEngine(
       }
 
       // Cache miss — perform recall
-      options.logger?.debug?.(
-        `assemble: cache=miss budget=${budgetClass} messageCount=${cacheKey.messageCount} n1Changed=${n1Changed} configuredWindowChanged=${configuredWindowChanged} fpWindow=${fpN}`,
-      );
+      options.logger?.debug?.("assemble: cache miss", {
+        cacheHit: false,
+        budget: budgetClass,
+        messageCount: cacheKey.messageCount,
+        transcriptChanged: configuredWindowChanged,
+        fingerprintWindow: fpN,
+        availableTools: params.availableTools?.size ?? 0,
+        citationsMode: params.citationsMode ?? "unset",
+      });
 
       const query = extractLastUserMessage(params.messages) ?? params.prompt ?? null;
       if (!query) {
@@ -492,6 +503,18 @@ export function createAssociativeMemoryContextEngine(
     },
 
     async afterTurn(params) {
+      // Prompt-cache telemetry: log when present for observability.
+      // Cache-aware memory prioritization is deferred — see issue #22.
+      if (params.runtimeContext?.promptCache) {
+        const pc = params.runtimeContext.promptCache;
+        options.logger?.debug?.("afterTurn: prompt-cache telemetry received", {
+          retention: pc.retention ?? "unknown",
+          cacheRead: pc.lastCallUsage?.cacheRead ?? 0,
+          cacheWrite: pc.lastCallUsage?.cacheWrite ?? 0,
+          expiresAt: pc.expiresAt ?? null,
+        });
+      }
+
       // 1. Provenance recording (requires getDb + ledger)
       if (options.getDb && options.ledger) {
         // Deterministic turnId: same logical turn always produces the same key,

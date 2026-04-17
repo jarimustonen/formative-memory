@@ -60,13 +60,18 @@ function createEngine(
   manager?: MemoryManager,
   opts?: {
     isBm25Only?: () => boolean;
-    logger?: { warn: (...args: any[]) => void; debug?: (...args: any[]) => void };
+    logger?: { warn: (...args: any[]) => void; debug?: (...args: any[]) => void; isDebugEnabled?: () => boolean };
     ledger?: TurnMemoryLedger;
   },
 ) {
+  // Ensure logger has isDebugEnabled if debug is provided
+  const logger = opts?.logger
+    ? { isDebugEnabled: () => Boolean(opts.logger?.debug), ...opts.logger }
+    : undefined;
   return createAssociativeMemoryContextEngine({
     getManager: () => manager ?? stubManager(),
     ...opts,
+    logger,
   });
 }
 
@@ -786,6 +791,44 @@ describe("AssociativeMemoryContextEngine assemble()", () => {
 
     expect(manager.recall).toHaveBeenCalledWith("test query", 5);
   });
+
+  it("accepts availableTools and citationsMode params", async () => {
+    const manager = stubManager([makeResult()]);
+    const logger = { warn: vi.fn(), debug: vi.fn(), isDebugEnabled: () => true };
+    const engine = createEngine(manager, { logger });
+
+    const result = await engine.assemble({
+      sessionId: "s1",
+      messages: [{ role: "user", content: "hello" }] as any,
+      availableTools: new Set(["memory_store", "memory_search"]),
+      citationsMode: "auto",
+    });
+
+    expect(result.systemPromptAddition).toContain("<memory_context>");
+    // Verify params are logged in debug output
+    const debugCall = logger.debug.mock.calls[0];
+    expect(debugCall[1]).toMatchObject({
+      availableTools: 2,
+      citationsMode: "auto",
+    });
+  });
+
+  it("logs availableTools=0 and citationsMode=unset when not provided", async () => {
+    const manager = stubManager([makeResult()]);
+    const logger = { warn: vi.fn(), debug: vi.fn(), isDebugEnabled: () => true };
+    const engine = createEngine(manager, { logger });
+
+    await engine.assemble({
+      sessionId: "s1",
+      messages: [{ role: "user", content: "hello" }] as any,
+    });
+
+    const debugCall = logger.debug.mock.calls[0];
+    expect(debugCall[1]).toMatchObject({
+      availableTools: 0,
+      citationsMode: "unset",
+    });
+  });
 });
 
 // -- Assemble cache tests --
@@ -895,7 +938,7 @@ describe("AssociativeMemoryContextEngine cache", () => {
 
   it("logs debug info on cache hit", async () => {
     const manager = stubManager([makeResult()]);
-    const logger = { warn: vi.fn(), debug: vi.fn() };
+    const logger = { warn: vi.fn(), debug: vi.fn(), isDebugEnabled: () => true };
     const engine = createEngine(manager, { logger });
     const params = {
       sessionId: "s1",
@@ -913,7 +956,7 @@ describe("AssociativeMemoryContextEngine cache", () => {
 
   it("logs debug info on cache miss with transcript change tracking", async () => {
     const manager = stubManager([makeResult()]);
-    const logger = { warn: vi.fn(), debug: vi.fn() };
+    const logger = { warn: vi.fn(), debug: vi.fn(), isDebugEnabled: () => true };
     const engine = createEngine(manager, { logger });
 
     await engine.assemble({
@@ -940,7 +983,7 @@ describe("AssociativeMemoryContextEngine cache", () => {
 
   it("includes fingerprintWindow in debug info", async () => {
     const manager = stubManager([makeResult()]);
-    const logger = { warn: vi.fn(), debug: vi.fn() };
+    const logger = { warn: vi.fn(), debug: vi.fn(), isDebugEnabled: () => true };
     const engine = createAssociativeMemoryContextEngine({
       getManager: () => manager,
       logger,
@@ -958,8 +1001,8 @@ describe("AssociativeMemoryContextEngine cache", () => {
 
   it("skips debug fingerprint computation when no debug logger", async () => {
     const manager = stubManager([makeResult()]);
-    // Logger without debug method
-    const logger = { warn: vi.fn() };
+    // Logger without debug method — isDebugEnabled returns false
+    const logger = { warn: vi.fn(), isDebugEnabled: () => false };
     const engine = createEngine(manager, { logger });
 
     // Two calls — second should use cache
@@ -1375,7 +1418,7 @@ describe("afterTurn()", () => {
       getManager: () => stubManager(),
       getDb: () => brokenDb,
       ledger,
-      logger: { warn: warnFn },
+      logger: { warn: warnFn, isDebugEnabled: () => false },
     });
 
     // Should not throw
