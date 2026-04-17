@@ -72,15 +72,23 @@ export async function executeMerge(
     throw new Error(`Merge failed: memory not found (${pair.a}, ${pair.b})`);
   }
 
-  log.info(
-    `merge: combining A=${memA.id.slice(0, 8)}… "${preview(memA.content, 80)}" + B=${memB.id.slice(0, 8)}… "${preview(memB.content, 80)}"`,
-  );
+  if (log.isDebugEnabled()) {
+    log.debug(
+      `merge: combining A=${memA.id.slice(0, 8)}… "${preview(memA.content, 80)}" + B=${memB.id.slice(0, 8)}… "${preview(memB.content, 80)}"`,
+    );
+  }
 
   // 1. Produce merged content (async, outside transaction)
-  const merged = await contentProducer(
-    { id: memA.id, content: memA.content, type: memA.type },
-    { id: memB.id, content: memB.content, type: memB.type },
-  );
+  let merged: { content: string; type: string };
+  try {
+    merged = await contentProducer(
+      { id: memA.id, content: memA.content, type: memA.type },
+      { id: memB.id, content: memB.content, type: memB.type },
+    );
+  } catch (err) {
+    log.error(`merge: content production failed for ${pair.a.slice(0, 8)}… + ${pair.b.slice(0, 8)}…`, err);
+    throw err;
+  }
 
   const newId = contentHash(merged.content);
   const now = new Date().toISOString();
@@ -95,8 +103,8 @@ export async function executeMerge(
   if (!isAbsorption && embedder) {
     try {
       embedding = await embedder(merged.content);
-    } catch {
-      // Circuit breaker or API error — memory is still searchable via BM25/FTS
+    } catch (err) {
+      log.warn(`merge: embedding failed for ${newId.slice(0, 8)}…; continuing without`, err);
     }
   }
 
