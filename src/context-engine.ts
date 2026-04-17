@@ -66,7 +66,24 @@ export function classifyBudget(
   return "none";
 }
 
-function recallLimitForBudget(budgetClass: BudgetClass): number {
+function recallLimitForBudget(budgetClass: BudgetClass, activeMemoryEnabled = false): number {
+  if (activeMemoryEnabled) {
+    // When Active Memory is enabled, its sub-agent already performs proactive
+    // recall via memory_search and injects a summary into the prompt.
+    // Reduce our limits to avoid redundant injection while still providing
+    // raw memory context (especially temporal memories) that Active Memory
+    // does not cover.
+    switch (budgetClass) {
+      case "high":
+        return 3;
+      case "medium":
+        return 2;
+      case "low":
+        return 1;
+      case "none":
+        return 0;
+    }
+  }
   switch (budgetClass) {
     case "high":
       return 5;
@@ -292,6 +309,10 @@ export type AssociativeMemoryContextEngineOptions = {
   autoCapture?: boolean;
   /** Lazy accessor for LLM config. Required for autoCapture fact extraction. */
   getLlmConfig?: () => LlmCallerConfig | null;
+  /** When true, Active Memory pipeline plugin is enabled alongside this plugin.
+   *  Reduces recall limits to avoid redundant injection (Active Memory's sub-agent
+   *  already performs proactive recall via our memory_search tool). */
+  activeMemoryEnabled?: boolean;
 };
 
 export function createAssociativeMemoryContextEngine(
@@ -299,6 +320,11 @@ export function createAssociativeMemoryContextEngine(
 ): ContextEngine {
   const { getManager } = options;
   const fpN = options.fingerprintN ?? 3;
+  const activeMemoryEnabled = options.activeMemoryEnabled ?? false;
+
+  if (activeMemoryEnabled) {
+    options.logger?.info?.("Active Memory detected — reducing recall limits to avoid redundant injection");
+  }
 
   const info: ContextEngineInfo = {
     id: CONTEXT_ENGINE_ID,
@@ -381,7 +407,7 @@ export function createAssociativeMemoryContextEngine(
       let results: SearchResult[];
       try {
         const manager = getManager();
-        const limit = recallLimitForBudget(budgetClass);
+        const limit = recallLimitForBudget(budgetClass, activeMemoryEnabled);
         results = await manager.recall(query, limit);
       } catch (error) {
         options.logger?.warn("Memory recall failed during assemble()", error);
@@ -453,7 +479,7 @@ export function createAssociativeMemoryContextEngine(
 
       const injected = results.length + temporalMemories.length;
       if (injected > 0) {
-        options.logger?.info?.(`assemble: recalled=${results.length} temporal=${temporalMemories.length} budget=${budgetClass} cache=miss`);
+        options.logger?.info?.(`assemble: recalled=${results.length} temporal=${temporalMemories.length} budget=${budgetClass} activeMemory=${activeMemoryEnabled} cache=miss`);
       } else {
         options.logger?.debug?.(`assemble: recalled=0 temporal=0 budget=${budgetClass} cache=miss`);
       }

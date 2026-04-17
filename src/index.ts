@@ -898,6 +898,22 @@ const associativeMemoryPlugin = {
       ];
     });
 
+    // Detect Active Memory pipeline plugin — when enabled, its sub-agent
+    // already performs proactive recall via our memory_search tool and injects
+    // a summary. We reduce our assemble() recall limits to avoid redundant
+    // injection while still providing raw context and temporal memories.
+    const activeMemoryEnabled =
+      (openclawConfig as any).plugins?.entries?.["active-memory"]?.enabled === true;
+    if (activeMemoryEnabled) {
+      log.warn(
+        "OpenClaw's built-in Active Memory is enabled alongside Formative Memory. " +
+        "This causes redundant memory injection — Active Memory's sub-agent queries our memory tools " +
+        "and injects a summary, then our context engine injects the same memories again. " +
+        'Recommend disabling it: set plugins.entries.active-memory.enabled to false in openclaw.json. ' +
+        "Reducing recall limits as mitigation.",
+      );
+    }
+
     // Context engine and commands use the same workspace as tools.
     // Workspace is created lazily on first access (tool call or engine use).
     api.registerContextEngine(CONTEXT_ENGINE_ID, () =>
@@ -910,6 +926,7 @@ const associativeMemoryPlugin = {
         getLogPath: () => join(getWorkspace(".").memoryDir, "retrieval.log"),
         autoCapture: config.autoCapture,
         getLlmConfig: () => resolveLlmConfig(runtimePaths.stateDir, runtimePaths.agentDir, log),
+        activeMemoryEnabled,
       }),
     );
 

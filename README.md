@@ -215,6 +215,36 @@ existing database, you must re-embed all memories via migration.
 Attempting to change the configured provider mid-life produces a
 clear error at startup rather than silent corruption.
 
+## Disabling Overlapping Memory Features
+
+OpenClaw ships with built-in memory features that overlap with this
+plugin. We recommend disabling them to avoid redundant injection and
+conflicting memory writes:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "active-memory": { "enabled": false },
+      "memory-core": { "enabled": false }
+    }
+  },
+  "hooks": {
+    "session-memory": { "enabled": false }
+  }
+}
+```
+
+| Feature | Why disable |
+|---------|-------------|
+| **Active Memory** | OpenClaw's built-in proactive recall. Runs a sub-agent that queries our `memory_search` before each reply, then injects a summary alongside our own context injection — same memories appear twice |
+| **memory-core** | The built-in file-based memory plugin. Only one memory slot can be active; this plugin replaces it |
+| **session-memory** | An internal hook that writes `memory/YYYY-MM-DD.md` files on `/new` and `/reset`. These files are not used by this plugin and create unnecessary disk writes |
+
+If Active Memory is left enabled, the plugin logs a warning at startup
+and automatically reduces its own recall limits to minimize redundancy.
+Disabling is the cleaner approach.
+
 ## Architecture
 
 ```

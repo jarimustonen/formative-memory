@@ -732,6 +732,60 @@ describe("AssociativeMemoryContextEngine assemble()", () => {
 
     expect(result.messages).toBe(messages);
   });
+
+  it("reduces recall limit when activeMemoryEnabled is true (high budget)", async () => {
+    const manager = stubManager([]);
+    const engine = createAssociativeMemoryContextEngine({
+      getManager: () => manager,
+      activeMemoryEnabled: true,
+    });
+
+    await engine.assemble({
+      sessionId: "s1",
+      messages: [{ role: "user", content: "test query" }] as any,
+      prompt: "test query",
+    });
+
+    // High budget normally uses limit=5, but with Active Memory → limit=3
+    expect(manager.recall).toHaveBeenCalledWith("test query", 3);
+  });
+
+  it("reduces recall limit when activeMemoryEnabled is true (medium budget)", async () => {
+    const manager = stubManager([]);
+    const engine = createAssociativeMemoryContextEngine({
+      getManager: () => manager,
+      activeMemoryEnabled: true,
+    });
+
+    // ~2000 chars → ~500 tokens, 1000 budget → 50% remaining → medium
+    await engine.assemble({
+      sessionId: "s1",
+      messages: [
+        { role: "assistant", content: "x".repeat(2000) },
+        { role: "user", content: "test query" },
+      ] as any,
+      tokenBudget: 1000,
+    });
+
+    // Medium budget normally uses limit=3, but with Active Memory → limit=2
+    expect(manager.recall).toHaveBeenCalledWith("test query", 2);
+  });
+
+  it("uses default recall limits when activeMemoryEnabled is false", async () => {
+    const manager = stubManager([]);
+    const engine = createAssociativeMemoryContextEngine({
+      getManager: () => manager,
+      activeMemoryEnabled: false,
+    });
+
+    await engine.assemble({
+      sessionId: "s1",
+      messages: [{ role: "user", content: "test query" }] as any,
+      prompt: "test query",
+    });
+
+    expect(manager.recall).toHaveBeenCalledWith("test query", 5);
+  });
 });
 
 // -- Assemble cache tests --
