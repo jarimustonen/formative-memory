@@ -4,7 +4,7 @@ updated: 2026-04-17
 type: feature
 reporter: jari
 assignee: jari
-status: done
+status: closed
 priority: normal
 commits:
   - hash: e974afc

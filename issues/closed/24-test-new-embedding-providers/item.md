@@ -1,11 +1,14 @@
 ---
 created: 2026-04-15
-updated: 2026-04-16
+updated: 2026-04-17
 type: task
 reporter: jari
 assignee: jari
 status: closed
 priority: normal
+commits:
+  - hash: 29f9e5c
+    summary: "test: verify LM Studio, Ollama, and Gemini prefix-preservation compatibility (#24)"
 ---
 
 # 24. Test new embedding providers
