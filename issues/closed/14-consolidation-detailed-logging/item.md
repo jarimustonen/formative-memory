@@ -1,6 +1,6 @@
 ---
 created: 2026-04-13
-updated: 2026-04-16
+updated: 2026-04-17
 type: feature
 reporter: jari
 assignee: jari
@@ -13,6 +13,14 @@ commits:
     summary: "fix: address review findings for consolidation logging"
   - hash: f7bccbe
     summary: "refactor: polish consolidation logging from review round 2"
+  - hash: e468708
+    summary: "feat(consolidation): close remaining info-level logging gaps"
+  - hash: 6aae428
+    summary: "fix: demote merge-combining log to debug and add failure-path logging"
+  - hash: f61f271
+    summary: "fix: use neutral wording in reinforce summary log"
+  - hash: 1261ab1
+    summary: "docs: update analysis.md to reflect merge logging changes"
 ---
 
 # 14. Add detailed consolidation logging
