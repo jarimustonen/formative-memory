@@ -9,13 +9,13 @@ in plugin config.
 | Step                  | Per-item                                                          | Aggregate                                  |
 | --------------------- | ----------------------------------------------------------------- | ------------------------------------------ |
 | Catch-up decay        | debug `"{content}" old → new (N cycles, working/consolidated)`    | info `N memories adjusted`                 |
-| Reinforce             | **info** for notable (Δ ≥ 0.3), debug for all; capped at 20 info | info `N strengthened from M attributions` + overflow summary |
+| Reinforce             | **info** for notable (Δ ≥ 0.3), debug for all; capped at 20 info | info `N updated from M attributions` + overflow summary |
 | Decay (memories)      | debug `"{content}" old → new (×factor)`                           | info `N memories decayed`                  |
 | Decay (associations)  | debug `associations ×factor`                                      | (rolled into above)                        |
 | Co-retrieval          | debug `id1↔id2 (+w)`                                              | info `N updated from M turn groups`        |
 | Transitive            | debug `id1↔id2 via id3 weight=w`                                  | info `N created/updated`                   |
 | Prune                 | **info** `removing "{content}" (strength, type)`; capped at 20    | info `N memories, M associations removed` + overflow summary |
-| Merge (combining)     | **info** `combining A=id "{content}" + B=id "{content}"`          | —                                          |
+| Merge (combining)     | debug `combining A=id "{content}" + B=id "{content}"`            | —                                          |
 | Merge (outcome)       | info `outcome (a + b) → "{merged content}" (newId)`               | info `N merges completed`                  |
 | Merge (cleanup)       | debug `weakened originals: ...` / `deleted intermediates: ...`    | —                                          |
 | Temporal shift        | **info** `"{content}" oldState → newState`; capped at 20          | info `N memories transitioned` + overflow summary |
@@ -45,6 +45,11 @@ Per-item info-level lines for prune, temporal, and reinforce-notable are
 capped at `PER_ITEM_INFO_CAP` (20) per consolidation step. Items beyond
 the cap drop to debug; an overflow summary is always emitted at info so
 operators see the suppressed count.
+
+Merge per-item logs are not capped — merge volume is naturally bounded
+by the async LLM call per pair (typically 10–30 merges per run). The
+pre-merge "combining" line is at debug; the committed outcome line is at
+info.
 
 This pattern came out of review round 1 (`d5a718b`): batched cycles can
 produce hundreds of pruned items, and we want operator-readable info logs
