@@ -1,10 +1,17 @@
 ---
 created: 2026-04-16
-updated: 2026-04-16
+updated: 2026-04-17
 type: task
 reporter: jari
 assignee: jari
-status: done
+status: closed
+commits:
+  - hash: 1809ce0
+    summary: "chore(issue-30): add startup service canary log and remove dead agentDir cast"
+  - hash: 5263639
+    summary: "feat(issue-30): trigger startup tasks from service.start() at gateway boot"
+  - hash: 4218fae
+    summary: "fix(issue-30): allow embedding provider init when stateDir is available"
 priority: normal
 ---
 
