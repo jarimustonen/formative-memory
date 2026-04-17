@@ -139,7 +139,11 @@ afterEach(() => {
 
 function getTools(api: ReturnType<typeof fakeApi>, ctx?: Record<string, unknown>) {
   const factory = api.registerTool.mock.calls[0][0] as Function;
-  return factory({ workspaceDir: tmpDir, config: {}, ...ctx }) as any[];
+  // agentDir is required for embedding resolution (see createWorkspace's
+  // requireEmbedding check). The standalone-fallback tests also write
+  // auth-profiles.json into tmpDir, so using tmpDir as agentDir keeps both
+  // registry and standalone code paths reachable.
+  return factory({ workspaceDir: tmpDir, agentDir: tmpDir, config: {}, ...ctx }) as any[];
 }
 
 // ===========================================================================
@@ -483,6 +487,193 @@ describe("provider resolution", () => {
 });
 
 // ===========================================================================
+// New bundled adapters (OpenClaw v2026.4.12 / v2026.4.14)
+// ===========================================================================
+
+describe("LM Studio adapter (v2026.4.12 #53248)", () => {
+  it("auto mode picks LM Studio when it is the highest-priority adapter", async () => {
+    // Simulates the bundled LM Studio embedding adapter shape introduced
+    // in v2026.4.12. Adapter id "lm-studio" registers with autoSelectPriority,
+    // so our generic auto-resolution path picks it up without code changes.
+    const lmCreate = vi.fn(async () => ({
+      provider: {
+        id: "lm-studio",
+        model: "text-embedding-nomic-embed-text-v1.5",
+        embedQuery: vi.fn(async () => Array.from({ length: 768 }, () => 0.1)),
+        embedBatch: vi.fn(async (texts: string[]) =>
+          texts.map(() => Array.from({ length: 768 }, () => 0.1)),
+        ),
+      },
+    }));
+    mockListProviders.mockReturnValue([
+      {
+        id: "lm-studio",
+        defaultModel: "text-embedding-nomic-embed-text-v1.5",
+        autoSelectPriority: 5,
+        create: lmCreate,
+      },
+      {
+        id: "openai",
+        defaultModel: "text-embedding-3-small",
+        autoSelectPriority: 20,
+        create: mockCreate,
+      },
+    ]);
+
+    const api = fakeApi();
+    plugin.register(api as any);
+    const tools = getTools(api);
+    const storeTool = tools.find((t: any) => t.name === "memory_store")!;
+
+    await storeTool.execute("call-1", { content: "local embed", type: "fact" });
+
+    expect(lmCreate).toHaveBeenCalledOnce();
+    expect(mockCreate).not.toHaveBeenCalled();
+    // Identity persisted under the LM Studio adapter id.
+    const db = new MemoryDatabase(join(tmpDir, "memory", "associations.db"));
+    try {
+      expect(db.getState("embedding_provider_id")).toBe("lm-studio");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("explicit selection by 'lm-studio' resolves via registry", async () => {
+    const lmProvider = {
+      id: "lm-studio",
+      model: "text-embedding-nomic-embed-text-v1.5",
+      embedQuery: vi.fn(async () => Array.from({ length: 768 }, () => 0.1)),
+      embedBatch: vi.fn(),
+    };
+    const lmCreate = vi.fn(async () => ({ provider: lmProvider }));
+    mockGetProvider.mockImplementation((id: any) =>
+      id === "lm-studio"
+        ? {
+            id: "lm-studio",
+            defaultModel: "text-embedding-nomic-embed-text-v1.5",
+            create: lmCreate,
+          }
+        : undefined as any,
+    );
+
+    const api = fakeApi({ embedding: { provider: "lm-studio" } });
+    plugin.register(api as any);
+    const tools = getTools(api);
+    const storeTool = tools.find((t: any) => t.name === "memory_store")!;
+
+    await storeTool.execute("call-1", { content: "explicit lm-studio", type: "fact" });
+
+    expect(mockGetProvider).toHaveBeenCalledWith("lm-studio");
+    expect(lmCreate).toHaveBeenCalledOnce();
+  });
+});
+
+describe("Ollama adapter (v2026.4.14 #63429/#66078/#66163)", () => {
+  it("auto mode picks Ollama when its adapter sets autoSelectPriority", async () => {
+    // The restored memory-core Ollama adapter exposes endpoint-aware
+    // cacheKeyData via the runtime returned from create(). Our plugin
+    // does not consume cacheKeyData directly, but the runtime field
+    // must not break our resolution path.
+    const ollamaCreate = vi.fn(async () => ({
+      provider: {
+        id: "ollama",
+        model: "nomic-embed-text",
+        embedQuery: vi.fn(async () => Array.from({ length: 768 }, () => 0.2)),
+        embedBatch: vi.fn(),
+      },
+      runtime: {
+        id: "ollama",
+        cacheKeyData: { provider: "ollama", model: "nomic-embed-text", endpoint: "http://localhost:11434" },
+      },
+    }));
+    mockListProviders.mockReturnValue([
+      {
+        id: "ollama",
+        defaultModel: "nomic-embed-text",
+        autoSelectPriority: 8,
+        create: ollamaCreate,
+      },
+    ]);
+
+    const api = fakeApi();
+    plugin.register(api as any);
+    const tools = getTools(api);
+    const storeTool = tools.find((t: any) => t.name === "memory_store")!;
+
+    await storeTool.execute("call-1", { content: "ollama embed", type: "fact" });
+
+    expect(ollamaCreate).toHaveBeenCalledOnce();
+    const db = new MemoryDatabase(join(tmpDir, "memory", "associations.db"));
+    try {
+      expect(db.getState("embedding_provider_id")).toBe("ollama");
+      expect(db.getState("embedding_model")).toBe("nomic-embed-text");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("explicit selection by 'ollama' resolves via registry even without autoSelectPriority", async () => {
+    // The current memory-core Ollama adapter source does not advertise
+    // autoSelectPriority, so it is invisible to auto-select but must still
+    // be reachable through explicit selection.
+    const ollamaCreate = vi.fn(async () => ({
+      provider: {
+        id: "ollama",
+        model: "nomic-embed-text",
+        embedQuery: vi.fn(async () => Array.from({ length: 768 }, () => 0.2)),
+        embedBatch: vi.fn(),
+      },
+    }));
+    mockGetProvider.mockImplementation((id: any) =>
+      id === "ollama"
+        ? { id: "ollama", defaultModel: "nomic-embed-text", create: ollamaCreate }
+        : undefined as any,
+    );
+
+    const api = fakeApi({ embedding: { provider: "ollama" } });
+    plugin.register(api as any);
+    const tools = getTools(api);
+    const storeTool = tools.find((t: any) => t.name === "memory_store")!;
+
+    await storeTool.execute("call-1", { content: "explicit ollama", type: "fact" });
+
+    expect(mockGetProvider).toHaveBeenCalledWith("ollama");
+    expect(ollamaCreate).toHaveBeenCalledOnce();
+  });
+
+  it("forwards a custom Ollama model through the registry adapter", async () => {
+    // Endpoint-aware caching upstream relies on the model being passed
+    // through verbatim — our plugin must not normalize or strip it.
+    const ollamaCreate = vi.fn(async () => ({
+      provider: {
+        id: "ollama",
+        model: "mxbai-embed-large",
+        embedQuery: vi.fn(async () => Array.from({ length: 1024 }, () => 0.3)),
+        embedBatch: vi.fn(),
+      },
+    }));
+    mockGetProvider.mockImplementation((id: any) =>
+      id === "ollama"
+        ? { id: "ollama", defaultModel: "nomic-embed-text", create: ollamaCreate }
+        : undefined as any,
+    );
+
+    const api = fakeApi({
+      embedding: { provider: "ollama", model: "mxbai-embed-large" },
+    });
+    plugin.register(api as any);
+    const tools = getTools(api);
+    const storeTool = tools.find((t: any) => t.name === "memory_store")!;
+
+    await storeTool.execute("call-1", { content: "custom ollama model", type: "fact" });
+
+    expect(ollamaCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "mxbai-embed-large" }),
+    );
+  });
+});
+
+// ===========================================================================
 // Standalone fallback (memory-core unavailable or auth broken)
 // ===========================================================================
 
@@ -805,7 +996,7 @@ describe("turn cycle integration: assemble → tool calls → afterTurn", () => 
     plugin.register(api as any);
 
     const toolFactory = api.registerTool.mock.calls[0][0] as Function;
-    const tools = toolFactory({ workspaceDir: tmpDir, config: {} }) as any[];
+    const tools = toolFactory({ workspaceDir: tmpDir, agentDir: tmpDir, config: {} }) as any[];
     const storeTool = tools.find((t: any) => t.name === "memory_store")!;
     const searchTool = tools.find((t: any) => t.name === "memory_search")!;
 

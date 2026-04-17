@@ -151,6 +151,25 @@ describe("tryCreateStandaloneProvider", () => {
     const provider = tryCreateStandaloneProvider("openai", profiles, "text-embedding-3-large");
     expect(provider!.model).toBe("text-embedding-3-large");
   });
+
+  it("strips 'gemini:' prefix from gemini model name (#66452 compat)", () => {
+    // OpenClaw v2026.4.14 (#66452) preserves non-OpenAI provider prefixes
+    // through model-ref normalization. The standalone Gemini path must accept
+    // the prefixed form and normalize it before calling the API.
+    const profiles = { "google:default": { key: "AIza-test" } };
+    const provider = tryCreateStandaloneProvider(
+      "gemini",
+      profiles,
+      "gemini:text-embedding-004",
+    );
+    expect(provider!.model).toBe("text-embedding-004");
+  });
+
+  it("leaves un-prefixed gemini model names untouched", () => {
+    const profiles = { "google:default": { key: "AIza-test" } };
+    const provider = tryCreateStandaloneProvider("gemini", profiles, "text-embedding-005");
+    expect(provider!.model).toBe("text-embedding-005");
+  });
 });
 
 // -- Auto-select --
@@ -334,6 +353,31 @@ describe("gemini provider fetch calls", () => {
     // SECURITY: API key must be in header, not URL
     expect(url).not.toContain("AIza-test");
     expect((init.headers as Record<string, string>)["x-goog-api-key"]).toBe("AIza-test");
+  });
+
+  it("calls Gemini API with bare model name when user passes 'gemini:' prefix (#66452)", async () => {
+    // Defensive normalization for the prefix-preservation upstream change:
+    // even if config carries `gemini:text-embedding-004`, the URL must use
+    // the bare model name or Gemini returns 404.
+    const mockValues = Array.from({ length: 768 }, () => 0.1);
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ embedding: { values: mockValues } })),
+    );
+
+    const profiles = { "google:default": { key: "AIza-test" } };
+    const provider = tryCreateStandaloneProvider(
+      "gemini",
+      profiles,
+      "gemini:text-embedding-004",
+    )!;
+    await provider.embedQuery("hi");
+
+    const [url, init] = (globalThis.fetch as any).mock.calls[0];
+    expect(url).toContain("text-embedding-004:embedContent");
+    expect(url).not.toContain("gemini%3A");
+    expect(url).not.toContain("gemini:");
+    const body = JSON.parse(init.body);
+    expect(body.model).toBe("models/text-embedding-004");
   });
 
   it("chunks embedBatch into 100-item requests (Gemini API limit)", async () => {

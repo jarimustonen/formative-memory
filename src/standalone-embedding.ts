@@ -301,8 +301,23 @@ async function geminiEmbed(
   return results;
 }
 
+/**
+ * Strip a `gemini:` provider prefix if present.
+ *
+ * Upstream OpenClaw v2026.4.14 (#66452) preserves non-OpenAI provider prefixes
+ * during model-ref normalization, so users who configure
+ * `embedding.model: "gemini:text-embedding-004"` (the canonical post-fix form)
+ * would pass that string through to our standalone Gemini fallback unchanged.
+ * The Gemini API expects bare model names (`text-embedding-004`); a prefixed
+ * value would produce a 404. Strip defensively so the standalone path stays
+ * compatible with both shapes.
+ */
+function stripGeminiPrefix(model: string): string {
+  return model.startsWith("gemini:") ? model.slice("gemini:".length) : model;
+}
+
 function createGeminiProvider(apiKey: string, model?: string): MemoryEmbeddingProvider {
-  const resolvedModel = model || GEMINI_DEFAULT_MODEL;
+  const resolvedModel = stripGeminiPrefix(model || GEMINI_DEFAULT_MODEL);
   return {
     id: "gemini",
     model: resolvedModel,
