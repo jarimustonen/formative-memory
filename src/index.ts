@@ -791,6 +791,14 @@ function createMemoryTools(
 
 // -- Plugin --
 
+// Module-level stateDir that persists across register() calls.
+// OpenClaw may call register() multiple times (once at gateway boot, then
+// per-session). The startup service sets stateDir only on the first call.
+// Without module-level persistence, subsequent register() scopes start with
+// empty runtimePaths and the embedding provider fails on heartbeat sessions
+// that never receive a tool call (no agentDir) or service start (no stateDir).
+let persistedStateDir: string | undefined;
+
 const associativeMemoryPlugin = {
   id: "formative-memory",
   name: "Formative Memory",
@@ -805,7 +813,11 @@ const associativeMemoryPlugin = {
     const ledger = new TurnMemoryLedger();
 
     // Runtime state captured from tool contexts for use by commands.
-    const runtimePaths: { stateDir?: string; agentDir?: string } = {};
+    // stateDir is seeded from the module-level cache so re-registered sessions
+    // inherit it from the initial gateway boot's startup service.
+    const runtimePaths: { stateDir?: string; agentDir?: string } = {
+      stateDir: persistedStateDir,
+    };
 
     // Single lazy workspace — created on first access, shared by all consumers.
     // WORKAROUND: Context engine factory receives no runtime context from OpenClaw,
@@ -1266,6 +1278,7 @@ const associativeMemoryPlugin = {
       id: "formative-memory-startup",
       async start(ctx) {
         runtimePaths.stateDir = ctx.stateDir;
+        persistedStateDir = ctx.stateDir;
         log.info(
           `startup service started (stateDir=${ctx.stateDir}, workspaceDir=${ctx.workspaceDir ?? "unset"})`,
         );
