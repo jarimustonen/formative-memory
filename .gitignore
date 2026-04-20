@@ -7,6 +7,7 @@ coverage
 .pnpm-store
 .DS_Store
 **/.DS_Store
+package-lock.json
 pnpm-lock.yaml
 bun.lock
 bun.lockb
