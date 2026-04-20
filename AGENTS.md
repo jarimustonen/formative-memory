@@ -2,29 +2,19 @@
 
 OpenClaw plugin implementing a biologically-inspired associative memory system. Standalone repo; installs as an OpenClaw extension.
 
+## Maintenance
+
+Internal development artifacts (issues, deploy scripts, release tracking, development skills) are in the private repo: [formative-memory-maintenance](https://github.com/jarimustonen/formative-memory-maintenance)
+
 ## Gitignored directories
 
 - `history/` — agent scratchpad and ephemeral planning docs (not tracked)
 
-## Documentation Pattern
+## Documentation
 
-Every directory follows this structure:
-
-- `CLAUDE.md` — symlink to `AGENTS.md`
-- `AGENTS.md` — all AI-relevant info (consolidated)
-- `AGENTS-<TOPIC>.md` — complex topics split out (optional)
-
-## Issues & Planning
-
-Work is tracked as issues in `issues/`. Use `/issue` to create, search, update, and close issues.
-
-- `issues/open/NN-slug/item.md` — active issues
-- `issues/closed/NN-slug/item.md` — completed issues
-- `issues/AGENTS.md` — templates, types, and workflow docs
-
-All planning documents (plans, analyses, designs, todos) belong under their parent issue directory — not as standalone files. If work needs a planning document, it also needs an issue. This ties every piece of planning to a trackable item.
-
-- `issues/open/NN-title/plan.md` — architecture, implementation plans
-- `issues/open/NN-title/analysis.md` — research and analysis
-- `issues/open/NN-title/design.md` — design documents
-- `issues/open/NN-title/todo.md` — task checklists
+- `docs/architecture.md` — system architecture overview
+- `docs/how-memory-works.md` — how the memory system works
+- `docs/glossary.md` — terminology reference
+- `docs/active-memory-coexistence.md` — coexistence with OpenClaw Active Memory
+- `docs/openclaw-memory-coexistence.md` — coexistence with OpenClaw built-in memory
+- `docs/comparison-openclaw-memory.md` — comparison with OpenClaw's built-in memory
