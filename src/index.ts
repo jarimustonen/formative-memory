@@ -1251,7 +1251,7 @@ const associativeMemoryPlugin = {
         );
         return {
           handled: true,
-          reply: { text: "Memory consolidation failed." },
+          reply: { text: `Memory consolidation failed: ${err instanceof Error ? err.message : String(err)}` },
           reason: "associative-memory-consolidation-error",
         };
       }
