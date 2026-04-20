@@ -1,10 +1,10 @@
 # Formative Memory
 
-**Memory that actively forms around what matters.**
+**Associative memory for [OpenClaw](https://openclaw.ai) agents.**
 
-Formative Memory is an [OpenClaw](https://openclaw.ai) plugin that gives your agent a self-optimizing memory. It strengthens relevant context through use, weakens unused details, and automatically builds associations between related concepts. In each session, it helps by injecting relevant memories into context before every response. It also evaluates memory quality — each retrieval affects the strength of the memory, so useful ones rise and unused ones fade. Every night, your agent sleeps: a consolidation process prunes and combines memories to keep the quality of recalled context high.
+Formative Memory is an OpenClaw plugin that gives your agent long-term memory modeled after how biological memory works. Before every response, it recalls relevant memories into context. After every response, it evaluates which memories actually contributed — strengthening useful ones and letting unused ones fade. Every night, the agent sleeps: a consolidation process decays, prunes, merges, and connects memories to keep recalled context high-quality.
 
-Over time, this combination process builds beyond raw facts into interpretations, nuanced awareness, and deeper understanding.
+Over time, raw facts combine into richer structures: merged summaries, connected associations, and deeper understanding.
 
 [![npm version](https://img.shields.io/npm/v/formative-memory)](https://www.npmjs.com/package/formative-memory)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -28,7 +28,7 @@ User: "Do you remember that restaurant? The one by the beach
        last summer. I'm trying to book for our anniversary."
 
 Injected memories:
-  [a3f2|fact|strength=0.82]  "Dinner at Maininki, Hanko, July 2024"
+  [a3f2|fact|strength=0.82]  "Dinner at Maininki, Hanko, April 2026"
   [b7d1|event|2026-07-04]    "Wedding anniversary — 12 years"
   [c9f3|preference|str=0.74] "Sanna loves peonies"
   [d2e6|fact|2026-07-02]     "Sanna: private doctor's appointment"
@@ -39,6 +39,41 @@ Agent: "Of course! It was Maininki, in Hanko. Shall I book a table?
 
 The agent sees recalled memories as context, not instructions — this
 reduces prompt injection risk from stored content.
+
+### Evaluate
+
+After each response, the plugin tracks which memories were surfaced
+and whether they actually influenced the reply. This happens at two
+levels:
+
+- **Automatic attribution** — the plugin logs which memories were
+  injected and which the model referenced, building a retrieval
+  history without any agent effort
+- **Explicit feedback** — the agent can call `memory_feedback` to
+  rate a memory's usefulness (1–5), signaling quality directly
+
+Both signals feed into consolidation: frequently used, highly rated
+memories are reinforced, while memories that are surfaced but never
+referenced gradually lose strength. This creates a feedback loop where
+the memory system learns what is actually useful, not just what matches
+a query.
+
+```
+After the agent's response about Maininki:
+
+Automatic attribution (logged by the plugin):
+  ✓ [a3f2] "Dinner at Maininki, Hanko"     — referenced in reply
+  ✓ [b7d1] "Wedding anniversary — 12 years" — referenced in reply
+  · [c9f3] "Sanna loves peonies"            — injected, not used
+  · [d2e6] "Sanna: doctor's appointment"    — injected, not used
+
+  → a3f2 and b7d1 are reinforced at next consolidation
+  → c9f3 and d2e6 were surfaced but ignored — no reinforcement
+
+Explicit feedback (agent calls memory_feedback):
+  → memory_feedback(memory_id: "a3f2", rating: 5)
+  → "Directly answered the user's question"
+```
 
 ### Capture
 
@@ -78,13 +113,13 @@ the accumulated memories:
 
 ```
 Before consolidation:
-  [a3f2|strength=0.82] "Dinner at Maininki, Hanko, July 2024"
+  [a3f2|strength=0.82] "Dinner at Maininki, Hanko, April 2026"
   [f1c4|strength=0.65] "Maininki — beachfront restaurant, good wine list"
   [a9b3|strength=0.41] "Tried booking Maininki in June, fully booked"
 
 After consolidation:
   [g7e2|strength=1.00] "Maininki, Hanko: beachfront restaurant with good
-   wine list. Visited July 2024. Book early — fills up in summer."
+   wine list. Visited April 2026. Book early — fills up in summer."
 
   Associations formed:
     "Maininki" ←0.7→ "Wedding anniversary"

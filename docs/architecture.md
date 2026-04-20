@@ -9,7 +9,7 @@ read_when:
 
 # Associative Memory Architecture
 
-The associative memory plugin claims both the **memory** and **contextEngine** slots in OpenClaw, giving it full control over the memory lifecycle. It stores memories in SQLite, retrieves them through a hybrid semantic + keyword pipeline, automatically injects relevant memories into the agent's context, tracks how memories influence responses, and consolidates the memory store during explicit sleep cycles.
+The associative memory plugin claims both the **memory** and **contextEngine** slots in OpenClaw, giving it full control over the memory lifecycle. It stores memories in SQLite, retrieves them through a hybrid semantic + keyword pipeline, automatically injects relevant memories into the agent's context, tracks how memories influence responses, and consolidates the memory store on a daily schedule.
 
 This document covers integration, storage, retrieval, provenance, and consolidation. For a conceptual overview of the memory model, see [How Associative Memory Works](./how-memory-works.md).
 
@@ -44,27 +44,39 @@ sequenceDiagram
 ```
 
 1. **assemble** — the context engine estimates the remaining token budget, recalls relevant memories, deduplicates against memories already visible through tool calls, and injects them as a `systemPromptAddition`
-2. **Tool calls** — during the turn, the agent may call `memory_store`, `memory_search`, `memory_get`, or `memory_feedback`. These update the deduplication ledger so the next `assemble` does not repeat them
+2. **Tool calls** — during the turn, the agent may call `memory_store`, `memory_search`, `memory_get`, `memory_feedback`, or `memory_browse`. These update the deduplication ledger so the next `assemble` does not repeat them
 3. **afterTurn** — after the agent responds, the engine records which memories were shown (exposure) and how they influenced the response (attribution)
 
 ## Runtime integration
 
-The plugin registers four components:
+The plugin registers the following components:
 
 ```mermaid
 flowchart TD
-    P[Plugin register] --> MSP[Memory prompt section]
-    P --> CE[Context engine]
-    P --> CMD[/memory sleep command]
-    P --> TOOLS[4 memory tools]
+    P["Plugin register"] --> MSP["Memory prompt section"]
+    P --> CE["Context engine"]
+    P --> CMD["Commands"]
+    P --> TOOLS["5 memory tools"]
+    P --> CRON["2 cron jobs"]
 
-    CE --> A[assemble]
-    CE --> AT[afterTurn]
-    CE --> CO[compact → delegate to runtime]
-    CE --> DI[dispose → cleanup]
+    CE --> A["assemble"]
+    CE --> AT["afterTurn"]
+    CE --> CO["compact — delegate to runtime"]
+    CE --> DI["dispose — cleanup"]
+
+    CMD --> SLEEP["/memory-sleep"]
+    CMD --> MIGRATE["/memory-migrate"]
+    CMD --> CLEANUP["/memory-cleanup"]
+
+    CRON --> C1["Consolidation (03:00 daily)"]
+    CRON --> C2["Temporal transitions (15:00 daily)"]
 ```
 
+**Memory tools:** `memory_store`, `memory_search`, `memory_get`, `memory_feedback`, `memory_browse`.
+
 **Context engine** implements `assemble()`, `afterTurn()`, `compact()`, and `dispose()`. Compaction is delegated to the OpenClaw runtime. Dispose resets per-run caches but does not reset the deduplication ledger — that is owned by the caller.
+
+**Cron jobs** are registered on `gateway:startup` and run via the heartbeat system. Consolidation runs daily at 03:00 (full cycle: decay, reinforce, merge, prune). Temporal transitions run at 15:00 (future → present → past based on anchor dates). Both can also be triggered manually via `/memory-sleep`.
 
 **Workspace isolation** — each unique combination of memory directory, embedding model, and API key gets its own manager instance, circuit breaker, and database. The plugin tracks the most recently accessed workspace so the context engine and tools coordinate on the same state. This assumes a single active workspace per process — concurrent multi-workspace use within one OpenClaw process is not supported.
 
@@ -131,15 +143,15 @@ Search combines semantic and keyword matching, weighted by memory strength:
 
 ```mermaid
 flowchart LR
-    Q[Query] --> E[Embedding search]
-    Q --> B[BM25 keyword search]
-    E --> H[Hybrid score]
+    Q["Query"] --> E["Embedding search"]
+    Q --> B["BM25 keyword search"]
+    E --> H["Hybrid score"]
     B --> H
     H --> S["× strength"]
-    S --> R[Top-K results]
+    S --> R["Top-K results"]
 ```
 
-Both scores are normalized to a 0–1 range before combining. The hybrid score weights embedding similarity at 60% and BM25 at 40%. The final score is multiplied by the memory's strength (clamped to 0–1), so weak memories rank lower regardless of textual relevance.
+Both scores are normalized to a 0–1 range before combining. The hybrid score weights embedding similarity at 60% and BM25 at 40% (`ALPHA = 0.6`). When embeddings are unavailable, the system falls back to BM25-only (`ALPHA = 0`). The final score is multiplied by the memory's strength (clamped to 0–1), so weak memories rank lower regardless of textual relevance.
 
 ### Embedding circuit breaker
 
@@ -158,7 +170,7 @@ stateDiagram-v2
 |-----------|---------|
 | Failure threshold | 2 consecutive failures |
 | Timeout | 3 s (cooperative AbortSignal) |
-| Cooldown | 30 s ± 20% jitter |
+| Cooldown | 30 s ± jitter (±50% by default) |
 
 When the circuit is open, search falls back to BM25-only mode and the agent is informed of the degraded state. Recovery happens automatically when the probe succeeds.
 
@@ -204,42 +216,60 @@ When memories are merged or deleted, `memory_aliases` maps old IDs to their cano
 
 ## Consolidation
 
-Consolidation runs when triggered by `/memory sleep`. It is synchronous and blocking in V1.
+Consolidation runs automatically via cron (daily at 03:00) and can be triggered manually with `/memory-sleep`.
 
-The process runs in three database transactions:
+The process runs in two database transactions:
 
-### Transaction 1: Deterministic maintenance
+### Transaction 1: Pre-merge deterministic steps
 
-1. **Reinforcement** — processes unprocessed attributions: `Δstrength = η × confidence × modeWeight`. Strength is clamped to 0–1 after each update
-2. **Decay** — working memories ×0.906, consolidated ×0.977, associations ×0.9
-3. **Co-retrieval associations** — memories retrieved in the same turn get linked. Weights combine via probabilistic OR: `w_new = w_old + w_add − w_old × w_add`, which keeps weights in the 0–1 range
-4. **Transitive associations** — 1-hop indirect links computed (max 100 per run)
-5. **Temporal transitions** — future → present → past based on anchor dates
-6. **Pruning** — memories with strength ≤ 0.05 and associations with weight < 0.01 are deleted
+1. **Catch-up decay** — if consolidation was missed for multiple days, applies accumulated decay (capped at a maximum number of catch-up cycles to prevent amnesia)
+2. **Reinforcement** — processes unprocessed attributions: `Δstrength = η × confidence × modeWeight` (η = 0.7). Strength is clamped to 0–1 after each update
+3. **Decay** — working memories ×0.906, consolidated ×0.977, associations ×0.9
+4. **Co-retrieval associations** — memories retrieved in the same turn get linked. Weights combine via probabilistic OR: `w_new = w_old + w_add − w_old × w_add`, which keeps weights in the 0–1 range
+5. **Transitive associations** — 1-hop indirect links computed (max 100 per run)
+6. **Temporal transitions** — future → present → past based on anchor dates
+7. **Pruning** — memories with strength ≤ 0.05 and associations with weight < 0.01 are deleted
 
-### Transaction 2: Merge
+### Merge (between transactions)
 
-1. **Candidate detection** — all pairs scored by Jaccard + cosine similarity, threshold ≥ 0.6, max 20 pairs
-2. **Execution** — each pair produces one of: absorption (one subsumes the other), reuse (matches an existing third memory), or a novel merged memory
+Merge runs outside a transaction because it calls an LLM (async):
+
+1. **Candidate detection** — delta approach: new/recently-exposed memories (sources, strength ≥ 0.5) are compared against existing memories (targets, strength ≥ 0.3). Similarity scored by Jaccard + cosine (threshold ≥ 0.5 combined, or ≥ 0.6 Jaccard-only when embeddings are unavailable). Max 20 pairs per run
+2. **Execution** — each pair produces one of: absorption (one subsumes the other), reuse (matches an existing third memory), or a novel merged memory. Merged memories are marked as consolidated
 3. **Inheritance** — the merged memory inherits associations via probabilistic OR (`w = a + b − ab`); aliases are recorded
 
-### Transaction 3: Finalization
+### Transaction 2: Finalization
 
-1. **Promotion** — surviving working memories become consolidated
-2. **Provenance GC** — exposure records older than 30 days are deleted
+Always runs (even if merge fails) to advance the consolidation clock and prevent double-decay:
+
+1. **Provenance GC** — exposure records older than 30 days are deleted
+2. **Timestamp update** — `last_consolidation_at` is set to the consolidation cutoff time
 
 ## Configuration
 
+All settings are optional — defaults work out of the box. Configuration goes in `openclaw.json` under the plugin entry:
+
 ```json5
-// openclaw.plugin.json
 {
   "plugins": {
-    "associative-memory": {
-      "embedding": {
-        "apiKey": "${OPENAI_API_KEY}",
-        "model": "text-embedding-3-small"  // or text-embedding-3-large
-      },
-      "dbPath": "~/.openclaw/memory/associative"  // optional, ~ is expanded by the plugin
+    "entries": {
+      "formative-memory": {
+        "enabled": true,
+        "config": {
+          "autoRecall": true,
+          "autoCapture": true,
+          "requireEmbedding": true,
+          "embedding": {
+            "provider": "auto"
+          },
+          "consolidation": {
+            "notification": "summary"
+          },
+          "temporal": {
+            "notification": "summary"
+          }
+        }
+      }
     }
   }
 }
@@ -247,9 +277,18 @@ The process runs in three database transactions:
 
 | Setting | Type | Default |
 |---------|------|---------|
-| `embedding.apiKey` | string (supports `${ENV_VAR}`) | — (required) |
-| `embedding.model` | `text-embedding-3-small` \| `text-embedding-3-large` | `text-embedding-3-small` |
+| `autoRecall` | boolean | `true` |
+| `autoCapture` | boolean | `true` |
+| `requireEmbedding` | boolean | `true` |
+| `embedding.provider` | `"auto"` \| `"openai"` \| `"gemini"` | `"auto"` |
+| `embedding.model` | string | provider default |
 | `dbPath` | string | `~/.openclaw/memory/associative` |
+| `verbose` | boolean | `false` |
+| `consolidation.notification` | `"off"` \| `"summary"` \| `"detailed"` | `"off"` |
+| `temporal.notification` | `"off"` \| `"summary"` \| `"detailed"` | `"off"` |
+| `logQueries` | boolean | `false` |
+
+API keys are read from OpenClaw's `auth-profiles.json` — environment variables are not used. See the [README](../README.md#api-keys) for profile configuration details.
 
 ## CLI diagnostic tool
 
@@ -284,8 +323,7 @@ Output is JSON by default; use `--format text` for human-readable output.
 
 ## Current limitations
 
-- Consolidation is synchronous and blocking — it runs in the calling process with no background scheduling.
-- Associations do not influence search results — they are structural data for consolidation.
+- Associations do not influence recall — they are structural data used only during consolidation for co-retrieval tracking and transitive link building. See [issue #35](../issues/open/35-association-augmented-recall/item.md).
 - Do not run CLI write commands (`import`) while the OpenClaw runtime is active. The runtime caches state in memory and will not observe external database mutations, leading to inconsistent behavior.
 
 See [How Associative Memory Works](./how-memory-works.md) for the conceptual model.
