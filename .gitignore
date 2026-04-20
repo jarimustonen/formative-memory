@@ -7,7 +7,6 @@ coverage
 .pnpm-store
 .DS_Store
 **/.DS_Store
-package-lock.json
 bun.lock
 bun.lockb
 .worktrees/
