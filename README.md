@@ -1,6 +1,6 @@
 # Formative Memory
 
-**Associative memory for [OpenClaw](https://openclaw.ai) agents.**
+**Memory plugin for [OpenClaw](https://openclaw.ai) agents.**
 
 Formative Memory is an OpenClaw plugin that gives your agent long-term memory modeled after how biological memory works. Before every response, it recalls relevant memories into context. After every response, it evaluates which memories actually contributed — strengthening useful ones and letting unused ones fade. Every night, the agent sleeps: a consolidation process decays, prunes, merges, and connects memories to keep recalled context high-quality.
 
@@ -366,7 +366,7 @@ filtering. Query text is never included in logs by default — set
 
 ## Documentation
 
-- [How Associative Memory Works](docs/how-memory-works.md) — conceptual guide
+- [How Formative Memory Works](docs/how-memory-works.md) — conceptual guide
 - [Architecture](docs/architecture.md) — storage, retrieval, provenance, consolidation
 - [Comparison with OpenClaw built-in memory](docs/comparison-openclaw-memory.md) — technical comparison
 - [Glossary](docs/glossary.md) — terminology

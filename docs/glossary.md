@@ -9,7 +9,7 @@ read_when:
 
 # Glossary
 
-This document defines the technical terms that appear throughout the associative memory plugin's documentation, planning documents, and source code. Each entry explains what the term means in general, then how it applies to this project specifically.
+This document defines the technical terms that appear throughout Formative Memory's documentation, planning documents, and source code. Each entry explains what the term means in general, then how it applies to this project specifically.
 
 ## Association
 
@@ -21,7 +21,7 @@ A small group of items processed together. During memory import, the agent recei
 
 ## Chunking
 
-Splitting a large text into smaller pieces for indexing. Memory-core uses mechanical chunking: it divides files into fixed-size pieces (400 tokens with 80-token overlap) regardless of content structure. The associative memory plugin uses semantic units instead — each memory is a coherent, self-contained piece of information whose size depends on the content, not a fixed token budget.
+Splitting a large text into smaller pieces for indexing. Memory-core uses mechanical chunking: it divides files into fixed-size pieces (400 tokens with 80-token overlap) regardless of content structure. Formative Memory uses semantic units instead — each memory is a coherent, self-contained piece of information whose size depends on the content, not a fixed token budget.
 
 ## Consolidation
 

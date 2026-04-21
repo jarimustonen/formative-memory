@@ -1,5 +1,5 @@
 ---
-title: Associative Memory Architecture
+title: Formative Memory Architecture
 summary: How the plugin integrates with OpenClaw, its storage model, retrieval pipeline, provenance tracking, and consolidation process.
 read_when:
   - You are extending or modifying the plugin
@@ -7,11 +7,11 @@ read_when:
   - You are debugging runtime behavior or configuration issues
 ---
 
-# Associative Memory Architecture
+# Formative Memory Architecture
 
-The associative memory plugin claims both the **memory** and **contextEngine** slots in OpenClaw, giving it full control over the memory lifecycle. It stores memories in SQLite, retrieves them through a hybrid semantic + keyword pipeline, automatically injects relevant memories into the agent's context, tracks how memories influence responses, and consolidates the memory store on a daily schedule.
+Formative Memory claims both the **memory** and **contextEngine** slots in OpenClaw, giving it full control over the memory lifecycle. It stores memories in SQLite, retrieves them through a hybrid semantic + keyword pipeline, automatically injects relevant memories into the agent's context, tracks how memories influence responses, and consolidates the memory store on a daily schedule.
 
-This document covers integration, storage, retrieval, provenance, and consolidation. For a conceptual overview of the memory model, see [How Associative Memory Works](./how-memory-works.md).
+This document covers integration, storage, retrieval, provenance, and consolidation. For a conceptual overview of the memory model, see [How Formative Memory Works](./how-memory-works.md).
 
 ## How a turn works
 
@@ -326,4 +326,4 @@ Output is JSON by default; use `--format text` for human-readable output.
 - Associations do not influence recall — they are structural data used only during consolidation for co-retrieval tracking and transitive link building. See [issue #35](../issues/open/35-association-augmented-recall/item.md).
 - Do not run CLI write commands (`import`) while the OpenClaw runtime is active. The runtime caches state in memory and will not observe external database mutations, leading to inconsistent behavior.
 
-See [How Associative Memory Works](./how-memory-works.md) for the conceptual model.
+See [How Formative Memory Works](./how-memory-works.md) for the conceptual model.

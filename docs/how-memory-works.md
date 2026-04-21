@@ -1,5 +1,5 @@
 ---
-title: How Associative Memory Works
+title: How Formative Memory Works
 summary: Conceptual guide to how the plugin stores, recalls, reinforces, and forgets memories — the mental model you need before using or extending it.
 read_when:
   - You want to understand the plugin's behavior before enabling it
@@ -7,9 +7,9 @@ read_when:
   - You are deciding whether the memory model fits your workflow
 ---
 
-# How Associative Memory Works
+# How Formative Memory Works
 
-The associative memory plugin gives an OpenClaw agent persistent, long-term memory that behaves more like human recall than a database lookup. Memories strengthen when used, weaken when neglected, form connections through shared context, and consolidate during periodic "sleep" cycles. The result is a memory system where important, frequently-used knowledge naturally surfaces while stale information gradually fades away.
+Formative Memory gives an OpenClaw agent persistent, long-term memory that behaves more like human recall than a database lookup. Memories strengthen when used, weaken when neglected, form connections through shared context, and consolidate during periodic "sleep" cycles. The result is a memory system where important, frequently-used knowledge naturally surfaces while stale information gradually fades away.
 
 ## What this analogy does and does not mean
 
