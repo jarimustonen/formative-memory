@@ -1,7 +1,7 @@
 {
   "name": "formative-memory",
-  "version": "0.4.2",
-  "description": "Memory that actively forms around what matters.",
+  "version": "0.4.3",
+  "description": "Memory plugin for OpenClaw. Agent's memories strengthen through use, fade when unused, and consolidate overnight.",
   "license": "MIT",
   "repository": {
     "type": "git",
