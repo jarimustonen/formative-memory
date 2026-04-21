@@ -353,10 +353,6 @@ describe("hasFileMemoryInstructions", () => {
     expect(hasFileMemoryInstructions("if you want to remember, WRITE IT TO A FILE")).toBe(true);
   });
 
-  it("detects Finnish memory file instruction", () => {
-    expect(hasFileMemoryInstructions("Nämä tiedostot ovat muistisi")).toBe(true);
-  });
-
   it("returns false for unrelated content", () => {
     expect(hasFileMemoryInstructions("Use the weather tool to check forecasts")).toBe(false);
     expect(hasFileMemoryInstructions("My favorite color is green")).toBe(false);
@@ -435,18 +431,6 @@ Use weather to check forecasts.`,
     expect(existsSync(join(tmpDir, "AGENTS.md.pre-formative-memory"))).toBe(true);
   });
 
-  it("cleans both AGENTS.md and SOUL.md", async () => {
-    writeFileSync(join(tmpDir, "AGENTS.md"), "Write to memory/YYYY-MM-DD.md files");
-    writeFileSync(join(tmpDir, "SOUL.md"), "Nämä tiedostot ovat muistisi. Päivitä ne.");
-    const deps = createCleanupDeps();
-
-    const result = await cleanupWorkspaceFiles(deps);
-
-    expect(result.status).toBe("cleaned");
-    expect(result.filesModified).toEqual(expect.arrayContaining(["AGENTS.md", "SOUL.md"]));
-    expect(deps.llm).toHaveBeenCalledTimes(2);
-  });
-
   it("skips files that don't exist", async () => {
     // No files in tmpDir
     const deps = createCleanupDeps();
@@ -468,25 +452,6 @@ Use weather to check forecasts.`,
     expect(deps.logger.warn).toHaveBeenCalled();
     // Should NOT mark as completed — will retry next startup
     expect(deps.dbState.get("workspace_cleanup_completed_at")).toBeNull();
-  });
-
-  it("continues if LLM fails for one file", async () => {
-    writeFileSync(join(tmpDir, "AGENTS.md"), "Update MEMORY.md daily");
-    writeFileSync(join(tmpDir, "SOUL.md"), "Nämä tiedostot ovat muistisi.");
-
-    let callCount = 0;
-    const deps = createCleanupDeps({
-      llm: vi.fn(async () => {
-        callCount++;
-        if (callCount === 1) throw new Error("LLM error");
-        return "# Cleaned SOUL\n\nYour memory plugin handles persistence.";
-      }),
-    });
-
-    const result = await cleanupWorkspaceFiles(deps);
-
-    expect(result.status).toBe("cleaned");
-    expect(result.filesModified).toEqual(["SOUL.md"]);
   });
 
   it("is idempotent — second run skips", async () => {

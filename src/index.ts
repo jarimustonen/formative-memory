@@ -1043,7 +1043,7 @@ const associativeMemoryPlugin = {
     // -- /memory-cleanup: re-run workspace file cleanup --
     api.registerCommand({
       name: "memory-cleanup",
-      description: "Remove file-based memory instructions from workspace files (AGENTS.md, SOUL.md)",
+      description: "Remove file-based memory instructions from AGENTS.md",
       async handler() {
         const ws = getWorkspace(".");
         const db = ws.manager.getDatabase();
@@ -1270,7 +1270,7 @@ const associativeMemoryPlugin = {
     //
     // When ctx.workspaceDir is present we trigger migration + workspace
     // cleanup + embedding backfill here so importing legacy memories and
-    // scrubbing AGENTS.md/SOUL.md no longer requires the first tool call.
+    // scrubbing AGENTS.md no longer requires the first tool call.
     // The handler is idempotent (startupTasksTriggered flag) — if a tool
     // call races ahead, nothing is done twice.
     api.registerService({

@@ -147,7 +147,7 @@ That's it. The plugin works out of the box:
 - **Auto-recall** surfaces relevant memories before every response
 - **Consolidation** runs automatically to maintain memory quality
 - **Startup tasks** (migrating existing memory files, scrubbing legacy
-  memory instructions from `AGENTS.md`/`SOUL.md`, backfilling embeddings)
+  memory instructions from `AGENTS.md`, backfilling embeddings)
   run automatically at gateway boot
 
 No configuration needed — sensible defaults are built in.

@@ -501,8 +501,6 @@ const FILE_MEMORY_PATTERNS = [
   /memory\/YYYY-MM-DD/,
   /MEMORY\.md/,
   /WRITE IT TO A FILE/i,
-  /tiedostot.*ovat.*muistisi/i,
-  /muistisi.*tiedosto/i,
   /memory maintenance/i,
   /daily.*notes.*memory\//i,
   /memory\/\d{4}-\d{2}-\d{2}/,
@@ -515,7 +513,7 @@ export function hasFileMemoryInstructions(content: string): boolean {
 }
 
 /**
- * Clean file-based memory instructions from workspace files (AGENTS.md, SOUL.md).
+ * Clean file-based memory instructions from AGENTS.md.
  *
  * Runs once on first activation. Uses LLM to surgically remove memory-related
  * instructions while preserving everything else. Backs up originals.
@@ -530,7 +528,7 @@ export async function cleanupWorkspaceFiles(
     return { status: "skipped" };
   }
 
-  const targets = ["AGENTS.md", "SOUL.md"];
+  const targets = ["AGENTS.md"];
   const filesToClean: Array<{ name: string; path: string; content: string }> = [];
 
   for (const name of targets) {
