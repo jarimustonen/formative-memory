@@ -155,7 +155,7 @@ export function processAfterTurn(params: AfterTurnParams): void {
     //    When feedback references a memory that was attributed in a PRIOR turn,
     //    we update that prior attribution row rather than creating a new one
     //    for the current turn. This implements the cross-turn promotion described
-    //    in TODO 3.7: "feedback voi tulla myöhemmässä turnissa".
+    //    (feedback can arrive in a later turn).
     //    Feedback processing is independent of the current turn having an
     //    assistant message — it targets existing attribution rows.
     const feedbackCalls = parseFeedbackCalls(

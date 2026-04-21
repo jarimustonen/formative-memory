@@ -323,7 +323,7 @@ Output is JSON by default; use `--format text` for human-readable output.
 
 ## Current limitations
 
-- Associations do not influence recall — they are structural data used only during consolidation for co-retrieval tracking and transitive link building. See [issue #35](../issues/open/35-association-augmented-recall/item.md).
+- Associations do not influence recall — they are structural data used only during consolidation for co-retrieval tracking and transitive link building.
 - Do not run CLI write commands (`import`) while the OpenClaw runtime is active. The runtime caches state in memory and will not observe external database mutations, leading to inconsistent behavior.
 
 See [How Formative Memory Works](./how-memory-works.md) for the conceptual model.

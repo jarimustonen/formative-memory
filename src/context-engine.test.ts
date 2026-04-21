@@ -1565,7 +1565,7 @@ describe("formatUpcomingMemories", () => {
       {
         id: "a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8",
         type: "fact",
-        content: "Lyran synttärit kotona klo 14",
+        content: "Lyra's birthday party at home at 2pm",
         strength: 1,
         temporal_anchor: "2026-05-09T00:00:00.000Z",
       },
@@ -1574,7 +1574,7 @@ describe("formatUpcomingMemories", () => {
     expect(result).toContain("<memory_context>");
     expect(result).toContain("</memory_context>");
     expect(result).toContain("2026-05-09");
-    expect(result).toContain("Lyran synttärit kotona klo 14");
+    expect(result).toContain("Lyra's birthday party at home at 2pm");
     expect(result).toContain("a1b2c3d4");
   });
 
@@ -1659,7 +1659,7 @@ describe("assemble temporal injection", () => {
     db.insertMemory({
       id: "future-memory-id-padded-to-64-chars-0000000000000000000000000000",
       type: "fact",
-      content: "Hammaslääkäri tiistaina klo 10",
+      content: "Dentist on Tuesday at 10am",
       temporal_state: "future",
       temporal_anchor: futureDate.toISOString(),
       created_at: new Date().toISOString(),
@@ -1670,13 +1670,13 @@ describe("assemble temporal injection", () => {
 
     const engine = makeEngine();
     const result = await engine.assemble({
-      messages: [{ role: "user", content: "Mitä tänään tehdään?" }],
+      messages: [{ role: "user", content: "What are we doing today?" }],
       prompt: "test",
       tokenBudget: 10000,
     });
 
     expect(result.systemPromptAddition).toContain("<memory_context>");
-    expect(result.systemPromptAddition).toContain("Hammaslääkäri tiistaina klo 10");
+    expect(result.systemPromptAddition).toContain("Dentist on Tuesday at 10am");
   });
 
   it("does not inject memories beyond lookahead window", async () => {
@@ -1695,7 +1695,7 @@ describe("assemble temporal injection", () => {
 
     const engine = makeEngine();
     const result = await engine.assemble({
-      messages: [{ role: "user", content: "Mitä kuuluu?" }],
+      messages: [{ role: "user", content: "How's it going?" }],
       prompt: "test",
       tokenBudget: 10000,
     });

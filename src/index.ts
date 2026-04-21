@@ -376,7 +376,6 @@ type ManagedWorkspace = {
  *    calls can retry once agentDir becomes available.
  *
  * This will be removed when OpenClaw passes context to ContextEngineFactory.
- * See: issues/open/08-upstream-prs/proposal-factory-context.md
  */
 function createWorkspace(
   config: AssociativeMemoryConfig,
@@ -823,7 +822,7 @@ const associativeMemoryPlugin = {
     // WORKAROUND: Context engine factory receives no runtime context from OpenClaw,
     // so the workspace may be created by heartbeat/cron before any tool call.
     // We use lazy getters for agentDir and decouple init from workspace creation
-    // to handle this safely. See: issues/open/08-upstream-prs/proposal-factory-context.md
+    // to handle this safely.
     let workspace: ManagedWorkspace | null = null;
     let startupTasksTriggered = false;
 
@@ -868,7 +867,7 @@ const associativeMemoryPlugin = {
       { names: ["memory_store", "memory_search", "memory_get", "memory_feedback", "memory_browse"] },
     );
 
-    // Register system prompt section via the pluggable memory API (PR #40126)
+    // Register system prompt section via the pluggable memory API
     api.registerMemoryPromptSection(({ availableTools }) => {
       const hasStore = availableTools.has("memory_store");
       const hasSearch = availableTools.has("memory_search");
@@ -1259,7 +1258,7 @@ const associativeMemoryPlugin = {
 
     // -- Startup service --
     // Invoked by OpenClaw at gateway boot when this plugin is the explicit
-    // memory slot (upstream openclaw#64423, landed 2026-04-11). The service
+    // memory slot. The service
     // context exposes `config`, `workspaceDir`, `stateDir`, and `logger`.
     //
     // It does NOT currently expose `agentDir`, so auth resolution falls back

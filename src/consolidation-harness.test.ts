@@ -159,7 +159,7 @@ describe("consolidation harness", () => {
 
     it("single memory — decay, stays working", async () => {
       loadFixture([
-        { id: id("fct00001"), content: "Jarin lempiväri on vihreä." },
+        { id: id("fct00001"), content: "Alex's favorite color is green." },
       ]);
 
       const result = await consolidate();
@@ -179,13 +179,13 @@ describe("consolidation harness", () => {
       loadFixture([
         {
           id: id("hlsnki01"),
-          content: "Jari on työmatkalla Helsingissä viikolla 15 huhtikuussa 2026 maanantaista perjantaihin.",
+          content: "Alex is on a business trip in Helsinki during week 15 in April 2026 from Monday to Friday.",
           temporal_state: "future",
           temporal_anchor: "2026-04-13",
         },
         {
           id: id("hlsnki02"),
-          content: "Jari on työmatkalla Helsingissä viikolla 15 huhtikuussa 2026 maanantaista perjantaihin asti.",
+          content: "Alex is on a business trip in Helsinki during week 15 in April 2026 from Monday through Friday.",
           temporal_state: "future",
           temporal_anchor: "2026-04-13",
         },
@@ -208,16 +208,16 @@ describe("consolidation harness", () => {
       loadFixture([
         {
           id: id("hlsnki01"),
-          content: "Jari on työmatkalla Helsingissä viikolla 15 huhtikuussa 2026 maanantaista perjantaihin.",
+          content: "Alex is on a business trip in Helsinki during week 15 in April 2026 from Monday to Friday.",
         },
         {
           id: id("hlsnki02"),
-          content: "Jari on työmatkalla Helsingissä viikolla 15 huhtikuussa 2026 maanantaista perjantaihin asti.",
+          content: "Alex is on a business trip in Helsinki during week 15 in April 2026 from Monday through Friday.",
         },
       ]);
 
       const mockLlmMerge: MergeContentProducer = async (a, b) => ({
-        content: "Jari on työmatkalla Helsingissä viikolla 15 (ma–pe) huhtikuussa 2026.",
+        content: "Alex is on a business trip in Helsinki during week 15 (Mon–Fri) in April 2026.",
         type: "fact",
       });
 
@@ -228,12 +228,12 @@ describe("consolidation harness", () => {
       const mems = getMemories();
       const merged = mems.find((m) => m.source === "consolidation");
       expect(merged).toBeDefined();
-      expect(merged!.content).toContain("työmatkalla Helsingissä");
+      expect(merged!.content).toContain("business trip in Helsinki");
     });
 
     it("LLM merge produces a single coherent sentence, not concatenation", async () => {
-      const contentA = "Jari on työmatkalla Helsingissä viikolla 15 huhtikuussa 2026 maanantaista perjantaihin.";
-      const contentB = "Jari on työmatkalla Helsingissä viikolla 15 huhtikuussa 2026 maanantaista perjantaihin asti.";
+      const contentA = "Alex is on a business trip in Helsinki during week 15 in April 2026 from Monday to Friday.";
+      const contentB = "Alex is on a business trip in Helsinki during week 15 in April 2026 from Monday through Friday.";
 
       loadFixture([
         { id: id("hlsnki01"), content: contentA },
@@ -244,7 +244,7 @@ describe("consolidation harness", () => {
         // Simulate what a good LLM should return: a single coherent sentence,
         // NOT a concatenation of both inputs.
         return {
-          content: "Jari on työmatkalla Helsingissä viikolla 15 (ma–pe) huhtikuussa 2026.",
+          content: "Alex is on a business trip in Helsinki during week 15 (Mon–Fri) in April 2026.",
           type: "fact",
         };
       };
@@ -263,19 +263,19 @@ describe("consolidation harness", () => {
       expect(merged!.content).not.toContain(contentB);
 
       // Should still contain the essential information
-      expect(merged!.content).toContain("Helsingissä");
-      expect(merged!.content).toContain("viikolla 15");
+      expect(merged!.content).toContain("Helsinki");
+      expect(merged!.content).toContain("week 15");
     });
 
     it("no merge without LLM — duplicates survive until LLM is available", async () => {
       loadFixture([
         {
           id: id("hlsnki01"),
-          content: "Jari on työmatkalla Helsingissä viikolla 15 huhtikuussa 2026 maanantaista perjantaihin.",
+          content: "Alex is on a business trip in Helsinki during week 15 in April 2026 from Monday to Friday.",
         },
         {
           id: id("hlsnki02"),
-          content: "Jari on työmatkalla Helsingissä viikolla 15 huhtikuussa 2026 maanantaista perjantaihin asti.",
+          content: "Alex is on a business trip in Helsinki during week 15 in April 2026 from Monday through Friday.",
         },
       ]);
 
@@ -293,8 +293,8 @@ describe("consolidation harness", () => {
   describe("decay and reinforcement", () => {
     it("unretrieved memories decay", async () => {
       loadFixture([
-        { id: id("pgres001"), content: "Jarin suosikkitietokanta on PostgreSQL." },
-        { id: id("tscrpt01"), content: "Jarin suosikkikieli on TypeScript." },
+        { id: id("pgres001"), content: "Alex's favorite database is PostgreSQL." },
+        { id: id("tscrpt01"), content: "Alex's favorite language is TypeScript." },
       ]);
 
       const result = await consolidate();
@@ -309,8 +309,8 @@ describe("consolidation harness", () => {
       // Use sub-1.0 strength so reinforcement can increase it
       loadFixture(
         [
-          { id: id("pgres001"), content: "Jarin suosikkitietokanta on PostgreSQL.", strength: 0.5 },
-          { id: id("tscrpt01"), content: "Jarin suosikkikieli on TypeScript.", strength: 0.5 },
+          { id: id("pgres001"), content: "Alex's favorite database is PostgreSQL.", strength: 0.5 },
+          { id: id("tscrpt01"), content: "Alex's favorite language is TypeScript.", strength: 0.5 },
         ],
         {
           exposures: [
@@ -368,7 +368,7 @@ describe("consolidation harness", () => {
       loadFixture([
         {
           id: id("pastdue1"),
-          content: "Kokous eilen klo 10.",
+          content: "Meeting yesterday at 10am.",
           temporal_state: "future",
           temporal_anchor: "2026-04-01T10:00:00.000Z", // in the past
         },
@@ -387,9 +387,9 @@ describe("consolidation harness", () => {
     it("memories retrieved together get associated", async () => {
       loadFixture(
         [
-          { id: id("color001"), content: "Jarin lempiväri on vihreä." },
-          { id: id("nature01"), content: "Jari asuu metsän keskellä." },
-          { id: id("unrelat1"), content: "PostgreSQL on hyvä tietokanta." },
+          { id: id("color001"), content: "Alex's favorite color is green." },
+          { id: id("nature01"), content: "Alex lives in the middle of the forest." },
+          { id: id("unrelat1"), content: "PostgreSQL is a great database." },
         ],
         {
           exposures: [
@@ -420,39 +420,39 @@ describe("consolidation harness", () => {
         [
           {
             id: id("green001"),
-            content: "Jarin lempiväri on vihreä.",
+            content: "Alex's favorite color is green.",
             type: "fact",
             strength: 0.7,
           },
           {
             id: id("leevi001"),
-            content: "Leevi harrastaa judoa.",
+            content: "Leevi practices judo.",
             type: "fact",
             strength: 0.7,
           },
           {
             id: id("pgres001"),
-            content: "Jarin suosikkitietokanta on PostgreSQL.",
+            content: "Alex's favorite database is PostgreSQL.",
             type: "preference",
             strength: 0.7,
           },
           {
             id: id("hlsnki01"),
-            content: "Jari on Helsingissä viikolla 15.",
+            content: "Alex is in Helsinki during week 15.",
             type: "fact",
             temporal_state: "future",
             temporal_anchor: "2026-04-13",
           },
           {
             id: id("hlsnki02"),
-            content: "Jari on työmatkalla Helsingissä viikolla 15 (13.–18.4.2026).",
+            content: "Alex is on a business trip in Helsinki during week 15 (13–18 Apr 2026).",
             type: "fact",
             temporal_state: "future",
             temporal_anchor: "2026-04-13",
           },
           {
             id: id("fading01"),
-            content: "Vanha muistutus joka ei ole enää relevantti.",
+            content: "Old reminder that is no longer relevant.",
             type: "observation",
             strength: 0.03, // below pruning threshold
           },
