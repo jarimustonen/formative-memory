@@ -152,6 +152,19 @@ That's it. The plugin works out of the box:
 
 No configuration needed — sensible defaults are built in.
 
+> **Security: plugin allowlist.** OpenClaw logs a warning if
+> `plugins.allow` is empty — non-bundled plugins auto-load without
+> validation. To silence it and restrict loading to trusted plugins,
+> add an explicit allowlist in `openclaw.json`:
+>
+> ```json
+> {
+>   "plugins": {
+>     "allow": ["formative-memory"]
+>   }
+> }
+> ```
+
 > **Multi-agent setups:** automatic startup tasks at boot resolve API
 > keys from `<stateDir>/agents/main/agent/auth-profiles.json` because
 > OpenClaw's plugin service context does not yet expose the active
