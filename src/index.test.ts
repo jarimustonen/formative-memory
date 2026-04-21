@@ -153,7 +153,7 @@ function getTools(api: ReturnType<typeof fakeApi>, ctx?: Record<string, unknown>
 describe("plugin registration", () => {
   it("has correct metadata", () => {
     expect(plugin.id).toBe("formative-memory");
-    expect(plugin.kind).toBe("memory");
+    expect(plugin.kind).toEqual(["memory", "context-engine"]);
   });
 
   it("registers gateway:startup hook for cron scheduling", () => {

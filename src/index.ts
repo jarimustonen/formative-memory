@@ -802,7 +802,7 @@ const associativeMemoryPlugin = {
   id: "formative-memory",
   name: "Formative Memory",
   description: "Biologically-inspired associative memory with consolidation and temporal awareness",
-  kind: "memory" as const,
+  kind: ["memory", "context-engine"] as const,
   configSchema: memoryConfigSchema,
 
   register(api: OpenClawPluginApi) {
