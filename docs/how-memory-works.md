@@ -18,7 +18,7 @@ The biological metaphor is useful but has limits. Key differences from human mem
 - **Recall is ranked retrieval**, not spreading activation. The system searches by meaning and keywords, not by walking association graphs.
 - **Associations are recorded but do not drive retrieval** in the current version. They are structural data used during consolidation.
 - **Strengthening is not immediate.** A memory gains strength only during the next consolidation cycle, based on how it was used.
-- **"Sleep" is not autonomous.** Consolidation runs when explicitly triggered, not on a timer.
+- **"Sleep" runs on a schedule.** Consolidation runs automatically via cron (daily at 03:00) and can also be triggered manually with `/memory sleep`.
 
 ## A typical interaction
 
@@ -61,6 +61,7 @@ The agent can also work with memories directly:
 | `memory_search` | Find memories by keyword or meaning |
 | `memory_get` | Retrieve a specific memory by ID |
 | `memory_feedback` | Rate a memory's usefulness (1–5) |
+| `memory_browse` | Browse memories by type, state, or strength |
 
 If the agent has already seen a memory through a tool call, automatic recall skips it. This prevents the same information from appearing twice.
 
@@ -105,7 +106,7 @@ Temporal transitions happen during consolidation, not in real time. This means a
 
 ## Consolidation: maintenance during sleep
 
-Normal operation does not update memory strength, associations, temporal state, or consolidation status. It does write provenance records (exposure and attribution) and append to the retrieval log, but these are observational side effects — they do not change the memories themselves. All memory maintenance happens during **consolidation** — a batch process analogous to biological sleep, triggered explicitly with `/memory sleep`.
+Normal operation does not update memory strength, associations, temporal state, or consolidation status. It does write provenance records (exposure and attribution) and append to the retrieval log, but these are observational side effects — they do not change the memories themselves. All memory maintenance happens during **consolidation** — a batch process analogous to biological sleep. Consolidation runs automatically via cron (daily at 03:00) and can also be triggered manually with `/memory sleep`.
 
 ```mermaid
 flowchart TD
@@ -114,8 +115,7 @@ flowchart TD
     A --> T[Temporal transitions]
     T --> P[Pruning]
     P --> M[Merging]
-    M --> PR[Promotion]
-    PR --> GC[Provenance cleanup]
+    M --> GC[Provenance cleanup]
 ```
 
 What each step does:
@@ -126,8 +126,7 @@ What each step does:
 4. **Temporal transitions** — future memories become present or past based on their anchor dates
 5. **Pruning** — very weak memories and associations are deleted
 6. **Merging** — similar memories are identified and combined. One may absorb the other, or a new merged memory is created. Old identities are preserved as aliases for traceability
-7. **Promotion** — surviving recent memories become established
-8. **Provenance cleanup** — old exposure records are deleted; attribution history is preserved permanently
+7. **Provenance cleanup** — old exposure records are deleted; attribution history is preserved permanently
 
 ### The memory lifecycle
 
@@ -142,7 +141,7 @@ flowchart TD
     M --> N[New memory]
 ```
 
-A new memory starts as **working** — recent and fast-decaying. After surviving a consolidation cycle, it is **promoted** to **consolidated** — established and slow-decaying. Active use reinforces it; neglect lets it fade. If it weakens below the pruning threshold, it is deleted. If it is similar enough to another memory, they may be merged into a new, combined memory.
+A new memory starts as **working** — recent and fast-decaying. After surviving a consolidation cycle, it becomes **consolidated** — established and slow-decaying. Active use reinforces it; neglect lets it fade. If it weakens below the pruning threshold, it is deleted. If it is similar enough to another memory, they may be merged into a new, combined memory.
 
 ## Core principles
 

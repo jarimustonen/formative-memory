@@ -43,10 +43,6 @@ A numerical representation of text as a list of numbers (a vector). Texts with s
 
 The process of adding metadata to raw text segments during import. When migrating from memory-core, the agent analyzes each segment and infers its type (fact, decision, preference, etc.), temporal state, and temporal anchor. This transforms flat markdown content into structured memory units.
 
-## Evergreen
-
-A memory file that does not decay over time. `MEMORY.md` and `memory.md` are evergreen — they contain long-term, curated information. Daily files like `memory/2026-03-15.md` are not evergreen and decay based on age. During import, the system uses this distinction to inform temporal state inference.
-
 ## Idempotent / idempotency
 
 An operation is idempotent if running it multiple times produces the same result as running it once. The memory import is idempotent because each memory's identity is its content hash: importing the same content again produces the same identity, and the system skips it. This makes accidental re-runs safe.
