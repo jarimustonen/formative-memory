@@ -1,7 +1,7 @@
 {
   "id": "formative-memory",
   "name": "Formative Memory",
-  "version": "0.3.0",
+  "version": "0.4.3",
   "kind": ["memory", "context-engine"],
   "description": "Self-optimizing memory that strengthens relevant context through use, builds associations, and consolidates during sleep.",
   "commandAliases": [

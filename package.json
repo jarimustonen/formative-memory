@@ -32,7 +32,8 @@
     "tsgo": "tsc --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "version": "node -e \"const m=require('./openclaw.plugin.json');m.version=require('./package.json').version;require('fs').writeFileSync('openclaw.plugin.json',JSON.stringify(m,null,2)+'\\n')\" && git add openclaw.plugin.json"
   },
   "dependencies": {
     "@sinclair/typebox": "0.34.48",
