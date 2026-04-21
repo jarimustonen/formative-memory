@@ -368,7 +368,7 @@ filtering. Query text is never included in logs by default — set
 
 - [How Formative Memory Works](docs/how-memory-works.md) — conceptual guide
 - [Architecture](docs/architecture.md) — storage, retrieval, provenance, consolidation
-- [Comparison with OpenClaw built-in memory](docs/comparison-openclaw-memory.md) — technical comparison
+- [OpenClaw Memory Systems](docs/openclaw-memory-coexistence.md) — comparison and coexistence with built-in memory
 - [Glossary](docs/glossary.md) — terminology
 
 ## Development

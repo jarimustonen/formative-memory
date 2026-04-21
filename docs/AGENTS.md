@@ -7,11 +7,9 @@ Plugin documentation for the formative-memory OpenClaw plugin.
 | File | Description |
 |---|---|
 | `architecture.md` | System architecture overview |
-| `how-memory-works.md` | How the associative memory system works |
+| `how-memory-works.md` | How the memory system works |
 | `glossary.md` | Terminology reference |
-| `active-memory-coexistence.md` | Coexistence with OpenClaw Active Memory |
-| `openclaw-memory-coexistence.md` | Coexistence with OpenClaw built-in memory |
-| `comparison-openclaw-memory.md` | Comparison with OpenClaw's built-in memory |
+| `openclaw-memory-coexistence.md` | Comparison and coexistence with OpenClaw memory systems |
 
 ## Maintenance
 
