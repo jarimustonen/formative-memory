@@ -24,7 +24,7 @@ import {
   RetrievalModeGuard,
 } from "./types.ts";
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS memories (
@@ -55,9 +55,11 @@ CREATE TABLE IF NOT EXISTS memory_embeddings (
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
-  id,
+  id UNINDEXED,
   content,
-  type
+  type,
+  tokenize='unicode61 remove_diacritics 2',
+  prefix='2,3,4'
 );
 
 CREATE TABLE IF NOT EXISTS state (
@@ -167,12 +169,42 @@ export class MemoryDatabase {
     }
   }
 
-  private migrate(_fromVersion: number): void {
+  private migrate(fromVersion: number): void {
     // v4: drop file_path column (markdown files removed, DB is canonical).
     // Schema-driven: check actual table structure regardless of version metadata.
     const cols = this.db.prepare("PRAGMA table_info(memories)").all() as Array<{ name: string }>;
     if (cols.some((c) => c.name === "file_path")) {
       this.db.exec("ALTER TABLE memories DROP COLUMN file_path");
+    }
+
+    // v5: rebuild FTS table with UNINDEXED id, remove_diacritics, prefix indexes.
+    if (fromVersion < 5) {
+      this.rebuildFts();
+    }
+  }
+
+  /** Drop and recreate the FTS virtual table, reindexing all memories. */
+  private rebuildFts(): void {
+    this.db.exec("DROP TABLE IF EXISTS memory_fts");
+    this.db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
+        id UNINDEXED,
+        content,
+        type,
+        tokenize='unicode61 remove_diacritics 2',
+        prefix='2,3,4'
+      )
+    `);
+    const rows = this.db.prepare("SELECT id, content, type FROM memories").all() as Array<{
+      id: string;
+      content: string;
+      type: string;
+    }>;
+    if (rows.length > 0) {
+      const stmt = this.db.prepare("INSERT INTO memory_fts (id, content, type) VALUES (?, ?, ?)");
+      for (const row of rows) {
+        stmt.run(row.id, row.content, row.type);
+      }
     }
   }
 
