@@ -65,7 +65,10 @@ export const memoryConfigSchema = {
       }
       const consolidation = cfg.consolidation as Record<string, unknown>;
       assertAllowedKeys(consolidation, ["notification"], "consolidation config");
-      if (typeof consolidation.notification === "string") {
+      if (consolidation.notification != null) {
+        if (typeof consolidation.notification !== "string") {
+          throw new Error("consolidation.notification must be a string");
+        }
         if (!NOTIFICATION_LEVELS.includes(consolidation.notification as NotificationLevel)) {
           throw new Error(`consolidation.notification must be one of: ${NOTIFICATION_LEVELS.join(", ")}`);
         }
@@ -80,7 +83,10 @@ export const memoryConfigSchema = {
       }
       const temporal = cfg.temporal as Record<string, unknown>;
       assertAllowedKeys(temporal, ["notification"], "temporal config");
-      if (typeof temporal.notification === "string") {
+      if (temporal.notification != null) {
+        if (typeof temporal.notification !== "string") {
+          throw new Error("temporal.notification must be a string");
+        }
         if (!NOTIFICATION_LEVELS.includes(temporal.notification as NotificationLevel)) {
           throw new Error(`temporal.notification must be one of: ${NOTIFICATION_LEVELS.join(", ")}`);
         }
