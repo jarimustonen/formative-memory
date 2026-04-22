@@ -155,18 +155,40 @@ export class MemoryManager {
       }
     }
 
-    // BM25 search via FTS5 — joined query returns memory data + rank in one pass
-    const ftsResults = this.db.searchFtsJoined(escapeFtsQuery(query), limit * 4);
+    // BM25 search via FTS5 — multi-pass waterfall: phrase → AND → OR
+    // Each pass fills candidates up to the pool limit, deduplicating across passes.
+    const poolLimit = queryEmbedding ? limit * 4 : limit * 8;
     const bm25Scores = new Map<string, number>();
-    const ftsRowMap = new Map<string, typeof ftsResults[number]>();
-    for (const row of ftsResults) {
-      // Absolute BM25 normalization: maps (-∞, 0] → [0, 1) without batch
-      // dependence. Unlike min-max normalization, a single result doesn't
-      // automatically get score 1.0, and the worst of a strong batch doesn't
-      // get forced to 0.0.
-      const absRank = Math.max(0, -row.rank);
-      bm25Scores.set(row.id, absRank / (1 + absRank));
-      ftsRowMap.set(row.id, row);
+    const ftsRowMap = new Map<string, MemoryRow & { rank: number }>();
+    const ftsQueries = buildFtsQueries(query);
+    const queryTerms = cleanQueryText(query);
+
+    for (const ftsQuery of ftsQueries) {
+      if (ftsRowMap.size >= poolLimit) break;
+      try {
+        const passResults = this.db.searchFtsJoined(ftsQuery, poolLimit);
+        for (const row of passResults) {
+          if (ftsRowMap.has(row.id)) continue; // already found in a stricter pass
+          // Absolute BM25 normalization: maps (-∞, 0] → [0, 1) without batch
+          // dependence. Unlike min-max normalization, a single result doesn't
+          // automatically get score 1.0, and the worst of a strong batch doesn't
+          // get forced to 0.0.
+          const absRank = Math.max(0, -row.rank);
+          let score = absRank / (1 + absRank);
+
+          // In BM25-only mode, apply query term coverage penalty for OR-pass
+          // results that match few query terms.
+          if (!queryEmbedding && queryTerms.length > 1) {
+            const coverage = queryTermCoverage(queryTerms, row.content);
+            score *= Math.pow(coverage, 2);
+          }
+
+          bm25Scores.set(row.id, score);
+          ftsRowMap.set(row.id, row);
+        }
+      } catch {
+        // FTS query syntax error (e.g. empty query) — skip this pass
+      }
     }
 
     // Combine: α * embedding + (1-α) * BM25, weighted by strength
@@ -405,13 +427,61 @@ function cosineSimilarity(a: number[], b: number[]): number {
   return Number.isFinite(result) ? result : 0;
 }
 
-function escapeFtsQuery(query: string): string {
-  // FTS5 query: quote each term to avoid syntax errors
+/**
+ * Strip punctuation and normalize query text for FTS5.
+ * Keeps alphanumeric characters and whitespace only.
+ */
+function cleanQueryText(query: string): string[] {
   return query
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
     .split(/\s+/)
-    .filter(Boolean)
-    .map((term) => `"${term.replace(/"/g, '""')}"`)
-    .join(" ");
+    .filter(Boolean);
+}
+
+/**
+ * Quote a single term for FTS5, escaping internal double-quotes.
+ */
+function quoteTerm(term: string): string {
+  return `"${term.replace(/"/g, '""')}"`;
+}
+
+/**
+ * Build FTS5 query expressions for multi-pass waterfall retrieval.
+ *
+ * Returns up to 3 queries in decreasing strictness:
+ * 1. Exact phrase (all terms adjacent in order)
+ * 2. AND (all terms required, any position)
+ * 3. OR (any term matches)
+ *
+ * For single-term queries, returns just one query.
+ */
+export function buildFtsQueries(query: string): string[] {
+  const terms = cleanQueryText(query);
+  if (terms.length === 0) return [];
+  if (terms.length === 1) return [quoteTerm(terms[0])];
+
+  const quoted = terms.map(quoteTerm);
+  return [
+    // Pass 1: exact phrase
+    `"${terms.join(" ")}"`,
+    // Pass 2: AND — all terms required
+    quoted.join(" AND "),
+    // Pass 3: OR — any term matches
+    quoted.join(" OR "),
+  ];
+}
+
+/**
+ * Count how many query terms appear in the content text.
+ * Used for query term coverage ranking in OR-pass results.
+ */
+function queryTermCoverage(terms: string[], content: string): number {
+  const lower = content.toLowerCase();
+  let matched = 0;
+  for (const term of terms) {
+    if (lower.includes(term.toLowerCase())) matched++;
+  }
+  return terms.length > 0 ? matched / terms.length : 0;
 }
 
 /**
