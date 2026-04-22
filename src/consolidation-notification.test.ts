@@ -55,13 +55,8 @@ describe("buildSummaryPrompt", () => {
     expect(prompt).toContain("Duplicate memories merged: 2");
   });
 
-  it("includes language instruction when provided", () => {
-    const prompt = buildSummaryPrompt(baseResult.summary, "suomi");
-    expect(prompt).toContain("Write the response in suomi");
-  });
-
   it("includes persona hint when provided", () => {
-    const prompt = buildSummaryPrompt(baseResult.summary, undefined, "a playful cat named Kisu");
+    const prompt = buildSummaryPrompt(baseResult.summary, "a playful cat named Kisu");
     expect(prompt).toContain("a playful cat named Kisu");
     expect(prompt).toContain("Match this voice");
   });
@@ -139,24 +134,6 @@ describe("formatConsolidationNotification", () => {
     expect(result).toBe("Memory maintenance complete.");
   });
 
-  it("passes language and persona to LLM prompt", async () => {
-    const mockCallLlm = vi.fn().mockResolvedValue("Järjestin muistojani.");
-    vi.spyOn(await import("./llm-caller.ts"), "callLlm").mockImplementation(mockCallLlm);
-
-    await formatConsolidationNotification(baseResult, {
-      level: "summary",
-      llmConfig: { provider: "anthropic", apiKey: "test-key" },
-      language: "suomi",
-      personaHint: "friendly assistant named Kisu",
-    });
-
-    const prompt = mockCallLlm.mock.calls[0][0] as string;
-    expect(prompt).toContain("suomi");
-    expect(prompt).toContain("Kisu");
-
-    vi.restoreAllMocks();
-  });
-
   it("uses short timeout and token limit for LLM call", async () => {
     const mockCallLlm = vi.fn().mockResolvedValue("Done.");
     vi.spyOn(await import("./llm-caller.ts"), "callLlm").mockImplementation(mockCallLlm);
@@ -188,11 +165,6 @@ describe("buildTemporalSummaryPrompt", () => {
   it("includes count info", () => {
     const prompt = buildTemporalSummaryPrompt(5);
     expect(prompt).toContain("5 memories");
-  });
-
-  it("includes language instruction", () => {
-    const prompt = buildTemporalSummaryPrompt(2, "suomi");
-    expect(prompt).toContain("Write the response in suomi");
   });
 
   it("mentions nothing needed when count is zero", () => {

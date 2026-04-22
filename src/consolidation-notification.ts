@@ -16,8 +16,6 @@ export type NotificationContext = {
   level: ConsolidationNotificationLevel;
   /** LLM config for summary generation. Null = no LLM available. */
   llmConfig: LlmCallerConfig | null;
-  /** User's preferred language (e.g. "suomi", "Finnish"). */
-  language?: string;
   /** Bot persona hint for the LLM summary (e.g. "friendly assistant named Kisu"). */
   personaHint?: string;
   logger?: Logger;
@@ -42,7 +40,7 @@ export function formatDetailedReport(result: ConsolidationResult): string {
 /**
  * Build the LLM prompt for generating a natural-language summary.
  */
-export function buildSummaryPrompt(summary: ConsolidationSummary, language?: string, personaHint?: string): string {
+export function buildSummaryPrompt(summary: ConsolidationSummary, personaHint?: string): string {
   const parts: string[] = [];
 
   parts.push("You are generating a short notification about a memory maintenance cycle that just completed.");
@@ -53,10 +51,6 @@ export function buildSummaryPrompt(summary: ConsolidationSummary, language?: str
 
   if (personaHint) {
     parts.push(`\nPersona: ${personaHint}. Match this voice and style.`);
-  }
-
-  if (language) {
-    parts.push(`\nIMPORTANT: Write the response in ${language}.`);
   }
 
   parts.push("\nRaw consolidation data:");
@@ -88,7 +82,7 @@ export function formatTemporalDetailedReport(count: number): string {
 /**
  * Build the LLM prompt for a temporal transition summary.
  */
-export function buildTemporalSummaryPrompt(count: number, language?: string, personaHint?: string): string {
+export function buildTemporalSummaryPrompt(count: number, personaHint?: string): string {
   const parts: string[] = [];
 
   parts.push("You are generating a short notification about a scheduled temporal memory review.");
@@ -98,10 +92,6 @@ export function buildTemporalSummaryPrompt(count: number, language?: string, per
 
   if (personaHint) {
     parts.push(`\nPersona: ${personaHint}. Match this voice and style.`);
-  }
-
-  if (language) {
-    parts.push(`\nIMPORTANT: Write the response in ${language}.`);
   }
 
   if (count > 0) {
@@ -146,7 +136,7 @@ export async function formatTemporalNotification(
   }
 
   try {
-    const prompt = buildTemporalSummaryPrompt(count, ctx.language, ctx.personaHint);
+    const prompt = buildTemporalSummaryPrompt(count, ctx.personaHint);
     const text = await callLlm(prompt, { ...ctx.llmConfig, maxTokens: 256, timeoutMs: 15_000 });
     return text.trim();
   } catch (err) {
@@ -187,7 +177,7 @@ export async function formatConsolidationNotification(
   }
 
   try {
-    const prompt = buildSummaryPrompt(result.summary, ctx.language, ctx.personaHint);
+    const prompt = buildSummaryPrompt(result.summary, ctx.personaHint);
     const text = await callLlm(prompt, { ...ctx.llmConfig, maxTokens: 256, timeoutMs: 15_000 });
     return text.trim();
   } catch (err) {
