@@ -197,15 +197,32 @@ export class MemoryManager {
     const allIds = new Set([...embeddingScores.keys(), ...bm25Scores.keys()]);
     const scored: Array<{ id: string; score: number }> = [];
 
+    const now = Date.now();
     for (const id of allIds) {
       const embScore = embeddingScores.get(id) ?? 0;
       const bm25Score = bm25Scores.get(id) ?? 0;
-      const hybridScore = ALPHA * embScore + (1 - ALPHA) * bm25Score;
+      let hybridScore = ALPHA * embScore + (1 - ALPHA) * bm25Score;
 
       // Strength comes from the FTS JOIN row or, for embedding-only hits, a targeted lookup
       const ftsRow = ftsRowMap.get(id);
       const strength = ftsRow?.strength ?? this.db.getMemory(id)?.strength;
       if (strength == null) continue;
+
+      // Recency boost: gentle exponential decay, BM25-only mode only.
+      // In hybrid mode, embeddings already capture contextual relevance.
+      // Half-life ~125 days (decay constant 180).
+      if (!queryEmbedding && ftsRow) {
+        const ageDays = Math.max(0, (now - new Date(ftsRow.created_at).getTime()) / 86_400_000);
+        hybridScore *= Math.exp(-ageDays / 180);
+      }
+
+      // TODO: Association-based boosting — boost candidates that have associations
+      // with recently-exposed memories. Deferred to a separate branch.
+
+      // TODO: Provenance-based ranking signals — boost memories with high historical
+      // attribution confidence for similar queries. Carries significant self-reinforcement
+      // risk (popular memories become permanently over-retrievable). Consider carefully.
+
       const finalScore = hybridScore * strength;
       scored.push({ id, score: finalScore });
     }
