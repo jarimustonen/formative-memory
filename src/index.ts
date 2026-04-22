@@ -720,13 +720,14 @@ const associativeMemoryPlugin = {
 
     // Startup tasks (migration, cleanup) are decoupled from workspace creation.
     // Only triggered by the first tool call which has full runtime context.
-    // Flag is set after successful scheduling to allow retry on sync failure.
+    // Latch is set synchronously before the first await to prevent concurrent
+    // scheduling from parallel tool calls or service start racing with tools.
     const triggerStartupTasks = async (workspaceDir: string): Promise<void> => {
       if (startupTasksTriggered) return;
+      startupTasksTriggered = true;
       const ws = getWorkspace(workspaceDir);
       const llmConfig = await resolveLlmConfig(openclawConfig, getAgentDir());
       runStartupTasks(ws, config, workspaceDir, getAgentDir, log, { stateDir: runtimePaths.stateDir, llmConfig });
-      startupTasksTriggered = true;
     };
 
     api.registerTool(
