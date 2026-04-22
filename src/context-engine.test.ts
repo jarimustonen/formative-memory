@@ -1704,6 +1704,49 @@ describe("assemble temporal injection", () => {
     expect(addition).not.toContain("Event in a month");
   });
 
+  it("deduplicates temporal memories already exposed via tools (ledger)", async () => {
+    const futureDate = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
+    const memId = "ledger-temporal-dedup-padded-to-64-chars-00000000000000000000000";
+    db.insertMemory({
+      id: memId,
+      type: "event",
+      content: "Meeting with dentist",
+      temporal_state: "future",
+      temporal_anchor: futureDate.toISOString(),
+      created_at: new Date().toISOString(),
+      strength: 1.0,
+      source: "agent_tool",
+      consolidated: false,
+    });
+
+    const ledger = new TurnMemoryLedger();
+    const mockManager = {
+      recall: vi.fn(async () => []),
+      search: vi.fn(async () => []),
+      getDatabase: () => db,
+    } as unknown as MemoryManager;
+
+    const engine = createAssociativeMemoryContextEngine({
+      getManager: () => mockManager,
+      isBm25Only: () => false,
+      ledger,
+      getDb: () => db,
+      getLogPath: () => join(tmpDir, "retrieval.log"),
+    });
+
+    // Simulate: user already retrieved this memory via memory_get
+    ledger.addExplicitlyOpened(memId);
+
+    const result = await engine.assemble({
+      messages: [{ role: "user", content: "What events are coming up?" }],
+      prompt: "test",
+      tokenBudget: 10000,
+    });
+
+    const addition = result.systemPromptAddition ?? "";
+    expect(addition).not.toContain("Meeting with dentist");
+  });
+
   it("deduplicates temporal memories already in semantic results", async () => {
     const futureDate = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
     const memId = "dedup-temporal-test-padded-to-64-chars-0000000000000000000000000";

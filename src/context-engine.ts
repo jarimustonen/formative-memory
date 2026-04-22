@@ -448,9 +448,12 @@ export function createAssociativeMemoryContextEngine(
           const db = options.getDb();
           const upcomingRows = db.getUpcomingMemories(todayStart, horizon.toISOString());
 
-          // Exclude memories already in semantic results to avoid duplication
+          // Exclude memories already in semantic results or exposed via tools
           const recalledIds = new Set(results.map((r) => r.memory.id));
-          const filtered = upcomingRows.filter((row) => !recalledIds.has(row.id));
+          const filtered = upcomingRows.filter((row) =>
+            !recalledIds.has(row.id) &&
+            !(options.ledger?.isExposedViaTools(row.id) ?? false),
+          );
 
           if (filtered.length > 0) {
             // Track in ledger
