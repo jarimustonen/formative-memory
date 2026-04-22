@@ -757,7 +757,7 @@ Rules:
 - Return ONLY the JSON array, nothing else.
 
 Example output:
-[{"reasoning": "Taste preference that persists across contexts", "durable_beyond_current_task": true, "type": "preference", "content": "User dislikes cilantro"}, {"reasoning": "Life event with a specific future date", "durable_beyond_current_task": true, "type": "event", "content": "User is moving to Berlin in May 2026"}, {"reasoning": "Family detail worth remembering across conversations", "durable_beyond_current_task": true, "type": "person", "content": "User has a daughter named Lyra who is 4 years old"}]
+[{"reasoning": "Taste preference that persists across contexts", "durable_beyond_current_task": true, "type": "preference", "content": "User dislikes cilantro"}, {"reasoning": "Life event with a specific future date", "durable_beyond_current_task": true, "type": "event", "content": "User is moving to Berlin in May 2026"}, {"reasoning": "Only relevant to the current debugging session", "durable_beyond_current_task": false, "type": "work", "content": "Currently debugging the auth middleware"}]
 
 Conversation:
 ${turnContent}`;
@@ -803,17 +803,23 @@ export function parseExtractionResponse(response: string): ExtractedFact[] {
     if (typeof obj.type !== "string" || typeof obj.content !== "string") continue;
     if (!obj.content.trim()) continue;
 
+    // Normalize durable_beyond_current_task: accept boolean or string "true"/"false".
+    const rawDurable = obj.durable_beyond_current_task;
+    const durable = rawDurable === true || rawDurable === "true" ? true
+      : rawDurable === false || rawDurable === "false" ? false
+      : undefined;
+
     // Filter out facts explicitly marked as not durable.
-    // If the field is missing, keep the fact (safe default for backward compatibility).
-    if (obj.durable_beyond_current_task === false) continue;
+    // If the field is missing or not a recognized value, keep the fact (safe default).
+    if (durable === false) continue;
 
     const type = VALID_FACT_TYPES.has(obj.type) ? obj.type : "fact";
     const fact: ExtractedFact = { type, content: obj.content.trim() };
     if (typeof obj.reasoning === "string" && obj.reasoning.trim()) {
       fact.reasoning = obj.reasoning.trim();
     }
-    if (typeof obj.durable_beyond_current_task === "boolean") {
-      fact.durable_beyond_current_task = obj.durable_beyond_current_task;
+    if (durable !== undefined) {
+      fact.durable_beyond_current_task = durable;
     }
     facts.push(fact);
   }
@@ -836,12 +842,13 @@ async function extractAndStoreMemories(
     const facts = parseExtractionResponse(response);
 
     if (facts.length === 0) {
-      logger?.debug?.("auto-capture: LLM extracted 0 facts");
+      logger?.debug?.("auto-capture: LLM extracted 0 durable facts");
       return;
     }
 
     for (const fact of facts) {
       try {
+        logger?.debug?.(`auto-capture: storing [${fact.type}] "${fact.content.slice(0, 80)}"${fact.reasoning ? ` (reason: ${fact.reasoning.slice(0, 80)})` : ""}`);
         await manager.store({
           content: fact.content,
           type: fact.type,

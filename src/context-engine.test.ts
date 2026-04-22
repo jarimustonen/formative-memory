@@ -1990,6 +1990,31 @@ describe("parseExtractionResponse", () => {
     const facts = parseExtractionResponse(response);
     expect(facts).toHaveLength(0);
   });
+
+  it("normalizes string 'false' to boolean false and filters", () => {
+    const response = JSON.stringify([
+      { durable_beyond_current_task: "false", type: "work", content: "Debugging auth" },
+      { durable_beyond_current_task: "true", type: "fact", content: "User lives in Helsinki" },
+    ]);
+    const facts = parseExtractionResponse(response);
+    expect(facts).toHaveLength(1);
+    expect(facts[0].content).toBe("User lives in Helsinki");
+    expect(facts[0].durable_beyond_current_task).toBe(true);
+  });
+
+  it("treats non-boolean non-string durable_beyond_current_task as missing", () => {
+    const response = JSON.stringify([
+      { durable_beyond_current_task: 0, type: "fact", content: "Zero value" },
+      { durable_beyond_current_task: 1, type: "fact", content: "One value" },
+      { durable_beyond_current_task: null, type: "fact", content: "Null value" },
+    ]);
+    const facts = parseExtractionResponse(response);
+    expect(facts).toHaveLength(3);
+    // None of these are recognized as true/false, so durable field is undefined
+    expect(facts[0].durable_beyond_current_task).toBeUndefined();
+    expect(facts[1].durable_beyond_current_task).toBeUndefined();
+    expect(facts[2].durable_beyond_current_task).toBeUndefined();
+  });
 });
 
 // -- buildExtractionPrompt --
