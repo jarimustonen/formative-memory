@@ -587,6 +587,24 @@ export class MemoryDatabase {
       .all(query, limit) as Array<{ id: string; rank: number }>;
   }
 
+  /**
+   * FTS search with JOIN to memories table. Returns ranking inputs and full
+   * memory data in a single query, eliminating separate getStrengthMap() and
+   * getMemory() lookups.
+   */
+  searchFtsJoined(query: string, limit = 20): Array<MemoryRow & { rank: number }> {
+    return this.db
+      .prepare(
+        `SELECT m.*, bm25(memory_fts, 0.0, 1.0, 0.5) as rank
+         FROM memory_fts f
+         JOIN memories m ON f.id = m.id
+         WHERE memory_fts MATCH ?
+         ORDER BY rank
+         LIMIT ?`,
+      )
+      .all(query, limit) as Array<MemoryRow & { rank: number }>;
+  }
+
   // -- Associations --
 
   getAssociations(memoryId: string): Association[] {

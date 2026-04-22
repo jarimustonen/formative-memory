@@ -155,16 +155,18 @@ export class MemoryManager {
       }
     }
 
-    // BM25 search via FTS5
-    const ftsResults = this.db.searchFts(escapeFtsQuery(query), limit * 4);
+    // BM25 search via FTS5 — joined query returns memory data + rank in one pass
+    const ftsResults = this.db.searchFtsJoined(escapeFtsQuery(query), limit * 4);
     const bm25Scores = new Map<string, number>();
+    const ftsRowMap = new Map<string, typeof ftsResults[number]>();
     if (ftsResults.length > 0) {
       // Normalize BM25 ranks (they're negative; closer to 0 = better)
       const maxRank = Math.max(...ftsResults.map((r) => r.rank));
       const minRank = Math.min(...ftsResults.map((r) => r.rank));
       const range = maxRank - minRank || 1;
-      for (const { id, rank } of ftsResults) {
-        bm25Scores.set(id, 1 - (rank - minRank) / range);
+      for (const row of ftsResults) {
+        bm25Scores.set(row.id, 1 - (row.rank - minRank) / range);
+        ftsRowMap.set(row.id, row);
       }
     }
 
@@ -172,7 +174,6 @@ export class MemoryManager {
     // When embedding unavailable, effectively BM25-only (embScore = 0 for all)
     const ALPHA = queryEmbedding ? 0.6 : 0;
     const allIds = new Set([...embeddingScores.keys(), ...bm25Scores.keys()]);
-    const strengthMap = this.db.getStrengthMap(); // Single bulk query
     const scored: Array<{ id: string; score: number }> = [];
 
     for (const id of allIds) {
@@ -180,7 +181,9 @@ export class MemoryManager {
       const bm25Score = bm25Scores.get(id) ?? 0;
       const hybridScore = ALPHA * embScore + (1 - ALPHA) * bm25Score;
 
-      const strength = strengthMap.get(id);
+      // Strength comes from the FTS JOIN row or, for embedding-only hits, a targeted lookup
+      const ftsRow = ftsRowMap.get(id);
+      const strength = ftsRow?.strength ?? this.db.getMemory(id)?.strength;
       if (strength == null) continue;
       const finalScore = hybridScore * strength;
       scored.push({ id, score: finalScore });
@@ -195,10 +198,11 @@ export class MemoryManager {
       topIds.map((r) => r.id),
     );
 
-    // Build results with content
+    // Build results — use FTS JOIN rows directly where available, avoiding N+1 lookups
     const results: SearchResult[] = [];
     for (const { id, score } of topIds) {
-      const memory = this.getMemory(id);
+      const ftsRow = ftsRowMap.get(id);
+      const memory = ftsRow ? this.rowToMemory(ftsRow) : this.getMemory(id);
       if (memory) {
         results.push({ memory, score });
       }
