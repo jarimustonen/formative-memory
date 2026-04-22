@@ -82,6 +82,14 @@ describe("formatConsolidationNotification", () => {
     expect(result).toBeNull();
   });
 
+  it("returns null when level is errors (success path)", async () => {
+    const result = await formatConsolidationNotification(baseResult, {
+      level: "errors",
+      llmConfig: null,
+    });
+    expect(result).toBeNull();
+  });
+
   it("returns detailed report when level is detailed", async () => {
     const result = await formatConsolidationNotification(baseResult, {
       level: "detailed",
@@ -93,10 +101,6 @@ describe("formatConsolidationNotification", () => {
 
   it("calls LLM and returns summary when level is summary", async () => {
     const mockCallLlm = vi.fn().mockResolvedValue("I tidied up my memories while you were away.");
-
-    // Mock the module
-    const mod = await import("./consolidation-notification.ts");
-    const { callLlm } = await import("./llm-caller.ts");
     vi.spyOn(await import("./llm-caller.ts"), "callLlm").mockImplementation(mockCallLlm);
 
     const result = await formatConsolidationNotification(baseResult, {
@@ -176,6 +180,11 @@ describe("buildTemporalSummaryPrompt", () => {
 describe("formatTemporalNotification", () => {
   it("returns null when level is off", async () => {
     const result = await formatTemporalNotification(3, { level: "off", llmConfig: null });
+    expect(result).toBeNull();
+  });
+
+  it("returns null when level is errors (success path)", async () => {
+    const result = await formatTemporalNotification(3, { level: "errors", llmConfig: null });
     expect(result).toBeNull();
   });
 
