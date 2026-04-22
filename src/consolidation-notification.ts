@@ -2,10 +2,11 @@
  * Consolidation notification formatting.
  *
  * Routes consolidation results to the appropriate notification format
- * based on the configured level: off, summary (LLM-generated), or detailed.
+ * based on the configured level: off, errors (silent unless failure),
+ * summary (LLM-generated), or detailed.
  */
 
-import type { ConsolidationNotificationLevel } from "./config.ts";
+import type { NotificationLevel } from "./config.ts";
 import type { ConsolidationResult, ConsolidationSummary } from "./consolidation.ts";
 import { callLlm, type LlmCallerConfig } from "./llm-caller.ts";
 import type { Logger } from "./logger.ts";
@@ -13,7 +14,7 @@ import { nullLogger } from "./logger.ts";
 
 export type NotificationContext = {
   /** Notification level from config. */
-  level: ConsolidationNotificationLevel;
+  level: NotificationLevel;
   /** LLM config for summary generation. Null = no LLM available. */
   llmConfig: LlmCallerConfig | null;
   /** Bot persona hint for the LLM summary (e.g. "friendly assistant named Kisu"). */
@@ -108,7 +109,9 @@ export function buildTemporalSummaryPrompt(count: number, personaHint?: string):
 /**
  * Generate a notification for temporal transitions.
  *
- * Returns the notification text, or null if level is "off".
+ * Returns the notification text, or null if level is "off" or "errors".
+ * The "errors" level suppresses success notifications — actual errors are
+ * handled by the caller's catch block, not by this function.
  */
 export async function formatTemporalNotification(
   count: number,
@@ -116,7 +119,7 @@ export async function formatTemporalNotification(
 ): Promise<string | null> {
   const log = ctx.logger ?? nullLogger;
 
-  if (ctx.level === "off") {
+  if (ctx.level === "off" || ctx.level === "errors") {
     return null;
   }
 
@@ -153,7 +156,9 @@ const FALLBACK_MESSAGE = "Memory maintenance complete.";
 /**
  * Generate a notification for a consolidation result.
  *
- * Returns the notification text, or null if level is "off".
+ * Returns the notification text, or null if level is "off" or "errors".
+ * The "errors" level suppresses success notifications — actual errors are
+ * handled by the caller's catch block, not by this function.
  * Never throws — LLM failures degrade gracefully to a short fallback.
  */
 export async function formatConsolidationNotification(
@@ -162,7 +167,7 @@ export async function formatConsolidationNotification(
 ): Promise<string | null> {
   const log = ctx.logger ?? nullLogger;
 
-  if (ctx.level === "off") {
+  if (ctx.level === "off" || ctx.level === "errors") {
     return null;
   }
 

@@ -1,4 +1,5 @@
-export type ConsolidationNotificationLevel = "off" | "summary" | "detailed";
+export const NOTIFICATION_LEVELS = ["off", "errors", "summary", "detailed"] as const;
+export type NotificationLevel = (typeof NOTIFICATION_LEVELS)[number];
 
 export type AssociativeMemoryConfig = {
   embedding: {
@@ -8,12 +9,12 @@ export type AssociativeMemoryConfig = {
     model?: string;
   };
   consolidation: {
-    /** Notification level after consolidation runs. Default: "off". */
-    notification: ConsolidationNotificationLevel;
+    /** Notification level after consolidation runs. Default: "errors". */
+    notification: NotificationLevel;
   };
   temporal: {
-    /** Notification level after temporal transitions run. Default: "off". */
-    notification: ConsolidationNotificationLevel;
+    /** Notification level after temporal transitions run. Default: "errors". */
+    notification: NotificationLevel;
   };
   dbPath: string;
   autoCapture: boolean;
@@ -57,7 +58,7 @@ export const memoryConfigSchema = {
       }
     }
 
-    let consolidationNotification: ConsolidationNotificationLevel = "off";
+    let consolidationNotification: NotificationLevel = "errors";
     if (cfg.consolidation != null) {
       if (typeof cfg.consolidation !== "object" || Array.isArray(cfg.consolidation)) {
         throw new Error("consolidation must be an object");
@@ -65,15 +66,14 @@ export const memoryConfigSchema = {
       const consolidation = cfg.consolidation as Record<string, unknown>;
       assertAllowedKeys(consolidation, ["notification"], "consolidation config");
       if (typeof consolidation.notification === "string") {
-        const valid: ConsolidationNotificationLevel[] = ["off", "summary", "detailed"];
-        if (!valid.includes(consolidation.notification as ConsolidationNotificationLevel)) {
-          throw new Error(`consolidation.notification must be one of: ${valid.join(", ")}`);
+        if (!NOTIFICATION_LEVELS.includes(consolidation.notification as NotificationLevel)) {
+          throw new Error(`consolidation.notification must be one of: ${NOTIFICATION_LEVELS.join(", ")}`);
         }
-        consolidationNotification = consolidation.notification as ConsolidationNotificationLevel;
+        consolidationNotification = consolidation.notification as NotificationLevel;
       }
     }
 
-    let temporalNotification: ConsolidationNotificationLevel = "off";
+    let temporalNotification: NotificationLevel = "errors";
     if (cfg.temporal != null) {
       if (typeof cfg.temporal !== "object" || Array.isArray(cfg.temporal)) {
         throw new Error("temporal must be an object");
@@ -81,11 +81,10 @@ export const memoryConfigSchema = {
       const temporal = cfg.temporal as Record<string, unknown>;
       assertAllowedKeys(temporal, ["notification"], "temporal config");
       if (typeof temporal.notification === "string") {
-        const valid: ConsolidationNotificationLevel[] = ["off", "summary", "detailed"];
-        if (!valid.includes(temporal.notification as ConsolidationNotificationLevel)) {
-          throw new Error(`temporal.notification must be one of: ${valid.join(", ")}`);
+        if (!NOTIFICATION_LEVELS.includes(temporal.notification as NotificationLevel)) {
+          throw new Error(`temporal.notification must be one of: ${NOTIFICATION_LEVELS.join(", ")}`);
         }
-        temporalNotification = temporal.notification as ConsolidationNotificationLevel;
+        temporalNotification = temporal.notification as NotificationLevel;
       }
     }
 
