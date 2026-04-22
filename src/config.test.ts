@@ -87,6 +87,38 @@ describe("memoryConfigSchema.parse", () => {
     expect(config.embedding.model).toBeUndefined();
   });
 
+  it("defaults notification levels to errors", () => {
+    const config = memoryConfigSchema.parse({});
+    expect(config.consolidation.notification).toBe("errors");
+    expect(config.temporal.notification).toBe("errors");
+  });
+
+  it("accepts all notification levels", () => {
+    for (const level of ["off", "errors", "summary", "detailed"]) {
+      const config = memoryConfigSchema.parse({
+        consolidation: { notification: level },
+        temporal: { notification: level },
+      });
+      expect(config.consolidation.notification).toBe(level);
+      expect(config.temporal.notification).toBe(level);
+    }
+  });
+
+  it("rejects invalid notification level string", () => {
+    expect(() =>
+      memoryConfigSchema.parse({ consolidation: { notification: "warn" } }),
+    ).toThrow("consolidation.notification must be one of");
+  });
+
+  it("rejects non-string notification value", () => {
+    expect(() =>
+      memoryConfigSchema.parse({ consolidation: { notification: false } }),
+    ).toThrow("consolidation.notification must be a string");
+    expect(() =>
+      memoryConfigSchema.parse({ temporal: { notification: 1 } }),
+    ).toThrow("temporal.notification must be a string");
+  });
+
   it("rejects non-object root", () => {
     expect(() => memoryConfigSchema.parse(null)).toThrow("memory config required");
     expect(() => memoryConfigSchema.parse("string")).toThrow("memory config required");
