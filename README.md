@@ -237,6 +237,12 @@ your configured API keys. When `requireEmbedding` is `true` (the
 default), the plugin will not start without a working embedding provider.
 Set it to `false` to allow graceful degradation to keyword-only search.
 
+> **We strongly recommend configuring an OpenAI or Google API key for
+> embeddings.** Without embeddings, memory search operates in keyword-only
+> (BM25) mode which cannot match paraphrases, synonyms, or typos. For
+> example, searching for "shipping date" will not find a memory about
+> "release deadline". Embeddings dramatically improve recall quality.
+
 ### API Keys
 
 API keys are read from OpenClaw's `auth-profiles.json`. Environment

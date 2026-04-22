@@ -406,6 +406,12 @@ function createWorkspace(
   // resolution. Skip if agentDir is missing — will resolve on first use.
   if (config.requireEmbedding && getAgentDir()) {
     getProvider().catch(() => {});
+  } else if (!config.requireEmbedding) {
+    logger?.warn(
+      "Embedding provider not required — memory search will operate in keyword-only (BM25) mode. " +
+      "We strongly recommend configuring an OpenAI or Google API key for embedding support. " +
+      "Without embeddings, search cannot match paraphrases, synonyms, or typos.",
+    );
   }
 
   return ws;
