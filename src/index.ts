@@ -980,7 +980,6 @@ const associativeMemoryPlugin = {
           const notification = await formatConsolidationNotification(result, {
             level: config.consolidation.notification,
             llmConfig,
-            language: detectUserLanguage("."),
             logger: log,
           });
 
@@ -1192,7 +1191,6 @@ const associativeMemoryPlugin = {
           const notification = await formatTemporalNotification(count, {
             level: config.temporal.notification,
             llmConfig,
-            language: detectUserLanguage(workspaceDir),
             logger: log,
           });
 
@@ -1203,7 +1201,10 @@ const associativeMemoryPlugin = {
           };
         } catch (err) {
           log.warn(`Scheduled temporal transitions failed: ${err instanceof Error ? err.message : String(err)}`);
-          return { handled: true, reply: { text: "Temporal transitions failed." }, reason: "associative-memory-temporal-error" };
+          const reply = config.temporal.notification === "off"
+            ? undefined
+            : { text: "Temporal transitions failed." };
+          return { handled: true, reply, reason: "associative-memory-temporal-error" };
         }
       }
 
@@ -1235,7 +1236,6 @@ const associativeMemoryPlugin = {
         const notification = await formatConsolidationNotification(result, {
           level: config.consolidation.notification,
           llmConfig,
-          language: detectUserLanguage(workspaceDir),
           logger: log,
         });
 
@@ -1248,9 +1248,12 @@ const associativeMemoryPlugin = {
         log.warn(
           `Scheduled consolidation failed: ${err instanceof Error ? err.message : String(err)}`,
         );
+        const reply = config.consolidation.notification === "off"
+          ? undefined
+          : { text: `Memory consolidation failed: ${err instanceof Error ? err.message : String(err)}` };
         return {
           handled: true,
-          reply: { text: `Memory consolidation failed: ${err instanceof Error ? err.message : String(err)}` },
+          reply,
           reason: "associative-memory-consolidation-error",
         };
       }
