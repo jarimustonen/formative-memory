@@ -159,15 +159,14 @@ export class MemoryManager {
     const ftsResults = this.db.searchFtsJoined(escapeFtsQuery(query), limit * 4);
     const bm25Scores = new Map<string, number>();
     const ftsRowMap = new Map<string, typeof ftsResults[number]>();
-    if (ftsResults.length > 0) {
-      // Normalize BM25 ranks (they're negative; closer to 0 = better)
-      const maxRank = Math.max(...ftsResults.map((r) => r.rank));
-      const minRank = Math.min(...ftsResults.map((r) => r.rank));
-      const range = maxRank - minRank || 1;
-      for (const row of ftsResults) {
-        bm25Scores.set(row.id, 1 - (row.rank - minRank) / range);
-        ftsRowMap.set(row.id, row);
-      }
+    for (const row of ftsResults) {
+      // Absolute BM25 normalization: maps (-∞, 0] → [0, 1) without batch
+      // dependence. Unlike min-max normalization, a single result doesn't
+      // automatically get score 1.0, and the worst of a strong batch doesn't
+      // get forced to 0.0.
+      const absRank = Math.max(0, -row.rank);
+      bm25Scores.set(row.id, absRank / (1 + absRank));
+      ftsRowMap.set(row.id, row);
     }
 
     // Combine: α * embedding + (1-α) * BM25, weighted by strength
