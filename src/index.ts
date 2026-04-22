@@ -1186,7 +1186,6 @@ const associativeMemoryPlugin = {
           }
           log.debug(`temporal: ${count} transitioned`);
 
-          const workspaceDir = ctx?.workspaceDir ?? ".";
           const llmConfig = resolveLlmConfig(runtimePaths.stateDir, runtimePaths.agentDir, log);
           const notification = await formatTemporalNotification(count, {
             level: config.temporal.notification,
@@ -1232,7 +1231,6 @@ const associativeMemoryPlugin = {
         // Always log detailed report at debug level
         log.debug(`consolidation: ${formatDetailedReport(result)}`);
 
-        const workspaceDir = ctx?.workspaceDir ?? ".";
         const notification = await formatConsolidationNotification(result, {
           level: config.consolidation.notification,
           llmConfig,
