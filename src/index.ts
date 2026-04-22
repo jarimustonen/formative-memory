@@ -301,10 +301,9 @@ function createWorkspace(
       const currentAgentDir = getAgentDir();
       const currentStateDir = getStateDir?.();
       if (config.requireEmbedding && !currentAgentDir && !currentStateDir) {
-        // Don't cache this rejection — agentDir/stateDir may arrive later.
-        // This is the key self-healing behavior for heartbeat/cron contexts.
-        // The SDK's resolveApiKeyForProvider needs agentDir for profile
-        // resolution; without it, let it through only when stateDir is set.
+        // Don't attempt auth resolution when neither agentDir nor stateDir
+        // is available yet — SDK needs runtime context to find profiles.
+        // Will self-heal when a tool call or service start provides it.
         return Promise.reject(new Error(
           "Embedding provider auth requires agentDir or stateDir which are not yet available. " +
           "Will retry when a tool call or service start provides runtime context.",
