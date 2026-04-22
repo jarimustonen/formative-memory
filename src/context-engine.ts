@@ -308,7 +308,7 @@ export type AssociativeMemoryContextEngineOptions = {
   /** When true, automatically capture conversation turns as memories via LLM extraction. */
   autoCapture?: boolean;
   /** Lazy accessor for LLM config. Required for autoCapture fact extraction. */
-  getLlmConfig?: () => LlmCallerConfig | null;
+  getLlmConfig?: () => LlmCallerConfig | null | Promise<LlmCallerConfig | null>;
   /** When true, Active Memory pipeline plugin is enabled alongside this plugin.
    *  Reduces recall limits to avoid redundant injection (Active Memory's sub-agent
    *  already performs proactive recall via our memory_search tool). */
@@ -553,7 +553,7 @@ export function createAssociativeMemoryContextEngine(
           params.prePromptMessageCount,
         );
         if (turnContent) {
-          const llmConfig = options.getLlmConfig?.();
+          const llmConfig = await options.getLlmConfig?.();
           if (llmConfig) {
             // Fire-and-forget: launch extraction without awaiting.
             // Errors are caught and logged inside the async function.

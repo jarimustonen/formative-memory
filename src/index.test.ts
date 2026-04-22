@@ -84,12 +84,18 @@ const fakeApi = (pluginConfig?: Record<string, unknown>) => ({
 });
 
 /** Write an auth-profiles.json file to the given dir. Used by standalone
- * fallback tests — env var fallback was removed, so the standalone client
- * only reads from auth-profiles.json. */
+ * fallback tests — the SDK's resolveApiKeyForProvider reads auth-profiles.json
+ * and expects AuthProfileStore format (type + provider + key). */
 function writeAuthProfiles(dir: string, profiles: Record<string, { key?: string; provider?: string }>): void {
+  // Convert simple { key, provider } entries to SDK AuthProfileCredential format
+  const sdkProfiles: Record<string, { type: string; provider: string; key?: string }> = {};
+  for (const [name, entry] of Object.entries(profiles)) {
+    const provider = entry.provider ?? name.split(":")[0];
+    sdkProfiles[name] = { type: "api_key", provider, key: entry.key };
+  }
   writeFileSync(
     join(dir, "auth-profiles.json"),
-    JSON.stringify({ version: 1, profiles }, null, 2),
+    JSON.stringify({ version: 1, profiles: sdkProfiles }, null, 2),
   );
 }
 

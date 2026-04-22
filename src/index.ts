@@ -10,7 +10,7 @@
  */
 
 import { isAbsolute, join } from "node:path";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { Type } from "@sinclair/typebox";
 import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk";
@@ -24,6 +24,7 @@ import {
   tryCreateStandaloneProvider,
 } from "./standalone-embedding.ts";
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import { resolveApiKeyForProvider } from "openclaw/plugin-sdk/provider-auth-runtime";
 import type { AssociativeMemoryConfig } from "./config.ts";
 import { memoryConfigSchema } from "./config.ts";
 import { applyTemporalTransitions } from "./consolidation-steps.ts";
@@ -32,7 +33,7 @@ import { runConsolidation } from "./consolidation.ts";
 import { formatConsolidationNotification, formatDetailedReport, formatTemporalNotification } from "./consolidation-notification.ts";
 import { CONTEXT_ENGINE_ID, createAssociativeMemoryContextEngine } from "./context-engine.ts";
 import { EmbeddingCircuitBreaker } from "./embedding-circuit-breaker.ts";
-import { callLlm, resolveApiKey, type LlmCallerConfig } from "./llm-caller.ts";
+import { callLlm, type LlmCallerConfig } from "./llm-caller.ts";
 import type { MemoryDatabase } from "./db.ts";
 import { MemoryManager } from "./memory-manager.ts";
 import {
@@ -46,146 +47,28 @@ import { appendFeedbackEvent } from "./retrieval-log.ts";
 import { createLogger, type Logger } from "./logger.ts";
 import { TurnMemoryLedger } from "./turn-memory-ledger.ts";
 
-// -- Auth profile resolution --
-
-const AUTH_PROFILE_FILENAME = "auth-profiles.json";
+// -- Auth resolution via SDK --
 
 /**
- * Per-file cache for parsed auth profiles. The cron path fires
- * readAuthProfiles repeatedly (every heartbeat scan, every consolidation
- * trigger), and resolveLlmConfig + resolveEmbeddingProvider both call it.
- * Without caching this was re-parsing the JSON on every hook fire.
- *
- * Keyed by absolute file path. Entries are invalidated by mtime change
- * so hot-edits to auth-profiles.json (adding a key at runtime) still
- * take effect without requiring a process restart.
- *
- * `statSync` is cheap compared to `readFileSync + JSON.parse`, and the
- * synchronous API surface is preserved (the readAuthProfiles call sites
- * run inside cron hooks that expect sync resolution).
- */
-type CachedProfiles = Record<string, { provider?: string; key?: string }>;
-type CacheEntry =
-  | { kind: "hit"; mtimeMs: number; profiles: CachedProfiles }
-  | { kind: "miss"; mtimeMs: number }; // file exists but parse failed
-const profileCache = new Map<string, CacheEntry>();
-
-/**
- * Read API keys from auth-profiles.json.
- *
- * Lookup order:
- * 1. agentDir — the preferred location, passed by OpenClaw at runtime.
- * 2. stateDir/agents/main/agent/ — hardcoded "main" fallback for
- *    single-agent setups. Multi-agent configurations (where the active
- *    agent isn't named "main") will resolve the wrong credentials here.
- *    A warning is emitted when this fallback actually returns a profile,
- *    so operators notice the brittle assumption.
- */
-function readAuthProfiles(
-  stateDir?: string,
-  agentDir?: string,
-  logger?: { warn: (msg: string) => void },
-): Record<string, { provider?: string; key?: string }> | null {
-  const agentDirPath = agentDir ? join(agentDir, AUTH_PROFILE_FILENAME) : undefined;
-  const mainFallbackPath = stateDir
-    ? join(stateDir, "agents", "main", "agent", AUTH_PROFILE_FILENAME)
-    : undefined;
-  const candidates = [agentDirPath, mainFallbackPath].filter((p): p is string => Boolean(p));
-
-  for (const filePath of candidates) {
-    const profiles = readProfilesWithCache(filePath, logger);
-    if (!profiles) continue;
-
-    // Warn if the "main" fallback actually returned credentials. This path
-    // is a single-agent assumption; multi-agent setups may silently resolve
-    // the wrong account here. Emitted on every successful resolution (not
-    // cached-deduplicated) so log volume is low — the fallback is rare.
-    if (filePath === mainFallbackPath && Object.keys(profiles).length > 0) {
-      logger?.warn(
-        `Resolved auth-profiles from the hardcoded "main" agent fallback (${filePath}). ` +
-        `This works for single-agent setups but may pick wrong credentials in multi-agent configurations. ` +
-        `Ensure OpenClaw passes agentDir at runtime.`,
-      );
-    }
-    return profiles;
-  }
-  return null;
-}
-
-/**
- * Cached read of a single auth-profiles.json file. Returns the parsed
- * (and validated) profiles object, or null if the file doesn't exist or
- * is malformed. Cache invalidates on mtime change.
- */
-function readProfilesWithCache(
-  filePath: string,
-  logger?: { warn: (msg: string) => void },
-): CachedProfiles | null {
-  let mtimeMs: number;
-  try {
-    mtimeMs = statSync(filePath).mtimeMs;
-  } catch (err: any) {
-    if (err?.code !== "ENOENT") {
-      logger?.warn(`Failed to stat auth profiles ${filePath}: ${err.message}`);
-    }
-    // File missing — drop any stale cached entry.
-    profileCache.delete(filePath);
-    return null;
-  }
-
-  const cached = profileCache.get(filePath);
-  if (cached && cached.mtimeMs === mtimeMs) {
-    return cached.kind === "hit" ? cached.profiles : null;
-  }
-
-  try {
-    const raw = readFileSync(filePath, "utf-8");
-    const data = JSON.parse(raw);
-    if (
-      !data ||
-      typeof data !== "object" ||
-      Array.isArray(data) ||
-      !data.profiles ||
-      typeof data.profiles !== "object" ||
-      Array.isArray(data.profiles)
-    ) {
-      logger?.warn(`Invalid auth profile format: ${filePath}`);
-      profileCache.set(filePath, { kind: "miss", mtimeMs });
-      return null;
-    }
-    const cleaned: CachedProfiles = {};
-    for (const [name, entry] of Object.entries(data.profiles)) {
-      if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-      const record = entry as { provider?: unknown; key?: unknown };
-      if (record.provider !== undefined && typeof record.provider !== "string") continue;
-      if (record.key !== undefined && typeof record.key !== "string") continue;
-      cleaned[name] = {
-        provider: record.provider as string | undefined,
-        key: record.key as string | undefined,
-      };
-    }
-    profileCache.set(filePath, { kind: "hit", mtimeMs, profiles: cleaned });
-    return cleaned;
-  } catch (err: any) {
-    logger?.warn(`Failed to read auth profiles from ${filePath}: ${err.message}`);
-    profileCache.set(filePath, { kind: "miss", mtimeMs });
-    return null;
-  }
-}
-
-/**
- * Resolve LLM caller config from auth profiles.
+ * Resolve LLM caller config via the OpenClaw SDK's provider auth API.
+ * Tries Anthropic first, falls back to OpenAI.
  * Returns null if no suitable API key is found.
  */
-function resolveLlmConfig(
-  stateDir?: string,
+async function resolveLlmConfig(
+  cfg: OpenClawConfig,
   agentDir?: string,
-  logger?: { warn: (msg: string) => void },
-): LlmCallerConfig | null {
-  const profiles = readAuthProfiles(stateDir, agentDir, logger);
-  const resolved = resolveApiKey(profiles ?? undefined, "anthropic");
-  if (!resolved) return null;
-  return { provider: resolved.provider, apiKey: resolved.apiKey };
+): Promise<LlmCallerConfig | null> {
+  for (const provider of ["anthropic", "openai"] as const) {
+    try {
+      const auth = await resolveApiKeyForProvider({ provider, cfg, agentDir });
+      if (auth.apiKey) {
+        return { provider, apiKey: auth.apiKey };
+      }
+    } catch {
+      // SDK throws when no credentials are found — try next provider.
+    }
+  }
+  return null;
 }
 
 /**
@@ -280,11 +163,9 @@ async function resolveEmbeddingProvider(
   openclawConfig: OpenClawConfig,
   agentDir?: string,
   model?: string,
-  stateDir?: string,
   logger?: Logger,
 ): Promise<MemoryEmbeddingProvider> {
   const errors: string[] = [];
-  const profiles = readAuthProfiles(stateDir, agentDir, logger);
 
   if (providerId === "auto") {
     const adapters = listMemoryEmbeddingProviders()
@@ -311,7 +192,7 @@ async function resolveEmbeddingProvider(
     // Always fall through to standalone — whether registry was empty or all
     // adapters failed. This is the key fix: memory-core may be installed but
     // unable to bootstrap auth in cron/migration contexts.
-    const provider = autoSelectStandaloneProvider(profiles, logger);
+    const provider = await autoSelectStandaloneProvider(openclawConfig, agentDir, logger);
     if (provider) return provider;
     errors.push("standalone: no API key found for openai or gemini");
 
@@ -337,7 +218,7 @@ async function resolveEmbeddingProvider(
     }
   }
 
-  const standaloneProvider = tryCreateStandaloneProvider(providerId, profiles, model, logger);
+  const standaloneProvider = await tryCreateStandaloneProvider(providerId, openclawConfig, agentDir, model, logger);
   if (standaloneProvider) return standaloneProvider;
 
   throw new Error(
@@ -422,9 +303,8 @@ function createWorkspace(
       if (config.requireEmbedding && !currentAgentDir && !currentStateDir) {
         // Don't cache this rejection — agentDir/stateDir may arrive later.
         // This is the key self-healing behavior for heartbeat/cron contexts.
-        // When stateDir IS available (e.g. from service.start()), the auth
-        // fallback to <stateDir>/agents/main/agent/ can resolve credentials,
-        // so we let it through.
+        // The SDK's resolveApiKeyForProvider needs agentDir for profile
+        // resolution; without it, let it through only when stateDir is set.
         return Promise.reject(new Error(
           "Embedding provider auth requires agentDir or stateDir which are not yet available. " +
           "Will retry when a tool call or service start provides runtime context.",
@@ -473,7 +353,6 @@ function createWorkspace(
           openclawConfig,
           currentAgentDir,
           effectiveModel,
-          getStateDir?.(),
           logger,
         );
 
@@ -842,10 +721,10 @@ const associativeMemoryPlugin = {
     // Startup tasks (migration, cleanup) are decoupled from workspace creation.
     // Only triggered by the first tool call which has full runtime context.
     // Flag is set after successful scheduling to allow retry on sync failure.
-    const triggerStartupTasks = (workspaceDir: string): void => {
+    const triggerStartupTasks = async (workspaceDir: string): Promise<void> => {
       if (startupTasksTriggered) return;
       const ws = getWorkspace(workspaceDir);
-      const llmConfig = resolveLlmConfig(runtimePaths.stateDir, getAgentDir(), log);
+      const llmConfig = await resolveLlmConfig(openclawConfig, getAgentDir());
       runStartupTasks(ws, config, workspaceDir, getAgentDir, log, { stateDir: runtimePaths.stateDir, llmConfig });
       startupTasksTriggered = true;
     };
@@ -937,7 +816,7 @@ const associativeMemoryPlugin = {
         getDb: () => getWorkspace(".").manager.getDatabase(),
         getLogPath: () => join(getWorkspace(".").memoryDir, "retrieval.log"),
         autoCapture: config.autoCapture,
-        getLlmConfig: () => resolveLlmConfig(runtimePaths.stateDir, runtimePaths.agentDir, log),
+        getLlmConfig: () => resolveLlmConfig(openclawConfig, runtimePaths.agentDir),
         activeMemoryEnabled,
       }),
     );
@@ -948,7 +827,7 @@ const associativeMemoryPlugin = {
       async handler() {
         const ws = getWorkspace(".");
 
-        const llmConfig = resolveLlmConfig(runtimePaths.stateDir, runtimePaths.agentDir, log);
+        const llmConfig = await resolveLlmConfig(openclawConfig, runtimePaths.agentDir);
         if (!llmConfig) {
           return {
             text: "Memory consolidation failed: no LLM API key found.\n" +
@@ -998,7 +877,7 @@ const associativeMemoryPlugin = {
       async handler() {
         const ws = getWorkspace(".");
         const db = ws.manager.getDatabase();
-        const llmConfig = resolveLlmConfig(runtimePaths.stateDir, runtimePaths.agentDir, log);
+        const llmConfig = await resolveLlmConfig(openclawConfig, runtimePaths.agentDir);
         const userLanguage = detectUserLanguage(".");
         const enrichFn: EnrichFn = llmConfig
           ? createDirectLlmEnrichFn(llmConfig, userLanguage)
@@ -1046,7 +925,7 @@ const associativeMemoryPlugin = {
       async handler() {
         const ws = getWorkspace(".");
         const db = ws.manager.getDatabase();
-        const llmConfig = resolveLlmConfig(runtimePaths.stateDir, runtimePaths.agentDir, log);
+        const llmConfig = await resolveLlmConfig(openclawConfig, runtimePaths.agentDir);
         if (!llmConfig) {
           return { text: "Workspace cleanup failed: no LLM API key found." };
         }
@@ -1186,7 +1065,7 @@ const associativeMemoryPlugin = {
           }
           log.debug(`temporal: ${count} transitioned`);
 
-          const llmConfig = resolveLlmConfig(runtimePaths.stateDir, runtimePaths.agentDir, log);
+          const llmConfig = await resolveLlmConfig(openclawConfig, runtimePaths.agentDir);
           const notification = await formatTemporalNotification(count, {
             level: config.temporal.notification,
             llmConfig,
@@ -1209,7 +1088,7 @@ const associativeMemoryPlugin = {
 
       // Full consolidation (includes temporal transitions)
       try {
-        const llmConfig = resolveLlmConfig(runtimePaths.stateDir, runtimePaths.agentDir, log);
+        const llmConfig = await resolveLlmConfig(openclawConfig, runtimePaths.agentDir);
         const mergeContentProducer = llmConfig
           ? async (
               a: { id: string; content: string; type: string },
@@ -1259,15 +1138,12 @@ const associativeMemoryPlugin = {
 
     // -- Startup service --
     // Invoked by OpenClaw at gateway boot when this plugin is the explicit
-    // memory slot. The service
-    // context exposes `config`, `workspaceDir`, `stateDir`, and `logger`.
+    // memory slot. The service context exposes `config`, `workspaceDir`,
+    // `stateDir`, and `logger`.
     //
-    // It does NOT currently expose `agentDir`, so auth resolution falls back
-    // to the hardcoded "main" agent path (see readAuthProfiles). This means
-    // automatic migration/cleanup at boot only resolves correct credentials
-    // for single-agent "main" setups; multi-agent setups must wait for a
-    // tool call (which carries agentDir) to pick up the right profile —
-    // README documents this limitation.
+    // Auth resolution is delegated to the SDK's resolveApiKeyForProvider
+    // which handles profile lookup, multi-agent resolution, and credential
+    // precedence internally.
     //
     // When ctx.workspaceDir is present we trigger migration + workspace
     // cleanup + embedding backfill here so importing legacy memories and

@@ -1,134 +1,43 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { OpenClawConfig } from "openclaw/plugin-sdk";
 import {
-  resolveEmbeddingApiKey,
   tryCreateStandaloneProvider,
   autoSelectStandaloneProvider,
 } from "./standalone-embedding.ts";
 
-// -- API key resolution --
+// Mock the SDK's resolveApiKeyForProvider
+vi.mock("openclaw/plugin-sdk/provider-auth-runtime", () => ({
+  resolveApiKeyForProvider: vi.fn(),
+}));
 
-describe("resolveEmbeddingApiKey", () => {
-  it("resolves openai key by profile key prefix", () => {
-    const profiles = {
-      "openai:default": { key: "sk-test-123" },
-      "google:default": { key: "AIza-test" },
-    };
-    expect(resolveEmbeddingApiKey(profiles, "openai")).toBe("sk-test-123");
-  });
+import { resolveApiKeyForProvider } from "openclaw/plugin-sdk/provider-auth-runtime";
+const mockResolve = vi.mocked(resolveApiKeyForProvider);
 
-  it("resolves gemini key by profile key prefix (google:*)", () => {
-    const profiles = {
-      "openai:default": { key: "sk-test-123" },
-      "google:default": { key: "AIza-test" },
-    };
-    expect(resolveEmbeddingApiKey(profiles, "gemini")).toBe("AIza-test");
-  });
+const EMPTY_CFG = {} as OpenClawConfig;
 
-  it("resolves by provider field when prefix doesn't match", () => {
-    const profiles = {
-      "custom-openai": { provider: "openai", key: "sk-custom" },
-    };
-    expect(resolveEmbeddingApiKey(profiles, "openai")).toBe("sk-custom");
-  });
-
-  it("resolves gemini by google provider field", () => {
-    const profiles = {
-      "my-google": { provider: "google", key: "AIza-custom" },
-    };
-    expect(resolveEmbeddingApiKey(profiles, "gemini")).toBe("AIza-custom");
-  });
-
-  it("returns null when profiles is null (no env var fallback)", () => {
-    expect(resolveEmbeddingApiKey(null, "openai")).toBeNull();
-    expect(resolveEmbeddingApiKey(null, "gemini")).toBeNull();
-  });
-
-  it("ignores process.env.OPENAI_API_KEY even when set", () => {
-    // Env vars are intentionally not consulted — auth-profiles.json is the
-    // only supported source. This guards against re-introducing env fallback.
-    const original = process.env.OPENAI_API_KEY;
-    process.env.OPENAI_API_KEY = "sk-env-should-be-ignored";
-    try {
-      expect(resolveEmbeddingApiKey(null, "openai")).toBeNull();
-      expect(resolveEmbeddingApiKey({}, "openai")).toBeNull();
-    } finally {
-      if (original === undefined) delete process.env.OPENAI_API_KEY;
-      else process.env.OPENAI_API_KEY = original;
-    }
-  });
-
-  it("returns null for empty profiles", () => {
-    expect(resolveEmbeddingApiKey({}, "openai")).toBeNull();
-  });
-
-  it("skips profiles without key field", () => {
-    const profiles = { "openai:default": { provider: "openai" } };
-    expect(resolveEmbeddingApiKey(profiles, "openai")).toBeNull();
-  });
-
-  it("prefers 'openai:default' over other openai profiles without warning", () => {
-    const logger = { warn: vi.fn() };
-    const profiles = {
-      "openai:work": { key: "sk-work" },
-      "openai:default": { key: "sk-default" },
-      "openai:personal": { key: "sk-personal" },
-    };
-    expect(resolveEmbeddingApiKey(profiles, "openai", logger)).toBe("sk-default");
-    expect(logger.warn).not.toHaveBeenCalled();
-  });
-
-  it("prefers 'google:default' over other gemini profiles", () => {
-    const profiles = {
-      "google:work": { key: "AIza-work" },
-      "google:default": { key: "AIza-default" },
-    };
-    expect(resolveEmbeddingApiKey(profiles, "gemini")).toBe("AIza-default");
-  });
-
-  it("warns when multiple non-default profiles match and picks first", () => {
-    const logger = { warn: vi.fn() };
-    const profiles = {
-      "openai:work": { key: "sk-work" },
-      "openai:personal": { key: "sk-personal" },
-    };
-    const result = resolveEmbeddingApiKey(profiles, "openai", logger);
-    expect(result).toBe("sk-work"); // deterministic: first-inserted
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringMatching(/Multiple auth profiles.*openai:work.*openai:personal/),
-    );
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining('Add a "openai:default" profile'),
-    );
-  });
-
-  it("does not warn with a single non-default matching profile", () => {
-    const logger = { warn: vi.fn() };
-    const profiles = {
-      "openai:only-one": { key: "sk-single" },
-    };
-    expect(resolveEmbeddingApiKey(profiles, "openai", logger)).toBe("sk-single");
-    expect(logger.warn).not.toHaveBeenCalled();
-  });
+beforeEach(() => {
+  mockResolve.mockReset();
 });
 
 // -- Provider creation --
 
 describe("tryCreateStandaloneProvider", () => {
-  it("returns null for unknown provider ID", () => {
-    expect(tryCreateStandaloneProvider("voyage", null)).toBeNull();
+  it("returns null for unknown provider ID", async () => {
+    expect(await tryCreateStandaloneProvider("voyage", EMPTY_CFG)).toBeNull();
   });
 
-  it("returns null when no API key available", () => {
+  it("returns null when no API key available", async () => {
+    mockResolve.mockResolvedValue({ source: "none", mode: "api-key" });
     const logger = { warn: vi.fn() };
-    expect(tryCreateStandaloneProvider("openai", null, undefined, logger)).toBeNull();
+    expect(await tryCreateStandaloneProvider("openai", EMPTY_CFG, undefined, undefined, logger)).toBeNull();
     expect(logger.warn).toHaveBeenCalledWith(
       expect.stringContaining("no API key found for openai"),
     );
   });
 
-  it("creates openai provider with correct shape", () => {
-    const profiles = { "openai:default": { key: "sk-test" } };
-    const provider = tryCreateStandaloneProvider("openai", profiles);
+  it("creates openai provider with correct shape", async () => {
+    mockResolve.mockResolvedValue({ apiKey: "sk-test", source: "profile", mode: "api-key" });
+    const provider = await tryCreateStandaloneProvider("openai", EMPTY_CFG);
     expect(provider).not.toBeNull();
     expect(provider!.id).toBe("openai");
     expect(provider!.model).toBe("text-embedding-3-small");
@@ -136,9 +45,9 @@ describe("tryCreateStandaloneProvider", () => {
     expect(provider!.embedBatch).toBeTypeOf("function");
   });
 
-  it("creates gemini provider with correct shape", () => {
-    const profiles = { "google:default": { key: "AIza-test" } };
-    const provider = tryCreateStandaloneProvider("gemini", profiles);
+  it("creates gemini provider with correct shape", async () => {
+    mockResolve.mockResolvedValue({ apiKey: "AIza-test", source: "profile", mode: "api-key" });
+    const provider = await tryCreateStandaloneProvider("gemini", EMPTY_CFG);
     expect(provider).not.toBeNull();
     expect(provider!.id).toBe("gemini");
     expect(provider!.model).toBe("text-embedding-004");
@@ -146,94 +55,87 @@ describe("tryCreateStandaloneProvider", () => {
     expect(provider!.embedBatch).toBeTypeOf("function");
   });
 
-  it("uses custom model when specified", () => {
-    const profiles = { "openai:default": { key: "sk-test" } };
-    const provider = tryCreateStandaloneProvider("openai", profiles, "text-embedding-3-large");
+  it("uses custom model when specified", async () => {
+    mockResolve.mockResolvedValue({ apiKey: "sk-test", source: "profile", mode: "api-key" });
+    const provider = await tryCreateStandaloneProvider("openai", EMPTY_CFG, undefined, "text-embedding-3-large");
     expect(provider!.model).toBe("text-embedding-3-large");
   });
 
-  it("strips 'gemini:' prefix from gemini model name (#66452 compat)", () => {
-    // OpenClaw v2026.4.14 (#66452) preserves non-OpenAI provider prefixes
-    // through model-ref normalization. The standalone Gemini path must accept
-    // the prefixed form and normalize it before calling the API.
-    const profiles = { "google:default": { key: "AIza-test" } };
-    const provider = tryCreateStandaloneProvider(
+  it("strips 'gemini:' prefix from gemini model name (#66452 compat)", async () => {
+    mockResolve.mockResolvedValue({ apiKey: "AIza-test", source: "profile", mode: "api-key" });
+    const provider = await tryCreateStandaloneProvider(
       "gemini",
-      profiles,
+      EMPTY_CFG,
+      undefined,
       "gemini:text-embedding-004",
     );
     expect(provider!.model).toBe("text-embedding-004");
   });
 
-  it("leaves un-prefixed gemini model names untouched", () => {
-    const profiles = { "google:default": { key: "AIza-test" } };
-    const provider = tryCreateStandaloneProvider("gemini", profiles, "text-embedding-005");
+  it("leaves un-prefixed gemini model names untouched", async () => {
+    mockResolve.mockResolvedValue({ apiKey: "AIza-test", source: "profile", mode: "api-key" });
+    const provider = await tryCreateStandaloneProvider("gemini", EMPTY_CFG, undefined, "text-embedding-005");
     expect(provider!.model).toBe("text-embedding-005");
+  });
+
+  it("passes provider and agentDir to SDK", async () => {
+    mockResolve.mockResolvedValue({ apiKey: "sk-test", source: "profile", mode: "api-key" });
+    await tryCreateStandaloneProvider("openai", EMPTY_CFG, "/agent/dir");
+    expect(mockResolve).toHaveBeenCalledWith({
+      provider: "openai",
+      cfg: EMPTY_CFG,
+      agentDir: "/agent/dir",
+    });
+  });
+
+  it("maps gemini provider to google for SDK resolution", async () => {
+    mockResolve.mockResolvedValue({ apiKey: "AIza-test", source: "profile", mode: "api-key" });
+    await tryCreateStandaloneProvider("gemini", EMPTY_CFG);
+    expect(mockResolve).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "google" }),
+    );
   });
 });
 
 // -- Auto-select --
 
 describe("autoSelectStandaloneProvider", () => {
-  it("prefers openai when both keys available (backward compatibility)", () => {
-    const profiles = {
-      "openai:default": { key: "sk-test" },
-      "google:default": { key: "AIza-test" },
-    };
-    const provider = autoSelectStandaloneProvider(profiles);
+  it("prefers openai when both keys available (backward compatibility)", async () => {
+    mockResolve.mockImplementation(async ({ provider }: any) => {
+      if (provider === "openai") return { apiKey: "sk-test", source: "profile", mode: "api-key" as const };
+      return { apiKey: "AIza-test", source: "profile", mode: "api-key" as const };
+    });
+    const provider = await autoSelectStandaloneProvider(EMPTY_CFG);
     expect(provider!.id).toBe("openai");
   });
 
-  it("falls back to gemini when openai key not available", () => {
-    const profiles = { "google:default": { key: "AIza-test" } };
-    const provider = autoSelectStandaloneProvider(profiles);
+  it("falls back to gemini when openai key not available", async () => {
+    mockResolve.mockImplementation(async ({ provider }: any) => {
+      if (provider === "openai") return { source: "none", mode: "api-key" as const };
+      return { apiKey: "AIza-test", source: "profile", mode: "api-key" as const };
+    });
+    const provider = await autoSelectStandaloneProvider(EMPTY_CFG);
     expect(provider!.id).toBe("gemini");
   });
 
-  it("uses provider-specific default models (ignores cross-provider model)", () => {
-    // Verify no model parameter is accepted — auto-select must always use
-    // each provider's default to avoid cross-provider model pollution.
-    const profiles = { "openai:default": { key: "sk-test" } };
-    const provider = autoSelectStandaloneProvider(profiles);
+  it("uses provider-specific default models", async () => {
+    mockResolve.mockResolvedValue({ apiKey: "sk-test", source: "profile", mode: "api-key" });
+    const provider = await autoSelectStandaloneProvider(EMPTY_CFG);
     expect(provider!.model).toBe("text-embedding-3-small");
   });
 
-  it("returns null when no profiles available", () => {
-    expect(autoSelectStandaloneProvider(null)).toBeNull();
-    expect(autoSelectStandaloneProvider({})).toBeNull();
+  it("returns null when no keys available", async () => {
+    mockResolve.mockResolvedValue({ source: "none", mode: "api-key" });
+    expect(await autoSelectStandaloneProvider(EMPTY_CFG)).toBeNull();
   });
 
-  it("does not spam per-provider warnings when one provider succeeds", () => {
-    // Only openai key present → gemini probe should not warn
-    const profiles = { "openai:default": { key: "sk-test" } };
+  it("warns only once (terminal failure) when no provider succeeds", async () => {
+    mockResolve.mockResolvedValue({ source: "none", mode: "api-key" });
     const logger = { warn: vi.fn() };
-    const provider = autoSelectStandaloneProvider(profiles, logger);
-    expect(provider!.id).toBe("openai");
-    expect(logger.warn).not.toHaveBeenCalled();
-  });
-
-  it("warns only once (terminal failure) when no provider succeeds", () => {
-    const logger = { warn: vi.fn() };
-    expect(autoSelectStandaloneProvider(null, logger)).toBeNull();
+    expect(await autoSelectStandaloneProvider(EMPTY_CFG, undefined, logger)).toBeNull();
     expect(logger.warn).toHaveBeenCalledTimes(1);
     expect(logger.warn).toHaveBeenCalledWith(
       expect.stringContaining("no API key found for openai or gemini"),
-    );
-  });
-
-  it("surfaces multi-profile ambiguity warnings during auto-select (#31)", () => {
-    // Regression: auto-select used to pass undefined logger to suppress
-    // per-provider "no key" noise, which also swallowed the genuinely
-    // useful multi-profile ambiguity warning. The warning must surface.
-    const logger = { warn: vi.fn() };
-    const profiles = {
-      "openai:work": { key: "sk-work" },
-      "openai:personal": { key: "sk-personal" },
-    };
-    const provider = autoSelectStandaloneProvider(profiles, logger);
-    expect(provider!.id).toBe("openai");
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("Multiple auth profiles match openai"),
     );
   });
 });
@@ -255,8 +157,8 @@ describe("openai provider fetch calls", () => {
       })),
     );
 
-    const profiles = { "openai:default": { key: "sk-test" } };
-    const provider = tryCreateStandaloneProvider("openai", profiles)!;
+    mockResolve.mockResolvedValue({ apiKey: "sk-test", source: "profile", mode: "api-key" });
+    const provider = (await tryCreateStandaloneProvider("openai", EMPTY_CFG))!;
     const result = await provider.embedQuery("hello world");
 
     expect(result).toEqual(mockEmbedding);
@@ -283,8 +185,8 @@ describe("openai provider fetch calls", () => {
       })),
     );
 
-    const profiles = { "openai:default": { key: "sk-test" } };
-    const provider = tryCreateStandaloneProvider("openai", profiles)!;
+    mockResolve.mockResolvedValue({ apiKey: "sk-test", source: "profile", mode: "api-key" });
+    const provider = (await tryCreateStandaloneProvider("openai", EMPTY_CFG))!;
     const result = await provider.embedBatch(["hello", "world"]);
 
     expect(result).toEqual(embeddings);
@@ -297,8 +199,8 @@ describe("openai provider fetch calls", () => {
       new Response("Unauthorized", { status: 401 }),
     );
 
-    const profiles = { "openai:default": { key: "sk-bad" } };
-    const provider = tryCreateStandaloneProvider("openai", profiles)!;
+    mockResolve.mockResolvedValue({ apiKey: "sk-bad", source: "profile", mode: "api-key" });
+    const provider = (await tryCreateStandaloneProvider("openai", EMPTY_CFG))!;
     await expect(provider.embedQuery("test")).rejects.toThrow("OpenAI Embeddings API error 401");
   });
 });
@@ -318,8 +220,8 @@ describe("gemini provider fetch calls", () => {
       })),
     );
 
-    const profiles = { "google:default": { key: "AIza-test" } };
-    const provider = tryCreateStandaloneProvider("gemini", profiles)!;
+    mockResolve.mockResolvedValue({ apiKey: "AIza-test", source: "profile", mode: "api-key" });
+    const provider = (await tryCreateStandaloneProvider("gemini", EMPTY_CFG))!;
     const result = await provider.embedQuery("hello world");
 
     expect(result).toEqual(mockValues);
@@ -343,8 +245,8 @@ describe("gemini provider fetch calls", () => {
       new Response(JSON.stringify({ embeddings })),
     );
 
-    const profiles = { "google:default": { key: "AIza-test" } };
-    const provider = tryCreateStandaloneProvider("gemini", profiles)!;
+    mockResolve.mockResolvedValue({ apiKey: "AIza-test", source: "profile", mode: "api-key" });
+    const provider = (await tryCreateStandaloneProvider("gemini", EMPTY_CFG))!;
     const result = await provider.embedBatch(["hello", "world"]);
 
     expect(result).toEqual(embeddings.map((e) => e.values));
@@ -356,20 +258,18 @@ describe("gemini provider fetch calls", () => {
   });
 
   it("calls Gemini API with bare model name when user passes 'gemini:' prefix (#66452)", async () => {
-    // Defensive normalization for the prefix-preservation upstream change:
-    // even if config carries `gemini:text-embedding-004`, the URL must use
-    // the bare model name or Gemini returns 404.
     const mockValues = Array.from({ length: 768 }, () => 0.1);
     globalThis.fetch = vi.fn(async () =>
       new Response(JSON.stringify({ embedding: { values: mockValues } })),
     );
 
-    const profiles = { "google:default": { key: "AIza-test" } };
-    const provider = tryCreateStandaloneProvider(
+    mockResolve.mockResolvedValue({ apiKey: "AIza-test", source: "profile", mode: "api-key" });
+    const provider = (await tryCreateStandaloneProvider(
       "gemini",
-      profiles,
+      EMPTY_CFG,
+      undefined,
       "gemini:text-embedding-004",
-    )!;
+    ))!;
     await provider.embedQuery("hi");
 
     const [url, init] = (globalThis.fetch as any).mock.calls[0];
@@ -381,7 +281,6 @@ describe("gemini provider fetch calls", () => {
   });
 
   it("chunks embedBatch into 100-item requests (Gemini API limit)", async () => {
-    // Return 100 embeddings per call to match the chunk size
     let callCount = 0;
     globalThis.fetch = vi.fn(async (_url: any, init: any) => {
       callCount++;
@@ -392,8 +291,8 @@ describe("gemini provider fetch calls", () => {
       }));
     });
 
-    const profiles = { "google:default": { key: "AIza-test" } };
-    const provider = tryCreateStandaloneProvider("gemini", profiles)!;
+    mockResolve.mockResolvedValue({ apiKey: "AIza-test", source: "profile", mode: "api-key" });
+    const provider = (await tryCreateStandaloneProvider("gemini", EMPTY_CFG))!;
 
     // 250 items → should chunk into 100 + 100 + 50 = 3 calls
     const texts = Array.from({ length: 250 }, (_, i) => `text-${i}`);
@@ -416,8 +315,8 @@ describe("gemini provider fetch calls", () => {
       new Response("Bad Request", { status: 400 }),
     );
 
-    const profiles = { "google:default": { key: "AIza-bad" } };
-    const provider = tryCreateStandaloneProvider("gemini", profiles)!;
+    mockResolve.mockResolvedValue({ apiKey: "AIza-bad", source: "profile", mode: "api-key" });
+    const provider = (await tryCreateStandaloneProvider("gemini", EMPTY_CFG))!;
     await expect(provider.embedQuery("test")).rejects.toThrow("Gemini Embeddings API error 400");
   });
 });
@@ -433,8 +332,8 @@ describe("empty batch handling", () => {
 
   it("openai embedBatch([]) returns [] without calling API", async () => {
     globalThis.fetch = vi.fn();
-    const profiles = { "openai:default": { key: "sk-test" } };
-    const provider = tryCreateStandaloneProvider("openai", profiles)!;
+    mockResolve.mockResolvedValue({ apiKey: "sk-test", source: "profile", mode: "api-key" });
+    const provider = (await tryCreateStandaloneProvider("openai", EMPTY_CFG))!;
 
     expect(await provider.embedBatch([])).toEqual([]);
     expect(globalThis.fetch).not.toHaveBeenCalled();
@@ -442,8 +341,8 @@ describe("empty batch handling", () => {
 
   it("gemini embedBatch([]) returns [] without calling API", async () => {
     globalThis.fetch = vi.fn();
-    const profiles = { "google:default": { key: "AIza-test" } };
-    const provider = tryCreateStandaloneProvider("gemini", profiles)!;
+    mockResolve.mockResolvedValue({ apiKey: "AIza-test", source: "profile", mode: "api-key" });
+    const provider = (await tryCreateStandaloneProvider("gemini", EMPTY_CFG))!;
 
     expect(await provider.embedBatch([])).toEqual([]);
     expect(globalThis.fetch).not.toHaveBeenCalled();
@@ -462,8 +361,8 @@ describe("response shape validation", () => {
       new Response(JSON.stringify({ foo: "bar" })),
     );
 
-    const profiles = { "openai:default": { key: "sk-test" } };
-    const provider = tryCreateStandaloneProvider("openai", profiles)!;
+    mockResolve.mockResolvedValue({ apiKey: "sk-test", source: "profile", mode: "api-key" });
+    const provider = (await tryCreateStandaloneProvider("openai", EMPTY_CFG))!;
     await expect(provider.embedQuery("test")).rejects.toThrow(
       /OpenAI.*invalid response.*data/,
     );
@@ -476,8 +375,8 @@ describe("response shape validation", () => {
       })),
     );
 
-    const profiles = { "openai:default": { key: "sk-test" } };
-    const provider = tryCreateStandaloneProvider("openai", profiles)!;
+    mockResolve.mockResolvedValue({ apiKey: "sk-test", source: "profile", mode: "api-key" });
+    const provider = (await tryCreateStandaloneProvider("openai", EMPTY_CFG))!;
     await expect(provider.embedQuery("test")).rejects.toThrow(
       /embedding.*not an array/,
     );
@@ -488,8 +387,8 @@ describe("response shape validation", () => {
       new Response(JSON.stringify({ foo: "bar" })),
     );
 
-    const profiles = { "google:default": { key: "AIza-test" } };
-    const provider = tryCreateStandaloneProvider("gemini", profiles)!;
+    mockResolve.mockResolvedValue({ apiKey: "AIza-test", source: "profile", mode: "api-key" });
+    const provider = (await tryCreateStandaloneProvider("gemini", EMPTY_CFG))!;
     await expect(provider.embedQuery("test")).rejects.toThrow(
       /Gemini.*invalid response.*embedding/,
     );
@@ -500,8 +399,8 @@ describe("response shape validation", () => {
       new Response(JSON.stringify({ foo: "bar" })),
     );
 
-    const profiles = { "google:default": { key: "AIza-test" } };
-    const provider = tryCreateStandaloneProvider("gemini", profiles)!;
+    mockResolve.mockResolvedValue({ apiKey: "AIza-test", source: "profile", mode: "api-key" });
+    const provider = (await tryCreateStandaloneProvider("gemini", EMPTY_CFG))!;
     await expect(provider.embedBatch(["a", "b"])).rejects.toThrow(
       /Gemini.*invalid response.*embeddings/,
     );
@@ -514,8 +413,8 @@ describe("response shape validation", () => {
       })),
     );
 
-    const profiles = { "google:default": { key: "AIza-test" } };
-    const provider = tryCreateStandaloneProvider("gemini", profiles)!;
+    mockResolve.mockResolvedValue({ apiKey: "AIza-test", source: "profile", mode: "api-key" });
+    const provider = (await tryCreateStandaloneProvider("gemini", EMPTY_CFG))!;
     await expect(provider.embedQuery("test")).rejects.toThrow(
       /embedding\.values.*not an array/,
     );

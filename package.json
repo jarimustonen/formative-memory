@@ -44,7 +44,7 @@
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^22.10.0",
     "@vitest/coverage-v8": "^4.0.18",
-    "openclaw": "^2026.4.5",
+    "openclaw": "^2026.4.15",
     "oxfmt": "0.35.0",
     "oxlint": "^1.50.0",
     "tsdown": "^0.20.3",
@@ -53,7 +53,7 @@
     "vitest": "^4.0.18"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.4.5"
+    "openclaw": ">=2026.4.15"
   },
   "engines": {
     "node": ">=22.12.0"

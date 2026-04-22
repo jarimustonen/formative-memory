@@ -1,84 +1,46 @@
 /**
  * Standalone fetch-based embedding providers.
  *
- * Reads API keys directly from auth-profiles.json (via readAuthProfiles)
- * or falls back to environment variables. Removes the dependency on
- * memory-core's internal auth wiring — works in all contexts (assemble,
- * cron, migration) without requiring a tool-call bootstrap.
+ * Uses OpenClaw SDK's resolveApiKeyForProvider for credential resolution.
+ * Removes the dependency on memory-core's internal auth wiring — works
+ * in all contexts (assemble, cron, migration) without requiring a
+ * tool-call bootstrap.
  */
 
 import type { MemoryEmbeddingProvider } from "openclaw/plugin-sdk/memory-core-host-engine-embeddings";
+import { resolveApiKeyForProvider } from "openclaw/plugin-sdk/provider-auth-runtime";
+import type { OpenClawConfig } from "openclaw/plugin-sdk";
 import { fetchWithTimeout } from "./http.ts";
 
 // -- Types --
 
 type EmbeddingProviderName = "openai" | "gemini";
 
-type AuthProfiles = Record<string, { provider?: string; key?: string }> | null;
-
 type Logger = { warn: (msg: string) => void };
 
 // -- API key resolution --
 
 /**
- * Resolve an API key for an embedding provider from auth profiles.
+ * Resolve an API key for an embedding provider via the OpenClaw SDK.
  *
- * Auth profiles (auth-profiles.json) are the only supported credential
- * source — environment variables are intentionally NOT used. OpenClaw's
- * canonical auth mechanism is auth-profiles.json; relying on env vars
- * encouraged skipping profile setup and created uncertainty about which
- * account was actually in use.
- *
- * Selection order (deterministic, prevents silent wrong-account selection):
- * 1. Profile named exactly "openai:default" or "google:default" — the
- *    conventional default. Users with multiple profiles (e.g. "google:work"
- *    and "google:personal") opt in via this name.
- * 2. If exactly one matching profile exists (by key prefix or provider
- *    field), use it.
- * 3. If multiple non-default matches exist: log a warning naming the chosen
- *    profile so log-scrapers can notice the ambiguity, then use the first
- *    one (Object.entries preserves insertion order).
+ * Delegates to the SDK's resolveApiKeyForProvider which handles auth
+ * profiles, env vars, profile precedence, cooldowns, and multi-agent
+ * resolution internally.
  */
-export function resolveEmbeddingApiKey(
-  profiles: AuthProfiles,
+async function resolveEmbeddingApiKey(
+  cfg: OpenClawConfig,
   provider: EmbeddingProviderName,
-  logger?: Logger,
-): string | null {
-  if (!profiles) return null;
-
-  const keyPrefix = provider === "gemini" ? "google:" : "openai:";
-  const providerField = provider === "gemini" ? "google" : "openai";
-  const defaultName = `${keyPrefix}default`;
-
-  // 1. Exact ":default" profile takes precedence — explicit user convention.
-  const defaultEntry = profiles[defaultName];
-  if (defaultEntry?.key) {
-    return defaultEntry.key;
+  agentDir?: string,
+): Promise<string | null> {
+  try {
+    const sdkProvider = provider === "gemini" ? "google" : provider;
+    const auth = await resolveApiKeyForProvider({ provider: sdkProvider, cfg, agentDir });
+    return auth.apiKey ?? null;
+  } catch {
+    // SDK throws when no credentials are found — return null to let
+    // callers handle the missing-key case uniformly.
+    return null;
   }
-
-  // 2. Collect all candidates (prefix match OR provider-field match).
-  const candidates: Array<{ name: string; key: string }> = [];
-  for (const [name, value] of Object.entries(profiles)) {
-    if (!value?.key) continue;
-    if (name.startsWith(keyPrefix) || value.provider === providerField) {
-      candidates.push({ name, key: value.key });
-    }
-  }
-
-  if (candidates.length === 1) {
-    return candidates[0].key;
-  }
-  if (candidates.length > 1) {
-    // Multiple non-default profiles — warn so ambiguous setups are visible.
-    // Still deterministic: Object.entries preserves insertion order.
-    logger?.warn(
-      `Multiple auth profiles match ${provider} (${candidates.map((c) => c.name).join(", ")}). ` +
-      `Using "${candidates[0].name}". Add a "${defaultName}" profile to select explicitly.`,
-    );
-    return candidates[0].key;
-  }
-
-  return null;
 }
 
 // -- Response validation helpers --
@@ -336,21 +298,19 @@ function createGeminiProvider(apiKey: string, model?: string): MemoryEmbeddingPr
 /**
  * Try to create a standalone embedding provider for the given provider ID.
  *
- * Resolution order:
- * 1. Auth profiles (auth-profiles.json) — matched by key prefix or provider field
- * 2. Environment variables (OPENAI_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY)
- *
- * Returns null if no API key is found (does not throw).
+ * Uses the OpenClaw SDK for credential resolution (auth profiles, env
+ * vars, profile precedence). Returns null if no API key is found.
  */
-export function tryCreateStandaloneProvider(
+export async function tryCreateStandaloneProvider(
   providerId: string,
-  profiles: AuthProfiles,
+  cfg: OpenClawConfig,
+  agentDir?: string,
   model?: string,
   logger?: Logger,
-): MemoryEmbeddingProvider | null {
+): Promise<MemoryEmbeddingProvider | null> {
   if (providerId !== "openai" && providerId !== "gemini") return null;
 
-  const apiKey = resolveEmbeddingApiKey(profiles, providerId, logger);
+  const apiKey = await resolveEmbeddingApiKey(cfg, providerId, agentDir);
   if (!apiKey) {
     logger?.warn(`Standalone embedding: no API key found for ${providerId}`);
     return null;
@@ -382,16 +342,13 @@ export function tryCreateStandaloneProvider(
  * warned about here because at least one is expected to succeed. The
  * caller warns only if the entire auto-select returns null.
  */
-export function autoSelectStandaloneProvider(
-  profiles: AuthProfiles,
+export async function autoSelectStandaloneProvider(
+  cfg: OpenClawConfig,
+  agentDir?: string,
   logger?: Logger,
-): MemoryEmbeddingProvider | null {
+): Promise<MemoryEmbeddingProvider | null> {
   for (const id of ["openai", "gemini"] as const) {
-    // Resolve the key directly with the logger so multi-profile ambiguity
-    // warnings surface. Going through tryCreateStandaloneProvider would also
-    // emit per-provider "no key" warnings, which are expected noise during
-    // auto-probing.
-    const apiKey = resolveEmbeddingApiKey(profiles, id, logger);
+    const apiKey = await resolveEmbeddingApiKey(cfg, id, agentDir);
     if (!apiKey) continue;
     return id === "openai" ? createOpenAiProvider(apiKey) : createGeminiProvider(apiKey);
   }

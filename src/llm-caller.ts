@@ -134,32 +134,3 @@ async function callOpenAi(
 
 // fetchWithTimeout moved to ./http.ts — shared between LLM and embedding callers.
 
-// -- Auth profile resolution --
-
-/**
- * Extract an API key from OpenClaw auth profiles.
- * Tries the specified provider, falls back to the other.
- */
-export function resolveApiKey(
-  authProfiles: Record<string, { provider?: string; key?: string }> | undefined,
-  preferredProvider: LlmProvider,
-): { provider: LlmProvider; apiKey: string } | null {
-  if (!authProfiles) return null;
-
-  // Try preferred provider first
-  for (const profile of Object.values(authProfiles)) {
-    if (profile.provider === preferredProvider && profile.key) {
-      return { provider: preferredProvider, apiKey: profile.key };
-    }
-  }
-
-  // Fallback: try the other provider
-  const fallback: LlmProvider = preferredProvider === "anthropic" ? "openai" : "anthropic";
-  for (const profile of Object.values(authProfiles)) {
-    if (profile.provider === fallback && profile.key) {
-      return { provider: fallback, apiKey: profile.key };
-    }
-  }
-
-  return null;
-}
