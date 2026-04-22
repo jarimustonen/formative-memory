@@ -1942,6 +1942,54 @@ describe("parseExtractionResponse", () => {
     expect(facts).toHaveLength(1);
     expect(facts[0].type).toBe("goal");
   });
+
+  it("filters out facts with durable_beyond_current_task: false", () => {
+    const response = JSON.stringify([
+      { reasoning: "Lasting preference", durable_beyond_current_task: true, type: "preference", content: "User prefers dark mode" },
+      { reasoning: "Only relevant to this task", durable_beyond_current_task: false, type: "work", content: "Currently debugging auth middleware" },
+    ]);
+    const facts = parseExtractionResponse(response);
+    expect(facts).toHaveLength(1);
+    expect(facts[0].content).toBe("User prefers dark mode");
+  });
+
+  it("keeps facts when durable_beyond_current_task is missing (backward compat)", () => {
+    const response = '[{"type": "fact", "content": "User lives in Helsinki"}]';
+    const facts = parseExtractionResponse(response);
+    expect(facts).toHaveLength(1);
+    expect(facts[0].content).toBe("User lives in Helsinki");
+    expect(facts[0].durable_beyond_current_task).toBeUndefined();
+  });
+
+  it("preserves reasoning field on parsed facts", () => {
+    const response = JSON.stringify([
+      { reasoning: "Explicit language preference", durable_beyond_current_task: true, type: "preference", content: "User prefers Rust" },
+    ]);
+    const facts = parseExtractionResponse(response);
+    expect(facts).toHaveLength(1);
+    expect(facts[0].reasoning).toBe("Explicit language preference");
+    expect(facts[0].durable_beyond_current_task).toBe(true);
+  });
+
+  it("omits reasoning field when empty or non-string", () => {
+    const response = JSON.stringify([
+      { reasoning: "", durable_beyond_current_task: true, type: "fact", content: "Some fact" },
+      { reasoning: 42, durable_beyond_current_task: true, type: "fact", content: "Another fact" },
+    ]);
+    const facts = parseExtractionResponse(response);
+    expect(facts).toHaveLength(2);
+    expect(facts[0].reasoning).toBeUndefined();
+    expect(facts[1].reasoning).toBeUndefined();
+  });
+
+  it("filters all facts when all are non-durable", () => {
+    const response = JSON.stringify([
+      { reasoning: "Ephemeral", durable_beyond_current_task: false, type: "work", content: "Task: fix login bug" },
+      { reasoning: "Ephemeral", durable_beyond_current_task: false, type: "fact", content: "Running npm test" },
+    ]);
+    const facts = parseExtractionResponse(response);
+    expect(facts).toHaveLength(0);
+  });
 });
 
 // -- buildExtractionPrompt --
@@ -1953,6 +2001,12 @@ describe("buildExtractionPrompt", () => {
     expect(prompt).toContain("Assistant: Hi there");
     expect(prompt).toContain("memory extraction");
     expect(prompt).toContain("JSON array");
+  });
+
+  it("requests reasoning and durable_beyond_current_task fields", () => {
+    const prompt = buildExtractionPrompt("User: test");
+    expect(prompt).toContain("reasoning");
+    expect(prompt).toContain("durable_beyond_current_task");
   });
 });
 
@@ -2056,7 +2110,7 @@ describe("afterTurn() auto-capture", () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
-        content: [{ type: "text", text: '[{"type": "fact", "content": "User is moving to Berlin"}]' }],
+        content: [{ type: "text", text: '[{"reasoning": "Life event with future date", "durable_beyond_current_task": true, "type": "fact", "content": "User is moving to Berlin"}]' }],
       }),
     }) as any;
 

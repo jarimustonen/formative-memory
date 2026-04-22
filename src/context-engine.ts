@@ -744,7 +744,8 @@ Rules:
 - Do NOT extract: the current task request itself, ephemeral implementation details, assistant reasoning, pleasantries, or transient operational context.
 - Each fact should be a single, self-contained statement.
 - Most conversation turns contain nothing worth remembering long-term — returning an empty array is expected and correct. Only extract when there is clearly durable information.
-- Return a JSON array of objects, each with "type" and "content" fields.
+- For each candidate fact, reason about whether it is durable beyond the current task. Include a brief "reasoning" field and a "durable_beyond_current_task" boolean. Facts that are only relevant to the current task should have durable_beyond_current_task: false and will be discarded.
+- Return a JSON array of objects, each with "reasoning", "durable_beyond_current_task", "type", and "content" fields.
 - Valid types: "preference", "about", "person", "event", "goal", "work", "fact"
   - preference: tastes, values, styles, dislikes
   - about: background, identity, skills, life situation
@@ -756,7 +757,7 @@ Rules:
 - Return ONLY the JSON array, nothing else.
 
 Example output:
-[{"type": "preference", "content": "User prefers TypeScript over JavaScript for backend work"}, {"type": "event", "content": "User is moving to Berlin in May 2026"}, {"type": "work", "content": "Project must support SQLite only, no Postgres"}]
+[{"reasoning": "Taste preference that persists across contexts", "durable_beyond_current_task": true, "type": "preference", "content": "User dislikes cilantro"}, {"reasoning": "Life event with a specific future date", "durable_beyond_current_task": true, "type": "event", "content": "User is moving to Berlin in May 2026"}, {"reasoning": "Family detail worth remembering across conversations", "durable_beyond_current_task": true, "type": "person", "content": "User has a daughter named Lyra who is 4 years old"}]
 
 Conversation:
 ${turnContent}`;
@@ -766,6 +767,8 @@ ${turnContent}`;
 export type ExtractedFact = {
   type: string;
   content: string;
+  reasoning?: string;
+  durable_beyond_current_task?: boolean;
 };
 
 const VALID_FACT_TYPES = new Set(["preference", "about", "person", "event", "goal", "work", "fact"]);
@@ -799,8 +802,20 @@ export function parseExtractionResponse(response: string): ExtractedFact[] {
     const obj = item as Record<string, unknown>;
     if (typeof obj.type !== "string" || typeof obj.content !== "string") continue;
     if (!obj.content.trim()) continue;
+
+    // Filter out facts explicitly marked as not durable.
+    // If the field is missing, keep the fact (safe default for backward compatibility).
+    if (obj.durable_beyond_current_task === false) continue;
+
     const type = VALID_FACT_TYPES.has(obj.type) ? obj.type : "fact";
-    facts.push({ type, content: obj.content.trim() });
+    const fact: ExtractedFact = { type, content: obj.content.trim() };
+    if (typeof obj.reasoning === "string" && obj.reasoning.trim()) {
+      fact.reasoning = obj.reasoning.trim();
+    }
+    if (typeof obj.durable_beyond_current_task === "boolean") {
+      fact.durable_beyond_current_task = obj.durable_beyond_current_task;
+    }
+    facts.push(fact);
   }
   return facts;
 }
