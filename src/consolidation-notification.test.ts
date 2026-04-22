@@ -74,6 +74,14 @@ describe("buildSummaryPrompt", () => {
 });
 
 describe("formatConsolidationNotification", () => {
+  // Notification level contract for SUCCESS path (this function):
+  //   off     → null (no notification)
+  //   errors  → null (no notification — errors are surfaced by caller catch blocks)
+  //   summary → LLM-generated text
+  //   detailed → technical report
+  //
+  // Error path is handled by caller catch blocks in index.ts, not by this function.
+
   it("returns null when level is off", async () => {
     const result = await formatConsolidationNotification(baseResult, {
       level: "off",
@@ -178,6 +186,9 @@ describe("buildTemporalSummaryPrompt", () => {
 });
 
 describe("formatTemporalNotification", () => {
+  // Same notification level contract as formatConsolidationNotification.
+  // See comment above for the full level → behavior table.
+
   it("returns null when level is off", async () => {
     const result = await formatTemporalNotification(3, { level: "off", llmConfig: null });
     expect(result).toBeNull();

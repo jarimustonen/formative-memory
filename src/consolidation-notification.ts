@@ -1,9 +1,16 @@
 /**
- * Consolidation notification formatting.
+ * Consolidation notification formatting (success path only).
  *
- * Routes consolidation results to the appropriate notification format
- * based on the configured level: off, errors (silent unless failure),
- * summary (LLM-generated), or detailed.
+ * Routes successful consolidation/temporal results to the appropriate
+ * notification format based on the configured level:
+ *
+ *   off      → null (no notifications at all, not even errors)
+ *   errors   → null here (errors are surfaced by caller catch blocks)
+ *   summary  → LLM-generated natural-language summary
+ *   detailed → technical report with counts
+ *
+ * Error notifications are NOT handled here — callers gate their own
+ * catch-block replies based on the notification level.
  */
 
 import type { NotificationLevel } from "./config.ts";
