@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { EmbeddingProvider } from "./memory-manager.ts";
-import { MemoryManager } from "./memory-manager.ts";
+import { MemoryManager, buildFtsQueries } from "./memory-manager.ts";
 
 let memDir: string;
 let manager: MemoryManager;
@@ -238,5 +238,122 @@ describe("MemoryManager", () => {
       expect(s.total).toBe(2);
       expect(s.working).toBe(2);
     });
+  });
+});
+
+// -- buildFtsQueries unit tests --
+
+describe("buildFtsQueries", () => {
+  it("returns empty for empty/whitespace query", () => {
+    expect(buildFtsQueries("")).toEqual([]);
+    expect(buildFtsQueries("   ")).toEqual([]);
+  });
+
+  it("returns single quoted term for one-word query", () => {
+    expect(buildFtsQueries("hello")).toEqual(['"hello"']);
+  });
+
+  it("returns phrase, AND, OR for multi-word query", () => {
+    const queries = buildFtsQueries("release deadline");
+    expect(queries).toHaveLength(3);
+    expect(queries[0]).toBe('"release deadline"');
+    expect(queries[1]).toBe('"release" AND "deadline"');
+    expect(queries[2]).toBe('"release" OR "deadline"');
+  });
+
+  it("strips punctuation from terms", () => {
+    const queries = buildFtsQueries("hello, world!");
+    expect(queries).toHaveLength(3);
+    expect(queries[0]).toBe('"hello world"');
+  });
+
+  it("handles query with only punctuation", () => {
+    expect(buildFtsQueries("!@#$%")).toEqual([]);
+  });
+});
+
+// -- BM25-only integration tests --
+
+describe("BM25-only search", () => {
+  let bm25Dir: string;
+  let bm25Manager: MemoryManager;
+
+  // Embedder that always fails — forces BM25-only mode
+  const failingEmbedder: EmbeddingProvider = {
+    async embed(_text: string): Promise<number[]> {
+      const { EmbeddingCircuitOpenError } = await import("./embedding-circuit-breaker.ts");
+      throw new EmbeddingCircuitOpenError();
+    },
+  };
+
+  beforeEach(() => {
+    bm25Dir = join(tmpdir(), `amem-bm25-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(bm25Dir, { recursive: true });
+    bm25Manager = new MemoryManager(bm25Dir, failingEmbedder);
+  });
+
+  afterEach(() => {
+    bm25Manager.close();
+    rmSync(bm25Dir, { recursive: true, force: true });
+  });
+
+  it("finds exact term matches without embeddings", async () => {
+    await bm25Manager.store({ content: "Alpha release deadline is April 15", type: "event", source: "agent_tool" });
+    await bm25Manager.store({ content: "Beta release scheduled for June", type: "event", source: "agent_tool" });
+    await bm25Manager.store({ content: "User prefers dark mode", type: "preference", source: "agent_tool" });
+
+    const results = await bm25Manager.search("release deadline");
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].memory.content).toContain("deadline");
+  });
+
+  it("OR pass finds partial matches", async () => {
+    await bm25Manager.store({ content: "Project deadline is Friday", type: "event", source: "agent_tool" });
+    await bm25Manager.store({ content: "Meeting scheduled for Monday morning", type: "event", source: "agent_tool" });
+
+    // "deadline morning" — no single memory has both terms, but OR should find both
+    const results = await bm25Manager.search("deadline morning");
+    expect(results.length).toBe(2);
+  });
+
+  it("returns empty for completely unrelated query", async () => {
+    await bm25Manager.store({ content: "The cat sat on the mat", type: "fact", source: "agent_tool" });
+    const results = await bm25Manager.search("quantum physics");
+    expect(results).toHaveLength(0);
+  });
+
+  it("ranks memories with more term overlap higher", async () => {
+    await bm25Manager.store({ content: "Alpha release deadline for the project", type: "event", source: "agent_tool" });
+    await bm25Manager.store({ content: "The project uses TypeScript", type: "fact", source: "agent_tool" });
+
+    const results = await bm25Manager.search("alpha release deadline project");
+    expect(results.length).toBeGreaterThan(0);
+    // Memory with more matching terms should rank first
+    expect(results[0].memory.content).toContain("Alpha release deadline");
+  });
+
+  it("respects strength in BM25-only ranking", async () => {
+    await bm25Manager.store({ content: "Important deadline fact", type: "fact", source: "agent_tool" });
+    await bm25Manager.store({ content: "Another deadline fact", type: "fact", source: "agent_tool" });
+
+    const db = bm25Manager.getDatabase();
+    const all = db.getAllMemories();
+    // Make one memory much stronger
+    db.updateStrength(all[0].id, 0.9);
+    db.updateStrength(all[1].id, 0.1);
+
+    const results = await bm25Manager.search("deadline fact");
+    expect(results.length).toBe(2);
+    // Stronger memory should rank first (both match equally on BM25)
+    expect(results[0].memory.strength).toBeGreaterThan(results[1].memory.strength);
+  });
+
+  it("prefix query works with prefix indexes", async () => {
+    await bm25Manager.store({ content: "TypeScript configuration guide", type: "fact", source: "agent_tool" });
+
+    // FTS5 prefix query — should match "TypeScript" via prefix index
+    const db = bm25Manager.getDatabase();
+    const results = db.searchFtsJoined('"Type"*', 10);
+    expect(results.length).toBeGreaterThan(0);
   });
 });
