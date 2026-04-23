@@ -1,13 +1,25 @@
 {
   "id": "formative-memory",
   "name": "Formative Memory",
-  "version": "0.4.4",
-  "kind": ["memory", "context-engine"],
+  "version": "0.5.0",
+  "kind": [
+    "memory",
+    "context-engine"
+  ],
   "description": "Self-optimizing memory that strengthens relevant context through use, builds associations, and consolidates during sleep.",
   "commandAliases": [
-    { "name": "memory-sleep", "kind": "runtime-slash" },
-    { "name": "memory-migrate", "kind": "runtime-slash" },
-    { "name": "memory-cleanup", "kind": "runtime-slash" }
+    {
+      "name": "memory-sleep",
+      "kind": "runtime-slash"
+    },
+    {
+      "name": "memory-migrate",
+      "kind": "runtime-slash"
+    },
+    {
+      "name": "memory-cleanup",
+      "kind": "runtime-slash"
+    }
   ],
   "contracts": {
     "tools": [
@@ -19,8 +31,15 @@
     ]
   },
   "activation": {
-    "onCommands": ["memory-sleep", "memory-migrate", "memory-cleanup"],
-    "onCapabilities": ["tool", "hook"]
+    "onCommands": [
+      "memory-sleep",
+      "memory-migrate",
+      "memory-cleanup"
+    ],
+    "onCapabilities": [
+      "tool",
+      "hook"
+    ]
   },
   "setup": {
     "requiresRuntime": true
