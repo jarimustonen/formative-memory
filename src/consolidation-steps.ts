@@ -250,46 +250,85 @@ export function applyAssociationDecay(db: MemoryDatabase): void {
 /** Minimum weight for a transitive association to be created. */
 export const TRANSITIVE_WEIGHT_THRESHOLD = 0.1;
 
-/** Base weight for a new co-retrieval association. */
-const CO_RETRIEVAL_BASE_WEIGHT = 0.1;
+/**
+ * Association weight when two memories arrived through different channels
+ * in the same turn (e.g. search + temporal injection). This is a stronger
+ * signal — different retrieval mechanisms independently converging on two
+ * memories indicates a genuine contextual relationship.
+ */
+const CO_RETRIEVAL_CROSS_CHANNEL_WEIGHT = 0.15;
+
+/**
+ * Association weight when two memories arrived through the same channel
+ * (e.g. both from the same search query). Weaker signal — they were
+ * already semantically similar enough to be co-retrieved by one mechanism.
+ */
+const CO_RETRIEVAL_SAME_CHANNEL_WEIGHT = 0.05;
+
+/**
+ * Compare two sorted mode arrays for equality.
+ */
+function modesEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
 
 /**
  * Update associations from co-retrieval events in the exposure table.
  *
- * Memories exposed in the same turn are co-retrieved and get an
- * association. Uses probabilistic OR for weight accumulation:
- * f(a,b) = a + b - a*b.
+ * Channel-aware weighting: memories arriving through different exposure
+ * channels (e.g. search + temporal, or search + tool_get) form stronger
+ * associations than memories arriving through the same channel.
  *
- * Reads from turn_memory_exposure (SQLite) instead of retrieval.log,
- * which avoids replay-on-rerun issues. Exposure data is written by
- * afterTurn() and is already canonical in the DB.
+ * Cross-channel is determined by comparing each memory's full set of
+ * exposure modes in a turn. If the mode sets differ, the pair is
+ * cross-channel (stronger signal). If identical, same-channel (weaker).
+ *
+ * Uses probabilistic OR for weight accumulation: f(a,b) = a + b - a*b.
+ *
+ * Only processes exposure rows created since the last consolidation to
+ * avoid replaying already-processed co-retrieval events. On first run
+ * (lastConsolidationAt is null), processes all rows.
  *
  * Returns count of associations updated.
  */
 export function updateCoRetrievalAssociations(db: MemoryDatabase, log: Logger = nullLogger): number {
-  const groups = db.getCoRetrievalGroups();
+  const lastConsolidationAt = db.getState("last_consolidation_at");
+  const groups = db.getCoRetrievalGroupsWithModes(lastConsolidationAt);
   const now = new Date().toISOString();
   const validIds = new Set(db.getAllMemories().map((m) => m.id));
   const debug = log.isDebugEnabled();
   let count = 0;
+  let crossChannelCount = 0;
 
   for (const group of groups) {
-    const ids = group.memory_ids.filter((id) => validIds.has(id));
-    if (ids.length < 2) continue;
+    const entries = group.entries.filter((e) => validIds.has(e.memory_id));
+    if (entries.length < 2) continue;
 
-    for (let i = 0; i < ids.length; i++) {
-      for (let j = i + 1; j < ids.length; j++) {
-        db.upsertAssociationProbOr(ids[i], ids[j], CO_RETRIEVAL_BASE_WEIGHT, now);
+    for (let i = 0; i < entries.length; i++) {
+      for (let j = i + 1; j < entries.length; j++) {
+        const crossChannel = !modesEqual(entries[i].modes, entries[j].modes);
+        const delta = crossChannel
+          ? CO_RETRIEVAL_CROSS_CHANNEL_WEIGHT
+          : CO_RETRIEVAL_SAME_CHANNEL_WEIGHT;
+
+        db.upsertAssociationProbOr(entries[i].memory_id, entries[j].memory_id, delta, now);
         if (debug) {
-          log.debug(`associate: co-retrieval ${ids[i].slice(0, 8)}…↔${ids[j].slice(0, 8)}… (+${CO_RETRIEVAL_BASE_WEIGHT})`);
+          log.debug(
+            `associate: co-retrieval ${entries[i].memory_id.slice(0, 8)}…↔${entries[j].memory_id.slice(0, 8)}… (+${delta} ${crossChannel ? "cross-channel" : "same-channel"})`,
+          );
         }
         count++;
+        if (crossChannel) crossChannelCount++;
       }
     }
   }
 
   if (count > 0) {
-    log.info(`associate: ${count} co-retrieval associations updated from ${groups.length} turn groups`);
+    log.info(`associate: ${count} co-retrieval associations updated (${crossChannelCount} cross-channel) from ${groups.length} turn groups`);
   }
 
   return count;

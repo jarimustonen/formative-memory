@@ -531,7 +531,7 @@ describe("AssociativeMemoryContextEngine assemble()", () => {
     expect(result.systemPromptAddition).toContain("<memory_context>");
     expect(result.systemPromptAddition).toContain("PostgreSQL");
     expect(result.estimatedTokens).toBe(0);
-    expect(manager.recall).toHaveBeenCalledWith("What database do we use?", 5);
+    expect(manager.recall).toHaveBeenCalledWith("What database do we use?", 8);
   });
 
   it("returns no injection when no query available", async () => {
@@ -561,7 +561,7 @@ describe("AssociativeMemoryContextEngine assemble()", () => {
     });
 
     expect(result.systemPromptAddition).toContain("<memory_context>");
-    expect(manager.recall).toHaveBeenCalledWith("Tell me about the DB", 5);
+    expect(manager.recall).toHaveBeenCalledWith("Tell me about the DB", 8);
   });
 
   it("falls back to prompt when no user messages", async () => {
@@ -575,7 +575,7 @@ describe("AssociativeMemoryContextEngine assemble()", () => {
     });
 
     expect(result.systemPromptAddition).toContain("<memory_context>");
-    expect(manager.recall).toHaveBeenCalledWith("some query", 5);
+    expect(manager.recall).toHaveBeenCalledWith("some query", 8);
   });
 
   it("skips injection when budget is 'none'", async () => {
@@ -609,7 +609,7 @@ describe("AssociativeMemoryContextEngine assemble()", () => {
       tokenBudget: 1000,
     });
 
-    expect(manager.recall).toHaveBeenCalledWith("test query", 3);
+    expect(manager.recall).toHaveBeenCalledWith("test query", 5);
   });
 
   it("uses minimal format at low budget", async () => {
@@ -628,7 +628,7 @@ describe("AssociativeMemoryContextEngine assemble()", () => {
 
     expect(result.systemPromptAddition).toContain("memory_get");
     expect(result.systemPromptAddition).not.toContain("<memory_context>");
-    expect(manager.recall).toHaveBeenCalledWith("test query", 1);
+    expect(manager.recall).toHaveBeenCalledWith("test query", 2);
   });
 
   it("returns no injection when recall returns empty", async () => {
@@ -722,7 +722,7 @@ describe("AssociativeMemoryContextEngine assemble()", () => {
     });
 
     expect(result.systemPromptAddition).toContain("<memory_context>");
-    expect(manager.recall).toHaveBeenCalledWith("What about the database?", 5);
+    expect(manager.recall).toHaveBeenCalledWith("What about the database?", 8);
   });
 
   it("passes messages through unchanged", async () => {
@@ -751,8 +751,8 @@ describe("AssociativeMemoryContextEngine assemble()", () => {
       prompt: "test query",
     });
 
-    // High budget normally uses limit=5, but with Active Memory → limit=3
-    expect(manager.recall).toHaveBeenCalledWith("test query", 3);
+    // High budget normally uses limit=8, but with Active Memory → limit=5
+    expect(manager.recall).toHaveBeenCalledWith("test query", 5);
   });
 
   it("reduces recall limit when activeMemoryEnabled is true (medium budget)", async () => {
@@ -772,8 +772,8 @@ describe("AssociativeMemoryContextEngine assemble()", () => {
       tokenBudget: 1000,
     });
 
-    // Medium budget normally uses limit=3, but with Active Memory → limit=2
-    expect(manager.recall).toHaveBeenCalledWith("test query", 2);
+    // Medium budget normally uses limit=5, but with Active Memory → limit=3
+    expect(manager.recall).toHaveBeenCalledWith("test query", 3);
   });
 
   it("uses default recall limits when activeMemoryEnabled is false", async () => {
@@ -789,7 +789,7 @@ describe("AssociativeMemoryContextEngine assemble()", () => {
       prompt: "test query",
     });
 
-    expect(manager.recall).toHaveBeenCalledWith("test query", 5);
+    expect(manager.recall).toHaveBeenCalledWith("test query", 8);
   });
 
   it("accepts availableTools and citationsMode params", async () => {

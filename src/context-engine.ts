@@ -75,9 +75,9 @@ function recallLimitForBudget(budgetClass: BudgetClass, activeMemoryEnabled = fa
     // does not cover.
     switch (budgetClass) {
       case "high":
-        return 3;
+        return 5;
       case "medium":
-        return 2;
+        return 3;
       case "low":
         return 1;
       case "none":
@@ -86,11 +86,11 @@ function recallLimitForBudget(budgetClass: BudgetClass, activeMemoryEnabled = fa
   }
   switch (budgetClass) {
     case "high":
-      return 5;
+      return 8;
     case "medium":
-      return 3;
+      return 5;
     case "low":
-      return 1;
+      return 2;
     case "none":
       return 0;
   }

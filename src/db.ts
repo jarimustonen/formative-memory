@@ -106,6 +106,9 @@ CREATE INDEX IF NOT EXISTS idx_attribution_turn_id ON message_memory_attribution
 CREATE INDEX IF NOT EXISTS idx_memories_strength ON memories(strength);
 CREATE INDEX IF NOT EXISTS idx_memories_created_at ON memories(created_at);
 
+-- Association lookup indexes (PK covers memory_a but not memory_b)
+CREATE INDEX IF NOT EXISTS idx_associations_memory_b ON associations(memory_b);
+
 -- Alias table: maps deleted/merged memory IDs to their replacement
 CREATE TABLE IF NOT EXISTS memory_aliases (
   old_id TEXT PRIMARY KEY,
@@ -605,12 +608,58 @@ export class MemoryDatabase {
       .all(query, limit) as Array<MemoryRow & { rank: number }>;
   }
 
+  // -- Bulk lookups --
+
+  /**
+   * Bulk fetch memories by IDs. Single query instead of per-id lookups.
+   * Note: SQLite limits variables per query (often 999). Current callers
+   * pass small arrays (~40 IDs). Chunk if used with larger inputs.
+   */
+  getMemoriesByIds(ids: string[]): Map<string, MemoryRow> {
+    if (ids.length === 0) return new Map();
+    const placeholders = ids.map(() => "?").join(",");
+    const rows = this.db
+      .prepare(`SELECT * FROM memories WHERE id IN (${placeholders})`)
+      .all(...ids) as MemoryRow[];
+    const map = new Map<string, MemoryRow>();
+    for (const row of rows) {
+      map.set(row.id, row);
+    }
+    return map;
+  }
+
   // -- Associations --
 
   getAssociations(memoryId: string): Association[] {
     return this.db
       .prepare("SELECT * FROM associations WHERE memory_a = ? OR memory_b = ?")
       .all(memoryId, memoryId) as Association[];
+  }
+
+  /**
+   * Bulk fetch associations for multiple memory IDs. Single query with IN clause.
+   * Note: binds 2×memoryIds.length variables (OR on both columns).
+   * SQLite limits variables per query (often 999). Current callers pass
+   * small arrays (~8 IDs). Chunk if used with larger inputs.
+   */
+  getAssociationsBatch(memoryIds: string[]): Map<string, Association[]> {
+    if (memoryIds.length === 0) return new Map();
+    const placeholders = memoryIds.map(() => "?").join(",");
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM associations
+         WHERE memory_a IN (${placeholders}) OR memory_b IN (${placeholders})`,
+      )
+      .all(...memoryIds, ...memoryIds) as Association[];
+    const map = new Map<string, Association[]>();
+    for (const id of memoryIds) {
+      map.set(id, []);
+    }
+    for (const row of rows) {
+      map.get(row.memory_a)?.push(row);
+      map.get(row.memory_b)?.push(row);
+    }
+    return map;
   }
 
   upsertAssociation(a: string, b: string, weight: number, now: string): void {
@@ -960,6 +1009,63 @@ export class MemoryDatabase {
     return rows.map((r) => ({
       turn_id: r.turn_id,
       memory_ids: r.memory_ids.split(","),
+    }));
+  }
+
+  /**
+   * Get co-retrieval groups with all exposure modes per memory.
+   * Used for channel-aware association weighting: memories arriving through
+   * different channels (e.g. search + temporal) form stronger associations
+   * than memories arriving through the same channel.
+   *
+   * @param since Only include exposures created after this timestamp.
+   *   Pass `last_consolidation_at` to avoid replaying already-processed
+   *   co-retrieval events. If null, processes all rows (first run).
+   */
+  getCoRetrievalGroupsWithModes(since: string | null): Array<{
+    turn_id: string;
+    entries: Array<{ memory_id: string; modes: string[] }>;
+  }> {
+    const sinceClause = since ? "AND created_at > ?" : "";
+    const params = since ? [since, since] : [];
+
+    const rows = this.db
+      .prepare(
+        `SELECT turn_id, memory_id, mode
+         FROM turn_memory_exposure
+         WHERE turn_id IN (
+           SELECT turn_id FROM turn_memory_exposure
+           WHERE 1=1 ${sinceClause.replace("AND", "AND")}
+           GROUP BY turn_id
+           HAVING COUNT(DISTINCT memory_id) >= 2
+         )
+         ${sinceClause}
+         ORDER BY turn_id, memory_id, mode`,
+      )
+      .all(...params) as Array<{ turn_id: string; memory_id: string; mode: string }>;
+
+    // Aggregate all modes per memory per turn
+    const groups = new Map<string, Map<string, Set<string>>>();
+    for (const row of rows) {
+      let byMemory = groups.get(row.turn_id);
+      if (!byMemory) {
+        byMemory = new Map();
+        groups.set(row.turn_id, byMemory);
+      }
+      let modes = byMemory.get(row.memory_id);
+      if (!modes) {
+        modes = new Set();
+        byMemory.set(row.memory_id, modes);
+      }
+      modes.add(row.mode);
+    }
+
+    return Array.from(groups, ([turn_id, byMemory]) => ({
+      turn_id,
+      entries: Array.from(byMemory, ([memory_id, modes]) => ({
+        memory_id,
+        modes: [...modes].sort(),
+      })),
     }));
   }
 

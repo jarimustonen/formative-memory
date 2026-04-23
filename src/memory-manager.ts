@@ -216,18 +216,11 @@ export class MemoryManager {
         hybridScore *= Math.exp(-ageDays / 180);
       }
 
-      // TODO: Association-based boosting — boost candidates that have associations
-      // with recently-exposed memories. Deferred to a separate branch.
-
-      // TODO: Provenance-based ranking signals — boost memories with high historical
-      // attribution confidence for similar queries. Carries significant self-reinforcement
-      // risk (popular memories become permanently over-retrievable). Consider carefully.
-
       const finalScore = hybridScore * strength;
       scored.push({ id, score: finalScore });
     }
 
-    scored.sort((a, b) => b.score - a.score);
+    scored.sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
     const topIds = scored.slice(0, limit);
 
     // Log search event
@@ -277,10 +270,111 @@ export class MemoryManager {
     return this.rowToMemory(row);
   }
 
-  // -- Auto-recall --
+  // -- Association-augmented recall --
+
+  /** Association expansion thresholds */
+  private static readonly SEED_THRESHOLD = 0.3;
+  private static readonly ASSOCIATION_BOOST = 0.6;
+  private static readonly MIN_ASSOCIATION_WEIGHT = 0.15;
+  private static readonly MIN_ASSOCIATION_STRENGTH = 0.1;
+  private static readonly MAX_EXPANSION_PER_SEED = 5;
+
+  /**
+   * Search augmented with single-hop association expansion.
+   *
+   * 1. Run standard hybrid search
+   * 2. Use top results as seeds — expand their associations
+   * 3. Score association candidates and merge into a single pool
+   * 4. Return top-K by score
+   *
+   * Single-path association scores are capped by ASSOCIATION_BOOST (0.6),
+   * but convergent activation from multiple seeds can exceed this via
+   * probabilistic OR — this is intentional: a memory strongly linked to
+   * several relevant results deserves a high score.
+   */
+  async augmentedSearch(query: string, limit: number): Promise<SearchResult[]> {
+    // Phase 1: Standard hybrid search
+    const directResults = await this.search(query, limit);
+
+    // Phase 2: Expand associations from seeds
+    const seeds = directResults.filter(
+      (r) => r.score >= MemoryManager.SEED_THRESHOLD,
+    );
+    if (seeds.length === 0) {
+      return directResults;
+    }
+
+    const seedIds = seeds.map((s) => s.memory.id);
+    const directIds = new Set(directResults.map((r) => r.memory.id));
+    const allAssociations = this.db.getAssociationsBatch(seedIds);
+    const candidateMap = new Map<string, number>(); // neighborId → activation
+
+    for (const seed of seeds) {
+      const assocs = allAssociations.get(seed.memory.id) ?? [];
+      const topAssocs = assocs
+        .filter((a) => a.weight >= MemoryManager.MIN_ASSOCIATION_WEIGHT)
+        .sort(
+          (a, b) =>
+            b.weight - a.weight ||
+            (b.last_updated_at ?? b.created_at).localeCompare(
+              a.last_updated_at ?? a.created_at,
+            ),
+        )
+        .slice(0, MemoryManager.MAX_EXPANSION_PER_SEED);
+
+      for (const assoc of topAssocs) {
+        const neighborId =
+          assoc.memory_a === seed.memory.id
+            ? assoc.memory_b
+            : assoc.memory_a;
+        if (directIds.has(neighborId)) continue;
+
+        const activation =
+          seed.score * assoc.weight * MemoryManager.ASSOCIATION_BOOST;
+        const existing = candidateMap.get(neighborId);
+        if (existing != null) {
+          // Convergent activation: probabilistic OR
+          candidateMap.set(neighborId, existing + activation - existing * activation);
+        } else {
+          candidateMap.set(neighborId, activation);
+        }
+      }
+    }
+
+    if (candidateMap.size === 0) {
+      return directResults;
+    }
+
+    // Phase 3: Score association candidates (bulk fetch)
+    const neighborIds = [...candidateMap.keys()];
+    const neighborRows = this.db.getMemoriesByIds(neighborIds);
+
+    const assocResults: SearchResult[] = [];
+    for (const [id, activation] of candidateMap) {
+      const row = neighborRows.get(id);
+      if (!row || row.strength < MemoryManager.MIN_ASSOCIATION_STRENGTH) continue;
+      const memory = this.rowToMemory(row);
+      if (!memory) continue;
+      assocResults.push({ memory, score: activation * row.strength });
+    }
+
+    // Phase 4: Merge into single pool, top-K wins
+    const merged = [...directResults, ...assocResults];
+    merged.sort((a, b) => b.score - a.score || a.memory.id.localeCompare(b.memory.id));
+
+    const assocSelected = merged.slice(0, limit).filter(
+      (r) => !directIds.has(r.memory.id),
+    ).length;
+
+    this.logger?.debug(
+      `augmentedSearch: seeds=${seeds.length} expanded=${candidateMap.size} assocSelected=${assocSelected} limit=${limit}`,
+    );
+
+    return merged.slice(0, limit);
+  }
 
   async recall(prompt: string, limit = 3): Promise<SearchResult[]> {
-    const results = await this.search(prompt, limit);
+    const results = await this.augmentedSearch(prompt, limit);
 
     // Log recall event
     appendRecallEvent(

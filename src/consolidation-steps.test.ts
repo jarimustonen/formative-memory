@@ -508,10 +508,10 @@ describe("updateCoRetrievalAssociations", () => {
 
     updateCoRetrievalAssociations(db);
 
-    // Two turns of co-retrieval: probabilistic OR twice
-    // First: 0 + 0.1 - 0*0.1 = 0.1
-    // Second: 0.1 + 0.1 - 0.1*0.1 = 0.19
-    expect(db.getAssociationWeight("mem-a", "mem-b")).toBeCloseTo(0.19, 5);
+    // Two turns of same-channel co-retrieval: probabilistic OR twice with 0.05
+    // First: 0 + 0.05 - 0*0.05 = 0.05
+    // Second: 0.05 + 0.05 - 0.05*0.05 = 0.0975
+    expect(db.getAssociationWeight("mem-a", "mem-b")).toBeCloseTo(0.0975, 5);
   });
 
   it("ignores turns with only one memory", () => {
@@ -541,6 +541,115 @@ describe("updateCoRetrievalAssociations", () => {
 
     const count = updateCoRetrievalAssociations(db);
     expect(count).toBe(0); // only one valid memory in the group
+  });
+
+  it("does not replay already-processed exposures on second run", () => {
+    insertMemory("mem-a", 0.5);
+    insertMemory("mem-b", 0.5);
+
+    insertExposure("s1", "t1", "mem-a");
+    insertExposure("s1", "t1", "mem-b");
+
+    // First run — sets last_consolidation_at
+    updateCoRetrievalAssociations(db);
+    const weightAfterFirst = db.getAssociationWeight("mem-a", "mem-b");
+    expect(weightAfterFirst).toBeGreaterThan(0);
+
+    // Simulate consolidation completing
+    db.setState("last_consolidation_at", "2026-03-02T00:00:00Z");
+
+    // Second run — same exposures, no new ones
+    updateCoRetrievalAssociations(db);
+    const weightAfterSecond = db.getAssociationWeight("mem-a", "mem-b");
+
+    // Weight must not increase on replay
+    expect(weightAfterSecond).toBe(weightAfterFirst);
+  });
+
+  it("applies cross-channel weight when modes differ", () => {
+    insertMemory("mem-a", 0.5);
+    insertMemory("mem-b", 0.5);
+
+    // mem-a via search, mem-b via temporal — different channels
+    db.insertExposure({
+      sessionId: "s1",
+      turnId: "t1",
+      memoryId: "mem-a",
+      mode: "tool_search_returned",
+      score: 0.8,
+      retrievalMode: "hybrid",
+      createdAt: "2026-03-01T00:00:00Z",
+    });
+    db.insertExposure({
+      sessionId: "s1",
+      turnId: "t1",
+      memoryId: "mem-b",
+      mode: "auto_injected",
+      score: 0.5,
+      retrievalMode: "hybrid",
+      createdAt: "2026-03-01T00:00:00Z",
+    });
+
+    updateCoRetrievalAssociations(db);
+
+    // Cross-channel weight = 0.15
+    expect(db.getAssociationWeight("mem-a", "mem-b")).toBeCloseTo(0.15, 5);
+  });
+
+  it("applies same-channel weight when modes are identical", () => {
+    insertMemory("mem-a", 0.5);
+    insertMemory("mem-b", 0.5);
+
+    // Both via tool_search_returned — same channel
+    insertExposure("s1", "t1", "mem-a");
+    insertExposure("s1", "t1", "mem-b");
+
+    updateCoRetrievalAssociations(db);
+
+    // Same-channel weight = 0.05
+    expect(db.getAssociationWeight("mem-a", "mem-b")).toBeCloseTo(0.05, 5);
+  });
+
+  it("treats multi-mode memory as cross-channel when mode sets differ", () => {
+    insertMemory("mem-a", 0.5);
+    insertMemory("mem-b", 0.5);
+
+    // mem-a exposed via both search AND temporal
+    db.insertExposure({
+      sessionId: "s1",
+      turnId: "t1",
+      memoryId: "mem-a",
+      mode: "tool_search_returned",
+      score: 0.8,
+      retrievalMode: "hybrid",
+      createdAt: "2026-03-01T00:00:00Z",
+    });
+    db.insertExposure({
+      sessionId: "s1",
+      turnId: "t1",
+      memoryId: "mem-a",
+      mode: "auto_injected",
+      score: 0.5,
+      retrievalMode: "hybrid",
+      createdAt: "2026-03-01T00:00:00Z",
+    });
+    // mem-b exposed only via search
+    db.insertExposure({
+      sessionId: "s1",
+      turnId: "t1",
+      memoryId: "mem-b",
+      mode: "tool_search_returned",
+      score: 0.8,
+      retrievalMode: "hybrid",
+      createdAt: "2026-03-01T00:00:00Z",
+    });
+
+    updateCoRetrievalAssociations(db);
+
+    // mem-a modes: [auto_injected, tool_search_returned]
+    // mem-b modes: [tool_search_returned]
+    // Sets differ → cross-channel weight = 0.15
+    expect(db.getAssociationWeight("mem-a", "mem-b")).toBeCloseTo(0.15, 5);
   });
 });
 
