@@ -97,6 +97,22 @@ function detectUserLanguage(workspaceDir: string): string | undefined {
   }
 }
 
+/** Salience profile filename within the memory workspace directory. */
+const SALIENCE_FILENAME = "salience.md";
+
+/**
+ * Read the salience profile from the memory workspace directory.
+ * Returns the raw file content, or null if the file does not exist.
+ * The content is injected as-is into prompts — no parsing or processing.
+ */
+function readSalienceContent(memoryDir: string): string | null {
+  try {
+    return readFileSync(join(memoryDir, SALIENCE_FILENAME), "utf-8");
+  } catch {
+    return null;
+  }
+}
+
 function jsonResult(payload: unknown) {
   return {
     content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
@@ -792,6 +808,20 @@ const associativeMemoryPlugin = {
           ? "**When to give feedback:** after using a retrieved memory — rate how useful it was."
           : "",
         "",
+        // Inject salience profile into agent system prompt so memory_store
+        // follows the same preferences as autoCapture extraction.
+        ...((): string[] => {
+          const salience = workspace ? readSalienceContent(workspace.memoryDir) : null;
+          if (!salience) return [];
+          return [
+            "## Memory Preferences",
+            "",
+            "The user has set the following memory preferences. Follow these when deciding what to store with `memory_store`.",
+            "",
+            salience,
+            "",
+          ];
+        })(),
       ];
     });
 
@@ -824,6 +854,7 @@ const associativeMemoryPlugin = {
         autoCapture: config.autoCapture,
         getLlmConfig: () => resolveLlmConfig(openclawConfig, runtimePaths.agentDir),
         activeMemoryEnabled,
+        getSalienceContent: () => readSalienceContent(getWorkspace(".").memoryDir),
       }),
     );
 

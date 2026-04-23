@@ -313,6 +313,10 @@ export type AssociativeMemoryContextEngineOptions = {
    *  Reduces recall limits to avoid redundant injection (Active Memory's sub-agent
    *  already performs proactive recall via our memory_search tool). */
   activeMemoryEnabled?: boolean;
+  /** Lazy accessor for salience profile content. Returns the raw file content
+   *  of salience.md, or null if no profile exists. Injected into extraction
+   *  prompt to guide what facts are extracted. */
+  getSalienceContent?: () => string | null;
 };
 
 export function createAssociativeMemoryContextEngine(
@@ -562,6 +566,7 @@ export function createAssociativeMemoryContextEngine(
               llmConfig,
               getManager(),
               options.logger,
+              options.getSalienceContent?.() ?? null,
             );
           }
         }
@@ -738,11 +743,25 @@ function truncate(text: string, maxLen: number): string {
 // -- LLM fact extraction --
 
 /** Extraction prompt sent to the LLM to distill facts from a conversation turn. */
-export function buildExtractionPrompt(turnContent: string): string {
+export function buildExtractionPrompt(turnContent: string, salienceContent?: string | null): string {
+  const salience = salienceContent
+    ? `\n\nUser's memory preferences (follow these strictly):\n${salienceContent}\n`
+    : "";
+
   return `You are a memory extraction system. Read the following conversation exchange and extract facts worth remembering long-term.
 
+What to extract — pay attention to information in these categories:
+- People: names, relationships, roles, key facts about people the user mentions.
+- Identity: who the user is — background, location, life situation, roles.
+- Preferences: tastes, values, style, dietary needs, dislikes, how they like things done.
+- Plans: upcoming events, deadlines, appointments, travel, commitments.
+- Goals: what they're working toward — career, personal, creative, learning.
+- Daily life: home, pets, routines, recurring patterns, living situation.
+- Work: job, projects, professional context, skills, constraints.
+- Knowledge: health details shared voluntarily, hobbies, interests, financial context when relevant.
+
 Rules:
-- Extract durable information: preferences, personal background, goals, plans, work/project context, relationships, recurring patterns, commitments, events, or corrections to prior knowledge.
+- Extract durable information that is specific, personal, and consequential — likely true next month, not just today.
 - Facts can come from any source: user statements, tool outputs, environment details, project configuration, or confirmed assistant observations.
 - Do NOT extract: the current task request itself, ephemeral implementation details, assistant reasoning, pleasantries, or transient operational context.
 - Each fact should be a single, self-contained statement.
@@ -758,7 +777,7 @@ Rules:
   - work: durable work/project context, constraints, architecture
   - fact: other durable information (fallback)
 - Return ONLY the JSON array, nothing else.
-
+${salience}
 Example output:
 [{"reasoning": "Taste preference that persists across contexts", "durable_beyond_current_task": true, "type": "preference", "content": "User dislikes cilantro"}, {"reasoning": "Life event with a specific future date", "durable_beyond_current_task": true, "type": "event", "content": "User is moving to Berlin in May 2026"}, {"reasoning": "Only relevant to the current debugging session", "durable_beyond_current_task": false, "type": "work", "content": "Currently debugging the auth middleware"}]
 
@@ -838,9 +857,10 @@ async function extractAndStoreMemories(
   llmConfig: LlmCallerConfig,
   manager: MemoryManager,
   logger?: ContextEngineLogger,
+  salienceContent?: string | null,
 ): Promise<void> {
   try {
-    const prompt = buildExtractionPrompt(turnContent);
+    const prompt = buildExtractionPrompt(turnContent, salienceContent);
     const response = await callLlm(prompt, llmConfig);
     const facts = parseExtractionResponse(response);
 
