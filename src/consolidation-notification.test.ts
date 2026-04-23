@@ -3,9 +3,11 @@ import {
   formatDetailedReport,
   buildSummaryPrompt,
   formatConsolidationNotification,
+  formatConsolidationErrorNotification,
   formatTemporalDetailedReport,
   buildTemporalSummaryPrompt,
   formatTemporalNotification,
+  formatTemporalErrorNotification,
 } from "./consolidation-notification.ts";
 import type { ConsolidationResult } from "./consolidation.ts";
 
@@ -247,6 +249,96 @@ describe("formatTemporalNotification", () => {
 
   it("returns null when no LLM config and count is 0", async () => {
     const result = await formatTemporalNotification(0, { level: "summary", llmConfig: null });
+    expect(result).toBeNull();
+  });
+});
+
+// -- Error notification tests --
+
+describe("formatConsolidationErrorNotification", () => {
+  const testError = new Error("database locked");
+
+  it("returns null when level is off", () => {
+    const result = formatConsolidationErrorNotification(testError, {
+      level: "off",
+      errorNotification: true,
+    });
+    expect(result).toBeNull();
+  });
+
+  it("returns concise message when level is errors", () => {
+    const result = formatConsolidationErrorNotification(testError, {
+      level: "errors",
+      errorNotification: true,
+    });
+    expect(result).toBe("Memory maintenance encountered an issue — I'll retry next cycle.");
+  });
+
+  it("returns concise message when level is summary", () => {
+    const result = formatConsolidationErrorNotification(testError, {
+      level: "summary",
+      errorNotification: true,
+    });
+    expect(result).toBe("Memory maintenance encountered an issue — I'll retry next cycle.");
+  });
+
+  it("returns full error details when level is detailed", () => {
+    const result = formatConsolidationErrorNotification(testError, {
+      level: "detailed",
+      errorNotification: true,
+    });
+    expect(result).toBe("Memory consolidation failed: database locked");
+  });
+
+  it("returns null when errorNotification is false", () => {
+    const result = formatConsolidationErrorNotification(testError, {
+      level: "detailed",
+      errorNotification: false,
+    });
+    expect(result).toBeNull();
+  });
+
+  it("handles non-Error objects", () => {
+    const result = formatConsolidationErrorNotification("string error", {
+      level: "detailed",
+      errorNotification: true,
+    });
+    expect(result).toBe("Memory consolidation failed: string error");
+  });
+});
+
+describe("formatTemporalErrorNotification", () => {
+  const testError = new Error("connection timeout");
+
+  it("returns null when level is off", () => {
+    const result = formatTemporalErrorNotification(testError, {
+      level: "off",
+      errorNotification: true,
+    });
+    expect(result).toBeNull();
+  });
+
+  it("returns concise message when level is summary", () => {
+    const result = formatTemporalErrorNotification(testError, {
+      level: "summary",
+      errorNotification: true,
+    });
+    expect(result).toBe("Temporal memory review encountered an issue — I'll retry next cycle.");
+  });
+
+  it("returns full error details when level is detailed", () => {
+    const result = formatTemporalErrorNotification(testError, {
+      level: "detailed",
+      errorNotification: true,
+    });
+    expect(result).toBe("Temporal transitions failed: connection timeout");
+  });
+
+  it("returns null when errorNotification is false", () => {
+    const result = formatTemporalErrorNotification(testError, {
+      level: "summary",
+      errorNotification: false,
+    });
     expect(result).toBeNull();
   });
 });

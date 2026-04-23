@@ -11,10 +11,14 @@ export type AssociativeMemoryConfig = {
   consolidation: {
     /** Notification level after consolidation runs. Default: "errors". */
     notification: NotificationLevel;
+    /** Whether to notify the user on consolidation errors. Default: true. */
+    errorNotification: boolean;
   };
   temporal: {
     /** Notification level after temporal transitions run. Default: "errors". */
     notification: NotificationLevel;
+    /** Whether to notify the user on temporal transition errors. Default: true. */
+    errorNotification: boolean;
   };
   dbPath: string;
   autoCapture: boolean;
@@ -40,6 +44,7 @@ export const memoryConfigSchema = {
     const cfg = value as Record<string, unknown>;
     assertAllowedKeys(cfg, ["embedding", "consolidation", "temporal", "dbPath", "autoCapture", "autoRecall", "verbose", "logQueries", "requireEmbedding"], "memory config");
 
+
     let provider = "auto";
     let model: string | undefined;
 
@@ -59,12 +64,13 @@ export const memoryConfigSchema = {
     }
 
     let consolidationNotification: NotificationLevel = "errors";
+    let consolidationErrorNotification = true;
     if (cfg.consolidation != null) {
       if (typeof cfg.consolidation !== "object" || Array.isArray(cfg.consolidation)) {
         throw new Error("consolidation must be an object");
       }
       const consolidation = cfg.consolidation as Record<string, unknown>;
-      assertAllowedKeys(consolidation, ["notification"], "consolidation config");
+      assertAllowedKeys(consolidation, ["notification", "errorNotification"], "consolidation config");
       if (consolidation.notification != null) {
         if (typeof consolidation.notification !== "string") {
           throw new Error("consolidation.notification must be a string");
@@ -74,15 +80,22 @@ export const memoryConfigSchema = {
         }
         consolidationNotification = consolidation.notification as NotificationLevel;
       }
+      if (consolidation.errorNotification != null) {
+        if (typeof consolidation.errorNotification !== "boolean") {
+          throw new Error("consolidation.errorNotification must be a boolean");
+        }
+        consolidationErrorNotification = consolidation.errorNotification;
+      }
     }
 
     let temporalNotification: NotificationLevel = "errors";
+    let temporalErrorNotification = true;
     if (cfg.temporal != null) {
       if (typeof cfg.temporal !== "object" || Array.isArray(cfg.temporal)) {
         throw new Error("temporal must be an object");
       }
       const temporal = cfg.temporal as Record<string, unknown>;
-      assertAllowedKeys(temporal, ["notification"], "temporal config");
+      assertAllowedKeys(temporal, ["notification", "errorNotification"], "temporal config");
       if (temporal.notification != null) {
         if (typeof temporal.notification !== "string") {
           throw new Error("temporal.notification must be a string");
@@ -92,12 +105,18 @@ export const memoryConfigSchema = {
         }
         temporalNotification = temporal.notification as NotificationLevel;
       }
+      if (temporal.errorNotification != null) {
+        if (typeof temporal.errorNotification !== "boolean") {
+          throw new Error("temporal.errorNotification must be a boolean");
+        }
+        temporalErrorNotification = temporal.errorNotification;
+      }
     }
 
     return {
       embedding: { provider, model },
-      consolidation: { notification: consolidationNotification },
-      temporal: { notification: temporalNotification },
+      consolidation: { notification: consolidationNotification, errorNotification: consolidationErrorNotification },
+      temporal: { notification: temporalNotification, errorNotification: temporalErrorNotification },
       dbPath: typeof cfg.dbPath === "string" ? cfg.dbPath : "~/.openclaw/memory/associative",
       autoCapture: cfg.autoCapture !== false,
       autoRecall: cfg.autoRecall !== false,

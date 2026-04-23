@@ -30,7 +30,7 @@ import { memoryConfigSchema } from "./config.ts";
 import { applyTemporalTransitions } from "./consolidation-steps.ts";
 import { includesSystemEventToken, reconcileCronJob } from "./cron-utils.ts";
 import { runConsolidation } from "./consolidation.ts";
-import { formatConsolidationNotification, formatDetailedReport, formatTemporalNotification } from "./consolidation-notification.ts";
+import { formatConsolidationNotification, formatConsolidationErrorNotification, formatDetailedReport, formatTemporalNotification, formatTemporalErrorNotification } from "./consolidation-notification.ts";
 import { CONTEXT_ENGINE_ID, createAssociativeMemoryContextEngine } from "./context-engine.ts";
 import { EmbeddingCircuitBreaker } from "./embedding-circuit-breaker.ts";
 import { callLlm, type LlmCallerConfig } from "./llm-caller.ts";
@@ -1154,10 +1154,15 @@ const associativeMemoryPlugin = {
           };
         } catch (err) {
           log.warn(`Scheduled temporal transitions failed: ${err instanceof Error ? err.message : String(err)}`);
-          const reply = config.temporal.notification === "off"
-            ? undefined
-            : { text: "Temporal transitions failed." };
-          return { handled: true, reply, reason: "associative-memory-temporal-error" };
+          const errorText = formatTemporalErrorNotification(err, {
+            level: config.temporal.notification,
+            errorNotification: config.temporal.errorNotification,
+          });
+          return {
+            handled: true,
+            reply: errorText ? { text: errorText } : undefined,
+            reason: "associative-memory-temporal-error",
+          };
         }
       }
 
@@ -1200,12 +1205,13 @@ const associativeMemoryPlugin = {
         log.warn(
           `Scheduled consolidation failed: ${err instanceof Error ? err.message : String(err)}`,
         );
-        const reply = config.consolidation.notification === "off"
-          ? undefined
-          : { text: `Memory consolidation failed: ${err instanceof Error ? err.message : String(err)}` };
+        const errorText = formatConsolidationErrorNotification(err, {
+          level: config.consolidation.notification,
+          errorNotification: config.consolidation.errorNotification,
+        });
         return {
           handled: true,
-          reply,
+          reply: errorText ? { text: errorText } : undefined,
           reason: "associative-memory-consolidation-error",
         };
       }

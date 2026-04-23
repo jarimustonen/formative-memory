@@ -1,16 +1,21 @@
 /**
- * Consolidation notification formatting (success path only).
+ * Consolidation notification formatting.
  *
- * Routes successful consolidation/temporal results to the appropriate
- * notification format based on the configured level:
+ * Success notifications are routed based on the configured level:
  *
- *   off      → null (no notifications at all, not even errors)
- *   errors   → null here (errors are surfaced by caller catch blocks)
+ *   off      → null (no notification)
+ *   errors   → null (no notification — only errors are surfaced)
  *   summary  → LLM-generated natural-language summary
  *   detailed → technical report with counts
  *
- * Error notifications are NOT handled here — callers gate their own
- * catch-block replies based on the notification level.
+ * Error notifications respect the level:
+ *
+ *   off                → null (silent, even on errors)
+ *   errors/summary     → concise, non-technical message
+ *   detailed           → full error details
+ *
+ * Additionally, `errorNotification: false` in config suppresses errors
+ * at any level.
  */
 
 import type { NotificationLevel } from "./config.ts";
@@ -159,6 +164,60 @@ export async function formatTemporalNotification(
 
 const TEMPORAL_FALLBACK_MESSAGE = "Temporal memory review complete.";
 const FALLBACK_MESSAGE = "Memory maintenance complete.";
+
+// -- Error notification formatting --
+
+const CONSOLIDATION_ERROR_SHORT = "Memory maintenance encountered an issue — I'll retry next cycle.";
+const TEMPORAL_ERROR_SHORT = "Temporal memory review encountered an issue — I'll retry next cycle.";
+
+export type ErrorNotificationContext = {
+  /** Notification level from config (controls verbosity). */
+  level: NotificationLevel;
+  /** Whether error notifications are enabled (default true). */
+  errorNotification: boolean;
+};
+
+/**
+ * Format an error notification for a failed consolidation.
+ *
+ * Notifies unless level is "off" or `errorNotification` is explicitly `false`.
+ * The notification level controls verbosity:
+ *   - off → null (silent)
+ *   - errors/summary → concise, non-technical message
+ *   - detailed → full error details
+ *
+ * Returns the notification text, or null if error notifications are suppressed.
+ */
+export function formatConsolidationErrorNotification(
+  error: unknown,
+  ctx: ErrorNotificationContext,
+): string | null {
+  if (ctx.level === "off" || !ctx.errorNotification) return null;
+
+  if (ctx.level === "detailed") {
+    return `Memory consolidation failed: ${error instanceof Error ? error.message : String(error)}`;
+  }
+
+  return CONSOLIDATION_ERROR_SHORT;
+}
+
+/**
+ * Format an error notification for failed temporal transitions.
+ *
+ * Same contract as `formatConsolidationErrorNotification`.
+ */
+export function formatTemporalErrorNotification(
+  error: unknown,
+  ctx: ErrorNotificationContext,
+): string | null {
+  if (ctx.level === "off" || !ctx.errorNotification) return null;
+
+  if (ctx.level === "detailed") {
+    return `Temporal transitions failed: ${error instanceof Error ? error.message : String(error)}`;
+  }
+
+  return TEMPORAL_ERROR_SHORT;
+}
 
 /**
  * Generate a notification for a consolidation result.
