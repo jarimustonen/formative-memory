@@ -207,10 +207,12 @@ Configuration goes in `openclaw.json` under the plugin entry:
             "provider": "auto"
           },
           "consolidation": {
-            "notification": "summary"
+            "notification": "errors",
+            "errorNotification": true
           },
           "temporal": {
-            "notification": "summary"
+            "notification": "errors",
+            "errorNotification": true
           }
         }
       }
@@ -228,8 +230,10 @@ Configuration goes in `openclaw.json` under the plugin entry:
 | `embedding.model` | — | Override the provider's default embedding model. Only takes effect with an explicit `embedding.provider` — ignored in `"auto"` mode to avoid passing a provider-specific model name to the wrong provider |
 | `dbPath` | `~/.openclaw/memory/associative` | SQLite database location |
 | `verbose` | `false` | Enable debug logging |
-| `consolidation.notification` | `"summary"` | Notification after nightly consolidation: `"off"`, `"summary"` (LLM-generated, persona-aware), or `"detailed"` (raw technical report) |
-| `temporal.notification` | `"summary"` | Notification after temporal transitions (15:00 daily): `"off"`, `"summary"`, or `"detailed"` |
+| `consolidation.notification` | `"errors"` | Notification after nightly consolidation: `"off"` (silent), `"errors"` (errors only), `"summary"` (LLM-generated), or `"detailed"` (raw technical report) |
+| `consolidation.errorNotification` | `true` | Whether to notify on consolidation errors. Set `false` to suppress error messages even when notification level would show them |
+| `temporal.notification` | `"errors"` | Notification after temporal transitions (15:00 daily): `"off"`, `"errors"`, `"summary"`, or `"detailed"` |
+| `temporal.errorNotification` | `true` | Whether to notify on temporal transition errors. Same behavior as `consolidation.errorNotification` |
 | `logQueries` | `false` | Include raw query text in debug logs (disabled by default for privacy) |
 
 The `"auto"` provider selects the best available embedding provider from

@@ -263,10 +263,12 @@ All settings are optional — defaults work out of the box. Configuration goes i
             "provider": "auto"
           },
           "consolidation": {
-            "notification": "summary"
+            "notification": "errors",
+            "errorNotification": true
           },
           "temporal": {
-            "notification": "summary"
+            "notification": "errors",
+            "errorNotification": true
           }
         }
       }
@@ -284,8 +286,10 @@ All settings are optional — defaults work out of the box. Configuration goes i
 | `embedding.model` | string | provider default |
 | `dbPath` | string | `~/.openclaw/memory/associative` |
 | `verbose` | boolean | `false` |
-| `consolidation.notification` | `"off"` \| `"summary"` \| `"detailed"` | `"off"` |
-| `temporal.notification` | `"off"` \| `"summary"` \| `"detailed"` | `"off"` |
+| `consolidation.notification` | `"off"` \| `"errors"` \| `"summary"` \| `"detailed"` | `"errors"` |
+| `consolidation.errorNotification` | boolean | `true` |
+| `temporal.notification` | `"off"` \| `"errors"` \| `"summary"` \| `"detailed"` | `"errors"` |
+| `temporal.errorNotification` | boolean | `true` |
 | `logQueries` | boolean | `false` |
 
 API keys are read from OpenClaw's `auth-profiles.json` — environment variables are not used. See the [README](../README.md#api-keys) for profile configuration details.
