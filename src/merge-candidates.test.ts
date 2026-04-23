@@ -12,10 +12,11 @@ import {
 // -- textFeatures --
 
 describe("textFeatures", () => {
-  it("extracts word trigrams and individual words", () => {
+  it("extracts sorted word trigrams and individual words", () => {
     const result = textFeatures("the quick brown fox");
-    expect(result.has("the quick brown")).toBe(true);
-    expect(result.has("quick brown fox")).toBe(true);
+    // Trigrams are sorted: [brown, quick, the] and [brown, fox, quick]
+    expect(result.has("brown quick the")).toBe(true);
+    expect(result.has("brown fox quick")).toBe(true);
     expect(result.has("the")).toBe(true);
     expect(result.has("fox")).toBe(true);
   });
@@ -23,7 +24,8 @@ describe("textFeatures", () => {
   it("lowercases text", () => {
     const result = textFeatures("Hello World Test");
     expect(result.has("hello")).toBe(true);
-    expect(result.has("hello world test")).toBe(true);
+    // Sorted trigram: [hello, test, world]
+    expect(result.has("hello test world")).toBe(true);
   });
 
   it("returns individual words for short text", () => {
@@ -51,6 +53,17 @@ describe("textFeatures", () => {
     expect(result.has("hello")).toBe(true);
     expect(result.has("world")).toBe(true);
     expect(result.has("test")).toBe(true);
+  });
+
+  it("produces identical trigrams for reordered text", () => {
+    const a = textFeatures("the deadline is April 15");
+    const b = textFeatures("April 15 is the deadline");
+    // Both should share sorted trigrams since same words appear in windows
+    const aTrigrams = [...a].filter((f) => f.includes(" ") && f.split(" ").length === 3);
+    const bTrigrams = [...b].filter((f) => f.includes(" ") && f.split(" ").length === 3);
+    // At least some sorted trigrams should overlap
+    const shared = aTrigrams.filter((t) => b.has(t));
+    expect(shared.length).toBeGreaterThan(0);
   });
 });
 
@@ -80,6 +93,23 @@ describe("jaccardSimilarity", () => {
 
   it("returns 0 when one string is empty", () => {
     expect(jaccardSimilarity("hello", "")).toBe(0);
+  });
+
+  it("scores reordered text higher than before with sorted trigrams", () => {
+    const score = jaccardSimilarity(
+      "The deadline is April 15",
+      "April 15 is the deadline",
+    );
+    // With sorted trigrams, reordered text should score well above 0.5
+    expect(score).toBeGreaterThan(0.5);
+  });
+
+  it("scores reordered text with same words very high", () => {
+    const score = jaccardSimilarity(
+      "Team chose PostgreSQL for the database",
+      "PostgreSQL for the database Team chose",
+    );
+    expect(score).toBeGreaterThan(0.6);
   });
 });
 
@@ -333,6 +363,19 @@ describe("findMergeCandidatesDelta", () => {
     // Pair IDs should be canonicalized (a < b)
     expect(abPairs[0].a).toBe("a");
     expect(abPairs[0].b).toBe("b");
+  });
+
+  it("detects reordered text as merge candidates (BM25-only path)", () => {
+    const sources: MemoryCandidate[] = [
+      { id: "a", content: "The deadline is April 15 for the project submission", type: "fact", embedding: null },
+    ];
+    const targets: MemoryCandidate[] = [
+      { id: "b", content: "For the project submission the deadline is April 15", type: "fact", embedding: null },
+    ];
+
+    const pairs = findMergeCandidatesDelta(sources, targets);
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0].jaccardScore).toBeGreaterThanOrEqual(MERGE_THRESHOLD_JACCARD_ONLY);
   });
 
   it("clamps negative cosine similarity to 0", () => {

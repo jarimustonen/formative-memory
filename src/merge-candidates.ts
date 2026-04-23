@@ -201,8 +201,10 @@ export function jaccardFromSets(setA: Set<string>, setB: Set<string>): number {
 
 /**
  * Extract text features for similarity comparison.
- * Uses word trigrams for structural similarity, plus individual words
- * as fallback for short texts (< 3 words produce no trigrams).
+ * Uses sorted word trigrams for structural similarity — sorting the
+ * three words in each window makes the feature order-insensitive, so
+ * "the deadline is" and "is the deadline" both produce "deadline is the".
+ * Individual words are always included as a bag-of-words fallback.
  * Punctuation is stripped so "database." matches "database".
  */
 export function textFeatures(text: string): Set<string> {
@@ -213,9 +215,11 @@ export function textFeatures(text: string): Set<string> {
     .filter(Boolean);
   const result = new Set<string>();
   for (let i = 0; i <= words.length - 3; i++) {
-    result.add(`${words[i]} ${words[i + 1]} ${words[i + 2]}`);
+    const tri = [words[i], words[i + 1], words[i + 2]];
+    tri.sort();
+    result.add(tri.join(" "));
   }
-  // Also include individual words for short texts
+  // Also include individual words
   for (const w of words) {
     result.add(w);
   }
