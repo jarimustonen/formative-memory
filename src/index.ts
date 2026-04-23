@@ -10,7 +10,7 @@
  */
 
 import { isAbsolute, join } from "node:path";
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { Type } from "@sinclair/typebox";
 import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk";
@@ -102,6 +102,32 @@ const SALIENCE_FILENAME = "salience.md";
 
 /** Maximum characters for salience profile content injected into prompts. */
 const MAX_SALIENCE_CHARS = 4000;
+
+/** Default salience profile written on first install. */
+const DEFAULT_SALIENCE_CONTENT = `# Memory Salience Profile
+
+What to pay attention to and remember long-term.
+
+## High priority
+- People: names, relationships, roles, key facts about people mentioned
+- Identity: who the user is — background, location, life situation
+- Preferences: tastes, values, style, dietary needs, dislikes
+- Plans: upcoming events, deadlines, appointments, travel
+- Goals: what they're working toward — career, personal, creative
+- Relationships: family, friends, colleagues, pets
+
+## Medium priority
+- Daily life: routines, recurring patterns, living situation
+- Work: job, projects, professional context
+- Health: details shared voluntarily
+- Hobbies and interests
+
+## Low priority — usually skip
+- Transient tasks: what they're currently doing right now
+- Pleasantries and small talk
+- Information they're just passing through, not about them
+`;
+
 
 /**
  * Read the salience profile from the memory workspace directory.
@@ -487,6 +513,17 @@ function runStartupTasks(
       get: (key: string) => db.getState(key),
       set: (key: string, value: string) => db.setState(key, value),
     };
+
+    // 0. Create default salience profile if none exists
+    const saliencePath = join(ws.memoryDir, SALIENCE_FILENAME);
+    if (!existsSync(saliencePath)) {
+      try {
+        writeFileSync(saliencePath, DEFAULT_SALIENCE_CONTENT, "utf-8");
+        logger?.info(`Created default salience profile at ${saliencePath}`);
+      } catch (err) {
+        logger?.warn(`Failed to create default salience profile: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
 
     // 1. Workspace file cleanup (remove file-based memory instructions)
     if (initDeps.llmConfig) {
