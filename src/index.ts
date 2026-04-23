@@ -196,7 +196,10 @@ function resolveMemoryDir(
   // Use OpenClaw's path resolver if available (handles ~, ~user, cross-platform)
   if (pathResolver) {
     const resolved = pathResolver(dbPath);
-    return isAbsolute(resolved) ? resolved : join(workspaceDir, resolved);
+    if (typeof resolved === "string") {
+      return isAbsolute(resolved) ? resolved : join(workspaceDir, resolved);
+    }
+    // pathResolver returned undefined — fall through to manual resolution
   }
 
   // Manual fallback. Use os.homedir() rather than reading HOME from the env

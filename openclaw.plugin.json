@@ -1,7 +1,7 @@
 {
   "id": "formative-memory",
   "name": "Formative Memory",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "kind": [
     "memory",
     "context-engine"
