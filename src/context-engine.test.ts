@@ -2228,8 +2228,8 @@ describe("afterTurn() auto-capture", () => {
         { role: "assistant", content: "That sounds exciting! Berlin is a great city." },
       ]));
 
-      // Fire-and-forget — give the async extraction a tick to complete
-      await new Promise((r) => setTimeout(r, 50));
+      // dispose() awaits in-flight extractions — no manual setTimeout needed
+      await engine.dispose!();
 
       expect(storeFn).toHaveBeenCalledOnce();
       expect(storeFn).toHaveBeenCalledWith(
@@ -2239,6 +2239,241 @@ describe("afterTurn() auto-capture", () => {
           content: "User is moving to Berlin",
         }),
       );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+// -- Lifecycle coordination: in-flight extraction tracking --
+
+describe("dispose() lifecycle coordination", () => {
+  const afterTurnParams = (messages: unknown[], prePromptMessageCount = 0) => ({
+    sessionId: "sess-1",
+    sessionKey: "key-1",
+    sessionFile: "/tmp/session.md",
+    messages,
+    prePromptMessageCount,
+  });
+
+  function mockFetchWithLlmResponse(response: string, delay = 0) {
+    return vi.fn().mockImplementation(() => {
+      const result = {
+        ok: true,
+        json: () => Promise.resolve({
+          content: [{ type: "text", text: response }],
+        }),
+      };
+      if (delay > 0) {
+        return new Promise((resolve) => setTimeout(() => resolve(result), delay));
+      }
+      return Promise.resolve(result);
+    });
+  }
+
+  it("dispose() awaits in-flight extraction before completing", async () => {
+    const storeFn = vi.fn().mockResolvedValue({ id: "test" });
+    const manager = {
+      recall: vi.fn().mockResolvedValue([]),
+      store: storeFn,
+    } as unknown as MemoryManager;
+
+    const llmResponse = '[{"type": "fact", "content": "User likes coffee", "durable_beyond_current_task": true}]';
+    const originalFetch = globalThis.fetch;
+    // LLM call takes 50ms to simulate in-flight work
+    globalThis.fetch = mockFetchWithLlmResponse(llmResponse, 50);
+
+    try {
+      const engine = createAssociativeMemoryContextEngine({
+        getManager: () => manager,
+        autoCapture: true,
+        getLlmConfig: () => ({ provider: "anthropic" as const, apiKey: "test-key" }),
+      });
+
+      await engine.afterTurn!(afterTurnParams([
+        { role: "user", content: "I really like coffee in the morning" },
+        { role: "assistant", content: "Coffee is a great way to start the day!" },
+      ]));
+
+      // Store hasn't been called yet (LLM call still in flight)
+      expect(storeFn).not.toHaveBeenCalled();
+
+      // dispose() should await the in-flight extraction
+      await engine.dispose!();
+
+      // After dispose, the extraction should have completed
+      expect(storeFn).toHaveBeenCalledOnce();
+      expect(storeFn).toHaveBeenCalledWith(
+        expect.objectContaining({ content: "User likes coffee", source: "auto_capture" }),
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("cancelExtractions() aborts in-flight LLM calls, dispose() awaits settlement", async () => {
+    const storeFn = vi.fn().mockResolvedValue({ id: "test" });
+    const manager = {
+      recall: vi.fn().mockResolvedValue([]),
+      store: storeFn,
+    } as unknown as MemoryManager;
+
+    const originalFetch = globalThis.fetch;
+    // LLM call that respects abort signal
+    globalThis.fetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      return new Promise((_resolve, reject) => {
+        const signal = init.signal;
+        if (signal?.aborted) {
+          reject(new DOMException("The operation was aborted.", "AbortError"));
+          return;
+        }
+        const onAbort = () => {
+          reject(new DOMException("The operation was aborted.", "AbortError"));
+        };
+        signal?.addEventListener("abort", onAbort, { once: true });
+        // Never resolves naturally — only completes via abort
+      });
+    }) as any;
+
+    try {
+      const logger = { warn: vi.fn(), debug: vi.fn(), isDebugEnabled: () => true };
+      const engine = createAssociativeMemoryContextEngine({
+        getManager: () => manager,
+        autoCapture: true,
+        getLlmConfig: () => ({ provider: "anthropic" as const, apiKey: "test-key" }),
+        logger,
+      });
+
+      await engine.afterTurn!(afterTurnParams([
+        { role: "user", content: "I am planning a trip to Japan next year" },
+        { role: "assistant", content: "That sounds wonderful! Japan is amazing." },
+      ]));
+
+      // Cancel in-flight extractions, then dispose awaits settlement
+      engine.cancelExtractions();
+      await engine.dispose!();
+
+      // Store should NOT have been called (LLM was aborted)
+      expect(storeFn).not.toHaveBeenCalled();
+      // Should log debug about abort, not warn
+      const debugMessages = logger.debug.mock.calls.map((c: any[]) => c[0]);
+      expect(debugMessages.some((m: string) => m.includes("aborted"))).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("evicts oldest extraction when concurrency limit reached, favoring later turns", async () => {
+    const storeFn = vi.fn().mockResolvedValue({ id: "test" });
+    const manager = {
+      recall: vi.fn().mockResolvedValue([]),
+      store: storeFn,
+    } as unknown as MemoryManager;
+
+    const llmResponse = '[{"type": "fact", "content": "Some fact", "durable_beyond_current_task": true}]';
+    const originalFetch = globalThis.fetch;
+    // LLM calls that respect abort signal and take 200ms
+    globalThis.fetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      return new Promise((resolve, reject) => {
+        const signal = init.signal;
+        if (signal?.aborted) {
+          reject(new DOMException("The operation was aborted.", "AbortError"));
+          return;
+        }
+        const onAbort = () => {
+          clearTimeout(timer);
+          reject(new DOMException("The operation was aborted.", "AbortError"));
+        };
+        signal?.addEventListener("abort", onAbort, { once: true });
+        const timer = setTimeout(() => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve({
+            ok: true,
+            json: () => Promise.resolve({
+              content: [{ type: "text", text: llmResponse }],
+            }),
+          });
+        }, 200);
+      });
+    }) as any;
+
+    try {
+      const logger = { warn: vi.fn(), debug: vi.fn(), isDebugEnabled: () => true };
+      const engine = createAssociativeMemoryContextEngine({
+        getManager: () => manager,
+        autoCapture: true,
+        getLlmConfig: () => ({ provider: "anthropic" as const, apiKey: "test-key" }),
+        logger,
+      });
+
+      // Fire 5 rapid turns — limit is 3, so turns 1 and 2 get evicted
+      // when turns 4 and 5 arrive
+      for (let i = 0; i < 5; i++) {
+        await engine.afterTurn!(afterTurnParams([
+          { role: "user", content: `Question number ${i} about something interesting` },
+          { role: "assistant", content: `Here is a detailed answer to question ${i}.` },
+        ]));
+      }
+
+      // Wait for in-flight extractions to complete
+      await engine.dispose!();
+
+      // 3 extractions should have completed (the last 3 that survived eviction)
+      expect(storeFn).toHaveBeenCalledTimes(3);
+
+      // Should have logged eviction messages for the 2 oldest
+      const debugMessages = logger.debug.mock.calls.map((c: any[]) => c[0]);
+      const evictedCount = debugMessages.filter(
+        (m: string) => typeof m === "string" && m.includes("evicting oldest"),
+      ).length;
+      expect(evictedCount).toBe(2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("dispose() is safe to call with no in-flight tasks", async () => {
+    const engine = createAssociativeMemoryContextEngine({
+      getManager: () => stubManager(),
+    });
+
+    // dispose with no afterTurn calls — should not throw
+    await expect(engine.dispose!()).resolves.toBeUndefined();
+  });
+
+  it("engine is reusable after dispose()", async () => {
+    const storeFn = vi.fn().mockResolvedValue({ id: "test" });
+    const manager = {
+      recall: vi.fn().mockResolvedValue([]),
+      store: storeFn,
+    } as unknown as MemoryManager;
+
+    const llmResponse = '[{"type": "fact", "content": "Reuse fact", "durable_beyond_current_task": true}]';
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mockFetchWithLlmResponse(llmResponse);
+
+    try {
+      const engine = createAssociativeMemoryContextEngine({
+        getManager: () => manager,
+        autoCapture: true,
+        getLlmConfig: () => ({ provider: "anthropic" as const, apiKey: "test-key" }),
+      });
+
+      // First cycle
+      await engine.afterTurn!(afterTurnParams([
+        { role: "user", content: "First conversation about something detailed" },
+        { role: "assistant", content: "Here is a thoughtful response to your question." },
+      ]));
+      await engine.dispose!();
+      expect(storeFn).toHaveBeenCalledTimes(1);
+
+      // Second cycle — should work with fresh abort controller
+      await engine.afterTurn!(afterTurnParams([
+        { role: "user", content: "Second conversation about something else entirely" },
+        { role: "assistant", content: "Another thoughtful and detailed response here." },
+      ]));
+      await engine.dispose!();
+      expect(storeFn).toHaveBeenCalledTimes(2);
     } finally {
       globalThis.fetch = originalFetch;
     }

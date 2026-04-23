@@ -319,9 +319,20 @@ export type AssociativeMemoryContextEngineOptions = {
   getSalienceContent?: () => string | null;
 };
 
+/** Extended ContextEngine with lifecycle coordination for in-flight async tasks. */
+export type AssociativeMemoryContextEngine = ContextEngine & {
+  /**
+   * Cancel all in-flight extraction tasks (e.g. on session close).
+   * Aborted tasks settle gracefully without writing to the database.
+   * Call before dispose() for immediate cancellation; dispose() alone
+   * awaits tasks to completion without cancelling.
+   */
+  cancelExtractions(): void;
+};
+
 export function createAssociativeMemoryContextEngine(
   options: AssociativeMemoryContextEngineOptions,
-): ContextEngine {
+): AssociativeMemoryContextEngine {
   const { getManager } = options;
   const fpN = options.fingerprintN ?? 3;
   const activeMemoryEnabled = options.activeMemoryEnabled ?? false;
@@ -345,6 +356,16 @@ export function createAssociativeMemoryContextEngine(
   // the full transcript fingerprint, because assistant/tool messages appended
   // mid-turn must NOT trigger a ledger reset.
   let prevUserTurnKey: string | null = null;
+
+  // -- In-flight extraction tracking --
+  // Tracks fire-and-forget extractAndStoreMemories() promises so dispose()
+  // can await them before closing resources. When the concurrency limit is
+  // reached, the oldest extraction is cancelled to make room — later turns
+  // carry more recent context and are more valuable.
+  const MAX_CONCURRENT_EXTRACTIONS = 3;
+
+  type InFlightEntry = { promise: Promise<void>; abort: AbortController };
+  const inFlightExtractions: InFlightEntry[] = [];
 
   return {
     info,
@@ -559,15 +580,34 @@ export function createAssociativeMemoryContextEngine(
         if (turnContent) {
           const llmConfig = await options.getLlmConfig?.();
           if (llmConfig) {
-            // Fire-and-forget: launch extraction without awaiting.
-            // Errors are caught and logged inside the async function.
-            void extractAndStoreMemories(
+            // Evict oldest extraction(s) when at capacity — later turns carry
+            // more recent context and are more valuable.
+            while (inFlightExtractions.length >= MAX_CONCURRENT_EXTRACTIONS) {
+              const oldest = inFlightExtractions.shift()!;
+              oldest.abort.abort();
+              options.logger?.debug?.(
+                "afterTurn: evicting oldest extraction to make room for newer turn",
+              );
+            }
+
+            // Launch extraction with per-task abort controller.
+            const taskAbort = new AbortController();
+            const entry: InFlightEntry = {
+              promise: null!, // placeholder, assigned below
+              abort: taskAbort,
+            };
+            entry.promise = extractAndStoreMemories(
               turnContent,
               llmConfig,
               getManager(),
               options.logger,
               options.getSalienceContent?.() ?? null,
-            );
+              taskAbort.signal,
+            ).finally(() => {
+              const idx = inFlightExtractions.indexOf(entry);
+              if (idx !== -1) inFlightExtractions.splice(idx, 1);
+            });
+            inFlightExtractions.push(entry);
           }
         }
       }
@@ -581,9 +621,28 @@ export function createAssociativeMemoryContextEngine(
       return delegateCompactionToRuntime(params);
     },
 
+    cancelExtractions() {
+      for (const entry of inFlightExtractions) {
+        entry.abort.abort();
+      }
+    },
+
     async dispose() {
-      // Reset per-run cache state only — engine does not own the ledger lifecycle.
-      // Ledger reset is the caller's responsibility (e.g. session manager).
+      // 1. Await in-flight extraction tasks before releasing resources.
+      //    This prevents writes to a closed database after dispose completes.
+      //    If the caller wants to cancel tasks before dispose (e.g. session close),
+      //    they should call cancelExtractions() first — dispose then awaits the
+      //    already-settling promises and returns promptly.
+      if (inFlightExtractions.length > 0) {
+        options.logger?.debug?.(
+          `dispose: awaiting ${inFlightExtractions.length} in-flight extraction(s)`,
+        );
+        await Promise.allSettled(inFlightExtractions.map((e) => e.promise));
+        inFlightExtractions.length = 0;
+      }
+
+      // 2. Reset per-run cache state only — engine does not own the ledger lifecycle.
+      //    Ledger reset is the caller's responsibility (e.g. session manager).
       cachedEntry = null;
       prevFpN1 = null;
       prevFpConfigured = null;
@@ -851,6 +910,9 @@ export function parseExtractionResponse(response: string): ExtractedFact[] {
 /**
  * Extract facts from a conversation turn via LLM and store each as a memory.
  * Fire-and-forget — all errors are caught and logged.
+ *
+ * Accepts an optional `signal` for caller-driven cancellation (e.g. dispose).
+ * When aborted, the in-flight LLM call is cancelled and no stores are attempted.
  */
 async function extractAndStoreMemories(
   turnContent: string,
@@ -858,14 +920,21 @@ async function extractAndStoreMemories(
   manager: MemoryManager,
   logger?: ContextEngineLogger,
   salienceContent?: string | null,
+  signal?: AbortSignal,
 ): Promise<void> {
   try {
     const prompt = buildExtractionPrompt(turnContent, salienceContent);
-    const response = await callLlm(prompt, llmConfig);
+    const response = await callLlm(prompt, llmConfig, signal);
     const facts = parseExtractionResponse(response);
 
     if (facts.length === 0) {
       logger?.debug?.("auto-capture: LLM extracted 0 durable facts");
+      return;
+    }
+
+    // Check abort before attempting stores (signal may have fired during LLM call)
+    if (signal?.aborted) {
+      logger?.debug?.("auto-capture: extraction aborted before storing (shutdown)");
       return;
     }
 
@@ -883,8 +952,24 @@ async function extractAndStoreMemories(
     }
     logger?.debug?.(`auto-capture: stored ${facts.length} facts`);
   } catch (error) {
+    // AbortError is expected during dispose — don't warn.
+    if (isAbortError(error)) {
+      logger?.debug?.("auto-capture: extraction aborted (shutdown)");
+      return;
+    }
     logger?.warn("auto-capture: LLM extraction failed", error);
   }
+}
+
+/** Detect AbortError across runtimes (DOMException or shape-based). */
+function isAbortError(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === "AbortError") return true;
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    (error as { name?: unknown }).name === "AbortError"
+  );
 }
 
 /** Type guard for text content blocks in multimodal messages. */

@@ -33,17 +33,23 @@ const DEFAULTS = {
 /**
  * Call an LLM with a simple prompt → text response.
  * Throws on failure (network, auth, rate limit, timeout).
+ *
+ * An optional `signal` enables caller-driven cancellation (e.g. on dispose).
  */
-export async function callLlm(prompt: string, config: LlmCallerConfig): Promise<string> {
+export async function callLlm(
+  prompt: string,
+  config: LlmCallerConfig,
+  signal?: AbortSignal,
+): Promise<string> {
   const { provider, apiKey } = config;
   const model = config.model ?? DEFAULTS[provider].model;
   const maxTokens = config.maxTokens ?? DEFAULTS[provider].maxTokens;
   const timeoutMs = config.timeoutMs ?? 30_000;
 
   if (provider === "anthropic") {
-    return callAnthropic(prompt, apiKey, model, maxTokens, timeoutMs);
+    return callAnthropic(prompt, apiKey, model, maxTokens, timeoutMs, signal);
   }
-  return callOpenAi(prompt, apiKey, model, maxTokens, timeoutMs);
+  return callOpenAi(prompt, apiKey, model, maxTokens, timeoutMs, signal);
 }
 
 // -- Anthropic --
@@ -54,6 +60,7 @@ async function callAnthropic(
   model: string,
   maxTokens: number,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<string> {
   const response = await fetchWithTimeout(
     "https://api.anthropic.com/v1/messages",
@@ -72,6 +79,7 @@ async function callAnthropic(
     },
     timeoutMs,
     "Anthropic LLM call",
+    signal,
   );
 
   if (!response.ok) {
@@ -99,6 +107,7 @@ async function callOpenAi(
   model: string,
   maxTokens: number,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<string> {
   const response = await fetchWithTimeout(
     "https://api.openai.com/v1/chat/completions",
@@ -116,6 +125,7 @@ async function callOpenAi(
     },
     timeoutMs,
     "OpenAI LLM call",
+    signal,
   );
 
   if (!response.ok) {
