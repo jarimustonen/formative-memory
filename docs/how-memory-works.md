@@ -15,8 +15,7 @@ Formative Memory gives an OpenClaw agent persistent, long-term memory that behav
 
 The biological metaphor is useful but has limits. Key differences from human memory:
 
-- **Recall is ranked retrieval**, not spreading activation. The system searches by meaning and keywords, not by walking association graphs.
-- **Associations are recorded but do not drive retrieval** in the current version. They are structural data used during consolidation.
+- **Recall is ranked retrieval with association expansion**, not spreading activation. The system searches by meaning and keywords, then expands results through single-hop association links — but this is a targeted expansion step, not a continuous spreading activation process.
 - **Strengthening is not immediate.** A memory gains strength only during the next consolidation cycle, based on how it was used.
 - **"Sleep" runs on a schedule.** Consolidation runs automatically via cron (daily at 03:00) and can also be triggered manually with `/memory sleep`.
 
@@ -49,6 +48,8 @@ The system surfaces memories through two complementary channels:
 
 Before every response, the system examines the recent conversation and automatically recalls relevant memories. The agent does not request this — it happens transparently. The number of recalled memories adapts to the remaining context budget: more when space is plentiful, fewer when the context is tight, none when there is almost no space left.
 
+Recall uses association-augmented search: after finding directly relevant memories, the system expands results through association links to surface related memories that might not match the query directly. See [Associations](#associations-links-between-memories) for details.
+
 Automatically recalled memories are explicitly framed as data, not instructions. This reduces prompt injection risk through memory content, though it does not eliminate it entirely — model compliance with framing is probabilistic.
 
 ### Agent-initiated tools
@@ -78,11 +79,20 @@ The combined relevance score is weighted by the memory's strength. Strong memori
 
 Memories form weighted, bidirectional links:
 
-- **Co-retrieval** — when two memories appear in the same conversation turn, a link forms or strengthens between them
+- **Co-retrieval** — when two memories appear in the same conversation turn, a link forms or strengthens between them. Cross-channel co-retrieval (one memory from auto-recall, the other from a tool call) creates stronger links than same-channel co-retrieval, since it signals independent relevance
 - **Transitive links** — if A is linked to B and B to C, an indirect link may form between A and C
 - **Decay** — unused links weaken over time
 
-In the current version, associations do not affect search results. They are structural data that consolidation uses to identify related memories for merging and to model the knowledge graph.
+### Association-augmented recall
+
+Associations actively participate in memory recall. When search finds relevant memories, the system expands results through single-hop association links:
+
+1. Top search results above a score threshold become "seeds"
+2. Each seed's strongly-associated neighbors are pulled into the candidate pool
+3. Association candidates receive a score based on the seed's relevance, the link weight, and the neighbor's strength
+4. All candidates (direct hits and association-expanded) compete in a single pool — scores determine ranking, with no reserved slots
+
+This means that a memory which was never directly relevant to a query can still surface if it is strongly linked to memories that are. Convergent activation from multiple seeds (via probabilistic OR) can push an association candidate above direct search results when multiple relevant memories all point to it.
 
 ## Provenance: tracing memory influence
 
@@ -143,6 +153,26 @@ flowchart TD
 
 A new memory starts as **working** — recent and fast-decaying. After surviving a consolidation cycle, it becomes **consolidated** — established and slow-decaying. Active use reinforces it; neglect lets it fade. If it weakens below the pruning threshold, it is deleted. If it is similar enough to another memory, they may be merged into a new, combined memory.
 
+## Auto-capture: how facts are extracted
+
+When auto-capture is enabled, the plugin extracts durable facts from each conversation turn using an LLM. The extraction uses chain-of-thought reasoning: for each candidate fact, the LLM reasons about whether it is durable beyond the current task and marks it with a `durable_beyond_current_task` flag. Facts that are only relevant to the current task (e.g. "currently looking for a birthday gift") are discarded before storage.
+
+The extraction prompt covers categories like people, identity, preferences, plans, goals, daily life, work, and knowledge. Most turns contain nothing worth remembering — returning zero facts is expected and correct.
+
+### Salience profiles
+
+A default `salience.md` file is created automatically in the memory directory if one does not already exist. This file is injected into both the auto-capture extraction prompt and the agent's system prompt (for `memory_store`), guiding what kinds of information are considered worth remembering. Edit it to match your priorities.
+
+For example, a salience profile might emphasize health details, family relationships, or professional milestones depending on the user's priorities. The profile is treated as preference guidance — it cannot override the plugin's output format or extraction rules.
+
+The file is read with mtime-based caching (no repeated disk I/O) and capped at 4000 characters. Content is wrapped in `<user_memory_preferences>` tags and explicitly subordinated to the extraction system's own rules, reducing prompt injection risk from user-authored content.
+
+### Lifecycle coordination
+
+Auto-capture extraction runs asynchronously after each turn (fire-and-forget) so it does not block the agent's response. The plugin tracks in-flight extractions and enforces a concurrency limit of 3. When the limit is reached, the oldest extraction is cancelled to make room — later turns carry more recent context and are preferred.
+
+On shutdown, the plugin awaits all in-flight extractions via `Promise.allSettled()` before closing resources, preventing writes to a closed database. Callers can also cancel all extractions immediately (e.g. on session close) before dispose.
+
 ## Core principles
 
 1. **Content is identity.** Same content produces the same memory. Exact-text duplicates are prevented at creation time. This is content-addressed deduplication, not semantic deduplication — two memories with different wording but the same meaning are distinct.
@@ -157,7 +187,7 @@ A new memory starts as **working** — recent and fast-decaying. After surviving
 
 ## Current limitations
 
-- Associations do not influence search — they are recorded for consolidation use only
+- Association expansion is single-hop only — deeper graph traversal is not performed
 - Consolidation is synchronous and blocking
 - Recall uses only the recent transcript as query context
 - Numeric parameters (decay rates, pruning thresholds, search weights) are subject to tuning

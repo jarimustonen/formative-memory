@@ -13,11 +13,27 @@ This document defines the technical terms that appear throughout Formative Memor
 
 ## Association
 
-A weighted, bidirectional link between two memories. Associations form when memories appear together in the same conversation turn (co-retrieval) and strengthen with repeated co-occurrence. They weaken through decay if unused. In the current version, associations do not affect search results — they are structural data used during consolidation to identify merge candidates and model the knowledge graph.
+A weighted, bidirectional link between two memories. Associations form when memories appear together in the same conversation turn (co-retrieval) and strengthen with repeated co-occurrence. They weaken through decay if unused. Associations participate in recall through [association-augmented search](#association-augmented-recall): strongly-linked neighbors of search results are expanded into the candidate pool via single-hop traversal. They are also used during consolidation to identify merge candidates and model the knowledge graph.
+
+## Association-augmented recall
+
+The recall strategy that expands direct search results through association links. After hybrid search produces initial results, the top-scoring memories (seeds) have their strongly-associated neighbors pulled into the candidate pool. All candidates — direct hits and association-expanded — compete in a single pool ranked by score. This allows memories that don't directly match a query to surface when they are strongly linked to relevant results. See [Architecture — Association-augmented recall](./architecture.md#association-augmented-recall).
+
+## Auto-capture
+
+The automatic extraction of durable facts from conversation turns. After each turn, the plugin sends the conversation exchange to an LLM which identifies facts worth remembering long-term. The extraction uses [chain-of-thought reasoning](#chain-of-thought-extraction) to filter out ephemeral details. Auto-capture runs asynchronously and does not block the agent's response.
 
 ## Batch
 
 A small group of items processed together. During memory import, the agent receives segments in batches of 3–5 at a time rather than all at once. This keeps the conversation context window manageable and lets the agent focus on a few segments before moving to the next group.
+
+## BM25
+
+A probabilistic information retrieval scoring function used for keyword-based full-text search. In this project, BM25 scoring is provided by SQLite's FTS5 extension. BM25 is one half of the hybrid search pipeline (the other being embedding-based semantic search). When embeddings are unavailable, the system falls back to BM25-only mode. BM25 scores are normalized using an absolute transformation (`score / (1 + score)`) that maps raw FTS5 ranks to a stable [0, 1) range independent of other results in the batch.
+
+## Chain-of-thought extraction
+
+The reasoning process used during [auto-capture](#auto-capture). For each candidate fact, the extraction LLM produces a brief reasoning about whether the fact is durable beyond the current task. Facts explicitly marked as not durable (e.g. "currently looking for a birthday gift") are filtered out before storage. This reduces noise from transient operational context.
 
 ## Chunking
 
@@ -59,6 +75,10 @@ The origin and history of a piece of information. In general usage (borrowed fro
 
 Deleting memories or associations that have weakened below a threshold. Pruning happens during consolidation and removes information that has not been reinforced through use. This is the final stage of decay — a memory weakens gradually across multiple consolidation cycles before being pruned.
 
+## Recency boost
+
+A gentle exponential decay factor applied to search scores in BM25-only mode. Recent memories rank higher when lexical relevance is equal. The half-life is approximately 125 days. This boost does not apply in hybrid mode where embeddings already capture contextual relevance.
+
 ## Reconciliation
 
 Comparing two data sources and deciding what to do with differences. In the context of memory import, reconciliation would mean comparing the current state of memory-core files against previously imported memories and handling changes: updating modified content, removing deleted content, adding new content. The current version does not implement reconciliation — re-import simply skips existing content and adds new content alongside old versions.
@@ -66,6 +86,10 @@ Comparing two data sources and deciding what to do with differences. In the cont
 ## Segment / segmentation
 
 A segment is a meaningful section of a markdown file, typically delimited by headings. Segmentation is the process of splitting a file into these sections. During import, memory-core files are segmented at heading boundaries (H1/H2/H3) so that each segment can be independently analyzed and stored as one or more memories.
+
+## Salience profile
+
+A user-authored file (`salience.md`) placed in the memory directory that customizes what the plugin pays attention to during memory extraction and storage. The profile is injected into both the auto-capture extraction prompt and the agent's system prompt for `memory_store`. It is treated as preference guidance and cannot override the plugin's extraction rules. Content is capped at 4000 characters with BOM stripping and mtime-based caching.
 
 ## Strength
 

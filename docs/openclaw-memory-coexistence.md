@@ -86,9 +86,9 @@ The plugin detects Active Memory automatically via `openclawConfig.plugins.entri
 
 | Budget level | Normal limit | Active Memory limit |
 |--------------|-------------|---------------------|
-| high         | 5           | 3                   |
-| medium       | 3           | 2                   |
-| low          | 1           | 1                   |
+| high         | 8           | 5                   |
+| medium       | 5           | 3                   |
+| low          | 2           | 1                   |
 
 This reduces redundancy while preserving raw memory context, especially temporal memories that Active Memory does not handle.
 

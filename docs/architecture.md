@@ -74,9 +74,11 @@ flowchart TD
 
 **Memory tools:** `memory_store`, `memory_search`, `memory_get`, `memory_feedback`, `memory_browse`.
 
-**Context engine** implements `assemble()`, `afterTurn()`, `compact()`, and `dispose()`. Compaction is delegated to the OpenClaw runtime. Dispose resets per-run caches but does not reset the deduplication ledger — that is owned by the caller.
+**Context engine** implements `assemble()`, `afterTurn()`, `compact()`, `dispose()`, and `cancelExtractions()`. Compaction is delegated to the OpenClaw runtime. Dispose awaits in-flight extraction tasks before resetting per-run caches. The deduplication ledger is not reset by dispose — that is owned by the caller.
 
-**Cron jobs** are registered on `gateway:startup` and run via the heartbeat system. Consolidation runs daily at 03:00 (full cycle: decay, reinforce, merge, prune). Temporal transitions run at 15:00 (future → present → past based on anchor dates). Both can also be triggered manually via `/memory-sleep`.
+**Auto-capture** runs in `afterTurn()` as a fire-and-forget async task. Each turn's conversation is sent to an LLM for fact extraction using chain-of-thought reasoning. The LLM evaluates each candidate fact for durability beyond the current task, filtering out ephemeral details. A concurrency limit of 3 in-flight extractions is enforced; when exceeded, the oldest task is cancelled (later turns carry more recent context). An optional salience profile (`salience.md` in the memory directory) customizes what the extraction pays attention to.
+
+**Cron jobs** are registered on `gateway:startup` and run via the heartbeat system. Consolidation runs daily at 03:00 (full cycle: decay, reinforce, merge, prune). Temporal transitions run at 15:00 (future → present → past based on anchor dates). Both can also be triggered manually via `/memory-sleep`. Consolidation errors are surfaced through the notification system — the `errorNotification` config option controls whether errors are shown even when the notification level would otherwise suppress output. When notification level is `"off"`, errors are logged but not surfaced to the user.
 
 **Workspace isolation** — each unique combination of memory directory, embedding model, and API key gets its own manager instance, circuit breaker, and database. The plugin tracks the most recently accessed workspace so the context engine and tools coordinate on the same state. This assumes a single active workspace per process — concurrent multi-workspace use within one OpenClaw process is not supported.
 
@@ -93,7 +95,7 @@ The database `associations.db` runs in WAL mode with foreign keys enabled.
 | `memories` | Memory records with content, strength, type, temporal state | `id` (SHA-256 of content) |
 | `associations` | Weighted bidirectional links between memory pairs | `(memory_a, memory_b)` lexicographic |
 | `memory_embeddings` | Vector embeddings (Float32 blob) | `id` |
-| `memory_fts` | FTS5 full-text search index | `id` |
+| `memory_fts` | FTS5 full-text search index (unicode61 tokenizer, diacritics removal, prefix indexes 2/3/4, id UNINDEXED) | `id` |
 | `state` | Key-value store (e.g. `last_consolidation_at`) | `key` |
 
 **Provenance tables:**
@@ -139,7 +141,7 @@ An operational log of retrieval events, written during normal operation and cons
 
 ## Retrieval pipeline
 
-Search combines semantic and keyword matching, weighted by memory strength:
+Search combines semantic and keyword matching, weighted by memory strength, then expands results through association links:
 
 ```mermaid
 flowchart LR
@@ -148,10 +150,37 @@ flowchart LR
     E --> H["Hybrid score"]
     B --> H
     H --> S["× strength"]
-    S --> R["Top-K results"]
+    S --> A["Association expansion"]
+    A --> R["Top-K results"]
 ```
 
 Both scores are normalized to a 0–1 range before combining. The hybrid score weights embedding similarity at 60% and BM25 at 40% (`ALPHA = 0.6`). When embeddings are unavailable, the system falls back to BM25-only (`ALPHA = 0`). The final score is multiplied by the memory's strength (clamped to 0–1), so weak memories rank lower regardless of textual relevance.
+
+### BM25 keyword search
+
+BM25 uses a multi-pass waterfall strategy for full-text queries:
+
+1. **Exact phrase** — all terms adjacent in order (highest precision)
+2. **AND** — all terms required, any position
+3. **OR** — any term matches (broadest recall)
+
+Each pass fills candidates up to a pool limit, deduplicating across passes. Results from stricter passes are preserved over looser ones. Punctuation is stripped before querying to prevent FTS5 tokenizer mismatches. OR-pass results receive a query term coverage penalty when few query terms match.
+
+BM25 scores use absolute normalization (`score = rank / (1 + rank)`) which maps FTS5 ranks to a stable [0, 1) range independent of other results in the batch. This avoids the problems of min-max normalization where a single result always scored 1.0.
+
+In BM25-only mode, a gentle recency boost (exponential decay with ~125-day half-life) is applied so recent memories rank higher when lexical relevance is equal. This does not apply in hybrid mode where embeddings already capture contextual relevance.
+
+### Association-augmented recall
+
+Recall uses `augmentedSearch()` which expands direct search results through single-hop association links:
+
+1. Direct search results above a score threshold (0.3) become "seeds"
+2. Each seed's strongly-associated neighbors (weight ≥ 0.15, up to 5 per seed) are pulled into the candidate pool
+3. Association candidates are scored as `seed_score × association_weight × 0.6`, weighted by the neighbor's strength
+4. When multiple seeds link to the same neighbor, scores combine via probabilistic OR (`a + b − ab`), so convergent activation can exceed the single-path cap
+5. All candidates (direct and association-expanded) compete in a single pool — top-K by score wins, no reserved slots
+
+This means a memory that was never directly relevant to a query can surface if it is strongly linked to multiple relevant memories.
 
 ### Embedding circuit breaker
 
@@ -225,7 +254,7 @@ The process runs in two database transactions:
 1. **Catch-up decay** — if consolidation was missed for multiple days, applies accumulated decay (capped at a maximum number of catch-up cycles to prevent amnesia)
 2. **Reinforcement** — processes unprocessed attributions: `Δstrength = η × confidence × modeWeight` (η = 0.7). Strength is clamped to 0–1 after each update
 3. **Decay** — working memories ×0.906, consolidated ×0.977, associations ×0.9
-4. **Co-retrieval associations** — memories retrieved in the same turn get linked. Weights combine via probabilistic OR: `w_new = w_old + w_add − w_old × w_add`, which keeps weights in the 0–1 range
+4. **Co-retrieval associations** — memories retrieved in the same turn get linked. Cross-channel pairs (e.g. one from auto-recall, one from a tool call) receive stronger weight (0.15) than same-channel pairs (0.05), since independent retrieval signals stronger relatedness. Weights combine via probabilistic OR: `w_new = w_old + w_add − w_old × w_add`, which keeps weights in the 0–1 range. Only exposures since the last consolidation are processed, preventing weight corruption from repeated replays
 5. **Transitive associations** — 1-hop indirect links computed (max 100 per run)
 6. **Temporal transitions** — future → present → past based on anchor dates
 7. **Pruning** — memories with strength ≤ 0.05 and associations with weight < 0.01 are deleted
@@ -234,7 +263,7 @@ The process runs in two database transactions:
 
 Merge runs outside a transaction because it calls an LLM (async):
 
-1. **Candidate detection** — delta approach: new/recently-exposed memories (sources, strength ≥ 0.5) are compared against existing memories (targets, strength ≥ 0.3). Similarity scored by Jaccard + cosine (threshold ≥ 0.5 combined, or ≥ 0.6 Jaccard-only when embeddings are unavailable). Max 20 pairs per run
+1. **Candidate detection** — delta approach: new/recently-exposed memories (sources, strength ≥ 0.5) are compared against existing memories (targets, strength ≥ 0.3). Similarity scored by Jaccard + cosine (threshold ≥ 0.5 combined, or ≥ 0.6 Jaccard-only when embeddings are unavailable). Word trigrams used for Jaccard scoring are sorted alphabetically, making merge detection order-insensitive — "The deadline is April 15" and "April 15 is the deadline" now share trigrams. Max 20 pairs per run
 2. **Execution** — each pair produces one of: absorption (one subsumes the other), reuse (matches an existing third memory), or a novel merged memory. Merged memories are marked as consolidated
 3. **Inheritance** — the merged memory inherits associations via probabilistic OR (`w = a + b − ab`); aliases are recorded
 
@@ -292,7 +321,7 @@ All settings are optional — defaults work out of the box. Configuration goes i
 | `temporal.errorNotification` | boolean | `true` |
 | `logQueries` | boolean | `false` |
 
-API keys are read from OpenClaw's `auth-profiles.json` — environment variables are not used. See the [README](../README.md#api-keys) for profile configuration details.
+API key resolution is delegated to the OpenClaw SDK's `resolveApiKeyForProvider`, which handles auth profiles, environment variables, OAuth, profile precedence, cooldowns, and multi-agent resolution internally. See the [README](../README.md#api-keys) for profile configuration details.
 
 ## CLI diagnostic tool
 
@@ -327,7 +356,6 @@ Output is JSON by default; use `--format text` for human-readable output.
 
 ## Current limitations
 
-- Associations do not influence recall — they are structural data used only during consolidation for co-retrieval tracking and transitive link building.
 - Do not run CLI write commands (`import`) while the OpenClaw runtime is active. The runtime caches state in memory and will not observe external database mutations, leading to inconsistent behavior.
 
 See [How Formative Memory Works](./how-memory-works.md) for the conceptual model.

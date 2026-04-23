@@ -19,9 +19,12 @@ Over time, raw facts combine into richer structures: merged summaries, connected
 
 Before every response, the plugin searches for memories relevant to
 the current conversation using hybrid search (embedding similarity +
-BM25 full-text), ranked by memory strength. Matching memories are
-injected into the agent's context automatically. Each retrieval
-strengthens the memories that were surfaced.
+BM25 full-text), ranked by memory strength. Strongly-associated
+neighbors of the top results are also pulled in through single-hop
+association expansion, so related memories surface even when they
+don't directly match the query. Matching memories are injected into
+the agent's context automatically. Each retrieval strengthens the
+memories that were surfaced.
 
 ```
 User: "Do you remember that restaurant? The one by the beach
@@ -79,7 +82,10 @@ Explicit feedback (agent calls memory_feedback):
 
 Memories are collected in two ways. The agent can store a memory
 explicitly with `memory_store`, and auto-capture extracts durable
-facts from conversations automatically after each turn.
+facts from conversations automatically after each turn. Extraction
+uses chain-of-thought reasoning — the LLM evaluates each candidate
+fact for durability beyond the current task, discarding ephemeral
+details like "currently looking for a birthday gift".
 
 ```
 After the turn above, auto-capture extracts:
@@ -165,14 +171,13 @@ No configuration needed — sensible defaults are built in.
 > }
 > ```
 
-> **Multi-agent setups:** automatic startup tasks at boot resolve API
-> keys from `<stateDir>/agents/main/agent/auth-profiles.json` because
-> OpenClaw's plugin service context does not yet expose the active
-> `agentDir`. This is correct for the default single-agent `main`
-> setup. If you run multiple agents and the primary profile lives
-> elsewhere, the first tool call in a session (which carries the
-> correct `agentDir`) will pick up the right profile, so migration
-> and cleanup still complete — they just defer until that first call.
+> **Multi-agent setups:** API key resolution is delegated to the
+> OpenClaw SDK's `resolveApiKeyForProvider`, which handles auth
+> profiles, multi-agent resolution, and credential precedence
+> internally. The plugin resolves keys lazily — if the runtime
+> context (`agentDir`) is not yet available at boot (e.g. during
+> heartbeat), resolution defers until the first tool call or service
+> start provides it.
 
 ## Memory Tools
 
@@ -247,11 +252,39 @@ Set it to `false` to allow graceful degradation to keyword-only search.
 > example, searching for "shipping date" will not find a memory about
 > "release deadline". Embeddings dramatically improve recall quality.
 
+### Salience Profile
+
+A default `salience.md` is created automatically in the memory
+directory (default: `~/.openclaw/memory/associative/salience.md`) if
+one does not already exist. This file guides both auto-capture
+extraction and the agent's `memory_store` decisions — edit it to
+match your priorities.
+
+Write it in natural language — describe what kinds of information
+matter to you. For example:
+
+```markdown
+Pay attention to:
+- Family members and relationships
+- Health details I share
+- Travel plans and locations
+- Professional milestones and career goals
+
+Less important:
+- What I'm currently shopping for or browsing
+- Passing mentions of things I'm not committed to
+```
+
+The profile is capped at 4000 characters and treated as preference
+guidance only — it cannot override the plugin's extraction rules or
+output format.
+
 ### API Keys
 
-API keys are read from OpenClaw's `auth-profiles.json`. Environment
-variables are **not** used. Configure a profile under the standard
-OpenClaw setup:
+API key resolution is delegated to the OpenClaw SDK's
+`resolveApiKeyForProvider`, which handles auth profiles, env vars,
+OAuth, and multi-agent resolution internally. Configure a profile
+under the standard OpenClaw setup:
 
 ```json
 {
@@ -303,7 +336,7 @@ conflicting memory writes:
 
 | Feature | Why disable |
 |---------|-------------|
-| **Active Memory** | OpenClaw's built-in proactive recall. Runs a sub-agent that queries our `memory_search` before each reply, then injects a summary alongside our own context injection — same memories appear twice |
+| **Active Memory** | OpenClaw's built-in proactive recall. Runs a sub-agent that queries our `memory_search` before each reply, then injects a summary alongside our own context injection — same memories appear twice. The plugin auto-detects Active Memory and reduces recall limits (8→5, 5→3, 2→1) as mitigation |
 | **memory-core** | The built-in file-based memory plugin. Only one memory slot can be active; this plugin replaces it |
 | **session-memory** | An internal hook that writes `memory/YYYY-MM-DD.md` files on `/new` and `/reset`. These files are not used by this plugin and create unnecessary disk writes |
 
@@ -316,8 +349,10 @@ Disabling is the cleaner approach.
 ```
 OpenClaw Runtime
     |
-    |-- Context Engine --- assemble() -> auto-recall into context
-    |   (budget-aware)     afterTurn() -> log exposures + attributions
+    |-- Context Engine --- assemble() -> association-augmented recall
+    |   (budget-aware)     afterTurn() -> provenance + auto-capture
+    |                      cancelExtractions() -> abort in-flight tasks
+    |                      dispose() -> await tasks, reset caches
     |
     |-- Memory Tools ----- memory_store    - create memory
     |   (agent-initiated)  memory_search   - hybrid search
