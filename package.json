@@ -7,10 +7,18 @@
     "type": "git",
     "url": "git+https://github.com/jarimustonen/formative-memory.git"
   },
+  "homepage": "https://github.com/jarimustonen/formative-memory",
+  "bugs": {
+    "url": "https://github.com/jarimustonen/formative-memory/issues"
+  },
+  "author": "Jari Mustonen",
   "keywords": [
     "openclaw",
     "memory",
     "associative-memory",
+    "ai-memory",
+    "ai-agents",
+    "llm-tools",
     "plugin"
   ],
   "type": "module",

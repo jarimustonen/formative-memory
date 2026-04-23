@@ -12,5 +12,13 @@ bun.lockb
 .worktrees/
 .claude/settings.local.json
 
+# Database files
+*.db
+*.db-wal
+*.db-shm
+
+# Log files
+*.log
+
 # AI agent working directories
 history/
