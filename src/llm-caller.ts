@@ -13,7 +13,7 @@ import { fetchWithTimeout } from "./http.ts";
 
 // -- Types --
 
-export type LlmProvider = "anthropic" | "openai";
+export type LlmProvider = "anthropic" | "openai" | "google";
 
 export type LlmCallerConfig = {
   provider: LlmProvider;
@@ -21,11 +21,14 @@ export type LlmCallerConfig = {
   model?: string;
   maxTokens?: number;
   timeoutMs?: number;
+  /** Override base URL for OpenAI-compatible endpoints (e.g. DeepSeek). */
+  baseUrl?: string;
 };
 
 const DEFAULTS = {
   anthropic: { model: "claude-haiku-4-5-20251001", maxTokens: 2048 },
   openai: { model: "gpt-4o-mini", maxTokens: 2048 },
+  google: { model: "gemini-2.0-flash", maxTokens: 2048 },
 } as const;
 
 // -- Main --
@@ -49,7 +52,10 @@ export async function callLlm(
   if (provider === "anthropic") {
     return callAnthropic(prompt, apiKey, model, maxTokens, timeoutMs, signal);
   }
-  return callOpenAi(prompt, apiKey, model, maxTokens, timeoutMs, signal);
+  if (provider === "google") {
+    return callGoogle(prompt, apiKey, model, maxTokens, timeoutMs, signal);
+  }
+  return callOpenAi(prompt, apiKey, model, maxTokens, timeoutMs, signal, config.baseUrl);
 }
 
 // -- Anthropic --
@@ -108,9 +114,13 @@ async function callOpenAi(
   maxTokens: number,
   timeoutMs: number,
   signal?: AbortSignal,
+  baseUrl?: string,
 ): Promise<string> {
+  const url = baseUrl
+    ? `${baseUrl.replace(/\/+$/, "")}/chat/completions`
+    : "https://api.openai.com/v1/chat/completions";
   const response = await fetchWithTimeout(
-    "https://api.openai.com/v1/chat/completions",
+    url,
     {
       method: "POST",
       headers: {
@@ -138,6 +148,52 @@ async function callOpenAi(
 
   if (!text) {
     throw new Error("OpenAI returned empty response");
+  }
+  return text;
+}
+
+// -- Google (Gemini) --
+
+async function callGoogle(
+  prompt: string,
+  apiKey: string,
+  model: string,
+  maxTokens: number,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<string> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+  const response = await fetchWithTimeout(
+    url,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey,
+      },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens: maxTokens },
+      }),
+    },
+    timeoutMs,
+    "Google Gemini LLM call",
+    signal,
+  );
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`Google Gemini API error ${response.status}: ${body.slice(0, 200)}`);
+  }
+
+  const data: any = await response.json();
+  const text = data.candidates?.[0]?.content?.parts
+    ?.filter((p: any) => typeof p.text === "string")
+    ?.map((p: any) => p.text)
+    ?.join("") ?? "";
+
+  if (!text) {
+    throw new Error("Google Gemini returned empty response");
   }
   return text;
 }

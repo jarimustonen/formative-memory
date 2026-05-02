@@ -8,6 +8,16 @@ export type AssociativeMemoryConfig = {
     /** Optional model override. When omitted the provider's default model is used. */
     model?: string;
   };
+  llm: {
+    /**
+     * LLM provider for background tasks (consolidation merge, notification summaries).
+     * Supported: "anthropic", "openai", "google", "deepseek".
+     * When omitted the plugin auto-detects by trying anthropic → openai → google.
+     */
+    provider?: string;
+    /** Optional model override. When omitted the provider's default model is used. */
+    model?: string;
+  };
   consolidation: {
     /** Notification level after consolidation runs. Default: "errors". */
     notification: NotificationLevel;
@@ -42,7 +52,7 @@ export const memoryConfigSchema = {
       throw new Error("memory config required");
     }
     const cfg = value as Record<string, unknown>;
-    assertAllowedKeys(cfg, ["embedding", "consolidation", "temporal", "dbPath", "autoCapture", "autoRecall", "verbose", "logQueries", "requireEmbedding"], "memory config");
+    assertAllowedKeys(cfg, ["embedding", "llm", "consolidation", "temporal", "dbPath", "autoCapture", "autoRecall", "verbose", "logQueries", "requireEmbedding"], "memory config");
 
 
     let provider = "auto";
@@ -60,6 +70,24 @@ export const memoryConfigSchema = {
       }
       if (typeof embedding.model === "string") {
         model = embedding.model;
+      }
+    }
+
+    let llmProvider: string | undefined;
+    let llmModel: string | undefined;
+
+    if (cfg.llm != null) {
+      if (typeof cfg.llm !== "object" || Array.isArray(cfg.llm)) {
+        throw new Error("llm must be an object");
+      }
+      const llm = cfg.llm as Record<string, unknown>;
+      assertAllowedKeys(llm, ["provider", "model"], "llm config");
+
+      if (typeof llm.provider === "string") {
+        llmProvider = llm.provider;
+      }
+      if (typeof llm.model === "string") {
+        llmModel = llm.model;
       }
     }
 
@@ -115,6 +143,7 @@ export const memoryConfigSchema = {
 
     return {
       embedding: { provider, model },
+      llm: { provider: llmProvider, model: llmModel },
       consolidation: { notification: consolidationNotification, errorNotification: consolidationErrorNotification },
       temporal: { notification: temporalNotification, errorNotification: temporalErrorNotification },
       dbPath: typeof cfg.dbPath === "string" ? cfg.dbPath : "~/.openclaw/memory/associative",

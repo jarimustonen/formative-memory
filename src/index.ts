@@ -50,19 +50,80 @@ import { TurnMemoryLedger } from "./turn-memory-ledger.ts";
 // -- Auth resolution via SDK --
 
 /**
+ * Maps user-facing provider names to the internal caller type and SDK provider
+ * name used for credential resolution. Providers that use an OpenAI-compatible
+ * API (like DeepSeek) reuse the "openai" caller with a custom baseUrl.
+ */
+const LLM_PROVIDER_MAP: Record<
+  string,
+  { callerProvider: LlmCallerConfig["provider"]; sdkProvider: string; baseUrl?: string; defaultModel?: string }
+> = {
+  anthropic: { callerProvider: "anthropic", sdkProvider: "anthropic" },
+  openai:    { callerProvider: "openai",    sdkProvider: "openai" },
+  google:    { callerProvider: "google",    sdkProvider: "google" },
+  deepseek:  { callerProvider: "openai",    sdkProvider: "deepseek", baseUrl: "https://api.deepseek.com/v1", defaultModel: "deepseek-v4-flash" },
+};
+
+/** Auto-detection order when no explicit provider is configured. */
+const AUTO_DETECT_ORDER = ["anthropic", "openai", "google"] as const;
+
+/**
  * Resolve LLM caller config via the OpenClaw SDK's provider auth API.
- * Tries Anthropic first, falls back to OpenAI.
+ *
+ * When `memoryConfig.llm.provider` is set, only that provider is tried.
+ * Otherwise falls back to auto-detection: anthropic → openai → google.
  * Returns null if no suitable API key is found.
  */
 async function resolveLlmConfig(
   cfg: OpenClawConfig,
   agentDir?: string,
+  memoryConfig?: AssociativeMemoryConfig,
 ): Promise<LlmCallerConfig | null> {
-  for (const provider of ["anthropic", "openai"] as const) {
+  const explicitProvider = memoryConfig?.llm?.provider;
+
+  if (explicitProvider) {
+    const info = LLM_PROVIDER_MAP[explicitProvider];
+    if (!info) {
+      // Unknown provider — treat as OpenAI-compatible with the name as SDK provider
+      try {
+        const auth = await resolveApiKeyForProvider({ provider: explicitProvider, cfg, agentDir });
+        if (auth.apiKey) {
+          return {
+            provider: "openai",
+            apiKey: auth.apiKey,
+            model: memoryConfig?.llm?.model,
+          };
+        }
+      } catch { /* no credentials */ }
+      return null;
+    }
+
     try {
-      const auth = await resolveApiKeyForProvider({ provider, cfg, agentDir });
+      const auth = await resolveApiKeyForProvider({ provider: info.sdkProvider, cfg, agentDir });
       if (auth.apiKey) {
-        return { provider, apiKey: auth.apiKey };
+        return {
+          provider: info.callerProvider,
+          apiKey: auth.apiKey,
+          model: memoryConfig?.llm?.model ?? info.defaultModel,
+          baseUrl: info.baseUrl,
+        };
+      }
+    } catch { /* no credentials */ }
+    return null;
+  }
+
+  // Auto-detect: try each provider in priority order
+  for (const name of AUTO_DETECT_ORDER) {
+    const info = LLM_PROVIDER_MAP[name]!;
+    try {
+      const auth = await resolveApiKeyForProvider({ provider: info.sdkProvider, cfg, agentDir });
+      if (auth.apiKey) {
+        return {
+          provider: info.callerProvider,
+          apiKey: auth.apiKey,
+          model: memoryConfig?.llm?.model,
+          baseUrl: info.baseUrl,
+        };
       }
     } catch {
       // SDK throws when no credentials are found — try next provider.
@@ -822,7 +883,7 @@ const associativeMemoryPlugin = {
       if (startupTasksTriggered) return;
       startupTasksTriggered = true;
       const ws = getWorkspace(workspaceDir);
-      const llmConfig = await resolveLlmConfig(openclawConfig, getAgentDir());
+      const llmConfig = await resolveLlmConfig(openclawConfig, getAgentDir(), config);
       runStartupTasks(ws, config, workspaceDir, getAgentDir, log, { stateDir: runtimePaths.stateDir, llmConfig });
     };
 
@@ -930,7 +991,7 @@ const associativeMemoryPlugin = {
         getDb: () => getWorkspace(".").manager.getDatabase(),
         getLogPath: () => join(getWorkspace(".").memoryDir, "retrieval.log"),
         autoCapture: config.autoCapture,
-        getLlmConfig: () => resolveLlmConfig(openclawConfig, runtimePaths.agentDir),
+        getLlmConfig: () => resolveLlmConfig(openclawConfig, runtimePaths.agentDir, config),
         activeMemoryEnabled,
         getSalienceContent: () => readSalienceContent(getWorkspace(".").memoryDir, log),
       }),
@@ -942,7 +1003,7 @@ const associativeMemoryPlugin = {
       async handler() {
         const ws = getWorkspace(".");
 
-        const llmConfig = await resolveLlmConfig(openclawConfig, runtimePaths.agentDir);
+        const llmConfig = await resolveLlmConfig(openclawConfig, runtimePaths.agentDir, config);
         if (!llmConfig) {
           return {
             text: "Memory consolidation failed: no LLM API key found.\n" +
@@ -992,7 +1053,7 @@ const associativeMemoryPlugin = {
       async handler() {
         const ws = getWorkspace(".");
         const db = ws.manager.getDatabase();
-        const llmConfig = await resolveLlmConfig(openclawConfig, runtimePaths.agentDir);
+        const llmConfig = await resolveLlmConfig(openclawConfig, runtimePaths.agentDir, config);
         const userLanguage = detectUserLanguage(".");
         const enrichFn: EnrichFn = llmConfig
           ? createDirectLlmEnrichFn(llmConfig, userLanguage)
@@ -1040,7 +1101,7 @@ const associativeMemoryPlugin = {
       async handler() {
         const ws = getWorkspace(".");
         const db = ws.manager.getDatabase();
-        const llmConfig = await resolveLlmConfig(openclawConfig, runtimePaths.agentDir);
+        const llmConfig = await resolveLlmConfig(openclawConfig, runtimePaths.agentDir, config);
         if (!llmConfig) {
           return { text: "Workspace cleanup failed: no LLM API key found." };
         }
@@ -1180,7 +1241,7 @@ const associativeMemoryPlugin = {
           }
           log.debug(`temporal: ${count} transitioned`);
 
-          const llmConfig = await resolveLlmConfig(openclawConfig, runtimePaths.agentDir);
+          const llmConfig = await resolveLlmConfig(openclawConfig, runtimePaths.agentDir, config);
           const notification = await formatTemporalNotification(count, {
             level: config.temporal.notification,
             llmConfig,
@@ -1208,7 +1269,7 @@ const associativeMemoryPlugin = {
 
       // Full consolidation (includes temporal transitions)
       try {
-        const llmConfig = await resolveLlmConfig(openclawConfig, runtimePaths.agentDir);
+        const llmConfig = await resolveLlmConfig(openclawConfig, runtimePaths.agentDir, config);
         const mergeContentProducer = llmConfig
           ? async (
               a: { id: string; content: string; type: string },
