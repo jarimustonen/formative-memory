@@ -1,6 +1,6 @@
 {
   "name": "formative-memory",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "description": "Memory plugin for OpenClaw. Agent's memories strengthen through use, fade when unused, and consolidate overnight.",
   "license": "MIT",
   "repository": {
