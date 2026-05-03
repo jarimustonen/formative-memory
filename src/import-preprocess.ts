@@ -4,12 +4,13 @@
  * Discovers memory-core markdown files, segments them by heading level,
  * and extracts metadata for the migration service.
  *
- * Uses markdown-it for reliable parsing (handles code blocks, frontmatter, CRLF).
+ * Heading detection is done with a small ATX-only scanner that respects
+ * fenced code blocks. Setext headings (=== / ---) are not recognized;
+ * memory files are expected to use ATX (#, ##, ###) style.
  */
 
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
-import MarkdownIt from "markdown-it";
 
 // -- Types --
 
@@ -46,7 +47,8 @@ const FRONTMATTER_RE = /^\uFEFF?---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*\r?\n/;
 const MAX_SEGMENT_CHARS = 2000;
 const MIN_SEGMENT_CHARS = 200;
 
-const md = new MarkdownIt();
+const ATX_HEADING_RE = /^ {0,3}(#{1,3})\s+(.*?)\s*#*\s*$/;
+const FENCE_OPEN_RE = /^ {0,3}(`{3,}|~{3,})/;
 
 // -- Discovery --
 
@@ -148,8 +150,6 @@ type RawSection = {
 
 /**
  * Segment a markdown file by heading boundaries (H1/H2/H3).
- * Uses markdown-it for reliable parsing — code blocks and other contexts
- * are handled correctly.
  * Large segments are split by paragraph; small segments are merged with previous.
  */
 export function segmentMarkdown(content: string, filePath: string, workspaceDir: string): ImportSegment[] {
@@ -201,26 +201,29 @@ export function segmentMarkdown(content: string, filePath: string, workspaceDir:
 }
 
 /**
- * Extract sections from markdown content using markdown-it tokens.
- * Splits on H1/H2/H3 headings while respecting code blocks and other contexts.
+ * Extract sections from markdown content.
+ * Splits on H1/H2/H3 ATX headings, ignoring lines inside fenced code blocks.
  */
 function extractSections(content: string): RawSection[] {
-  const tokens = md.parse(content, {});
   const lines = content.split("\n");
   const sections: RawSection[] = [];
 
-  // Find heading positions from tokens
   const headings: Array<{ line: number; level: number; text: string }> = [];
-  for (let i = 0; i < tokens.length; i++) {
-    const token = tokens[i];
-    if (token.type === "heading_open" && token.map) {
-      const level = parseInt(token.tag.slice(1), 10);
-      if (level <= 3) {
-        // Get heading text from the inline token that follows
-        const inlineToken = tokens[i + 1];
-        const text = inlineToken?.type === "inline" ? (inlineToken.content ?? "") : "";
-        headings.push({ line: token.map[0], level, text });
-      }
+  let fence: string | null = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (fence) {
+      if (line.trimStart().startsWith(fence)) fence = null;
+      continue;
+    }
+    const fenceMatch = FENCE_OPEN_RE.exec(line);
+    if (fenceMatch) {
+      fence = fenceMatch[1].slice(0, 3);
+      continue;
+    }
+    const m = ATX_HEADING_RE.exec(line);
+    if (m) {
+      headings.push({ line: i, level: m[1].length, text: m[2] });
     }
   }
 
