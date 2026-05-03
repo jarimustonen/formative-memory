@@ -61,6 +61,48 @@
           }
         }
       },
+      "llm": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          }
+        }
+      },
+      "consolidation": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "notification": {
+            "type": "string",
+            "enum": ["all", "errors", "none"],
+            "default": "errors"
+          },
+          "errorNotification": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "temporal": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "notification": {
+            "type": "string",
+            "enum": ["all", "errors", "none"],
+            "default": "errors"
+          },
+          "errorNotification": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
       "dbPath": {
         "type": "string"
       },
