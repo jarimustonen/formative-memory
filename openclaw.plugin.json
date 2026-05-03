@@ -128,7 +128,7 @@
     "embedding.provider": {
       "label": "Embedding Provider",
       "placeholder": "auto",
-      "help": "Embedding provider to use. \"auto\" selects the best available provider based on configured API keys."
+      "help": "Embedding provider to use. \"auto\" selects the best available provider based on configured API keys. Stored memory text is sent to this provider to produce vectors; new recall queries are also embedded."
     },
     "embedding.model": {
       "label": "Embedding Model",
@@ -141,7 +141,7 @@
     },
     "autoCapture": {
       "label": "Auto-Capture",
-      "help": "Automatically capture all conversations for consolidation"
+      "help": "Automatically capture conversation turns for memory extraction. When enabled, recent user/assistant text is sent to the configured LLM provider after each turn. Disable to require explicit memory_store calls."
     },
     "autoRecall": {
       "label": "Auto-Recall",
@@ -158,7 +158,7 @@
     },
     "requireEmbedding": {
       "label": "Require Embedding",
-      "help": "When true (default), the plugin requires a working embedding provider. Set to false to allow BM25-only fallback.",
+      "help": "When true (default), the plugin requires a working embedding provider. Set to false for BM25-only fallback — keeps all memory text local and avoids sending it to an embedding provider.",
       "advanced": true
     }
   }

@@ -386,6 +386,35 @@ probabilistic, not a hard security boundary.
 Do not store secrets (API keys, passwords) in memories. They will be
 surfaced to the model during recall.
 
+## Privacy
+
+This plugin sends conversation text to the LLM and embedding providers
+you configure in OpenClaw. Be aware of what leaves your machine:
+
+- **Auto-capture (`autoCapture`, default `true`)** — at the end of each
+  agent turn, recent user/assistant text is sent to the configured LLM
+  provider for memory extraction.
+- **Embeddings** — every stored memory is sent to your configured
+  embedding provider (OpenAI / Google / etc.) to produce vectors. New
+  recall queries are also embedded.
+- **Consolidation (nightly "sleep")** — candidate memory pairs are sent
+  to the configured LLM provider to be merged or rephrased.
+- **Query logging (`logQueries`, default `false`)** — when enabled,
+  raw query text appears in OpenClaw logs.
+
+What stays local: the SQLite database (at `dbPath`, default
+`~/.openclaw/memory/associative`), all memory content at rest, and BM25
+search indices.
+
+To minimize external exposure:
+
+- Set `autoCapture: false` to require explicit `memory_store` calls.
+- Set `requireEmbedding: false` to fall back to BM25-only search and
+  avoid sending text to an embedding provider altogether.
+- Choose a provider whose data-retention policy you trust, or run a
+  local OpenAI-compatible endpoint.
+- Keep `logQueries: false` (the default) if logs may be shared.
+
 ## CLI
 
 A standalone diagnostic CLI operates directly on the SQLite database —
